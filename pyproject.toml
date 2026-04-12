@@ -1,7 +1,7 @@
 [project]
 name = "ComfyUI-GuliNodes"
 version = "1.0.1"
-description = "GuliNodes - 尺寸适配 + 图像对比 + LoRA堆 + 变量工具"
+description = "GuliNodes - 尺寸适配 + 图像对比 + LoRA堆"
 authors = [{ name = "Guli" }]
 license = { text = "MIT" }
 requires-python = ">=3.10"

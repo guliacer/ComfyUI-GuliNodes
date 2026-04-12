@@ -10,9 +10,6 @@ import comfy.utils
 import comfy.sd
 import folder_paths
 
-# Global variable store for Set/Get nodes
-_variable_store = {}
-
 # Global last seed for "use previous" mode
 _last_seed = 1
 
@@ -1302,6 +1299,9 @@ class LoRAStackerBase:
     @classmethod
     def get_lora_file_inputs(cls, count):
         lora_list = folder_paths.get_filename_list("loras")
+        # Ensure "None" option is available
+        if "None" not in lora_list:
+            lora_list = ["None"] + lora_list
         inputs = {}
         for i in range(1, count + 1):
             inputs[f"lora{i}_name"] = (lora_list, {"default": "None"})
@@ -1349,13 +1349,23 @@ class GGLoRAFileStacker4(LoRAStackerBase):
 
     def stack(self, model, lora1_name="None", lora2_name="None", lora3_name="None", lora4_name="None",
               strength1=1.0, strength2=1.0, strength3=1.0, strength4=1.0):
+        # Protect: model cannot be None
+        if model is None:
+            return (None,)
         lora_data = []
         for lora_name, strength in [(lora1_name, strength1), (lora2_name, strength2), 
                                    (lora3_name, strength3), (lora4_name, strength4)]:
             lora = self.load_lora_file(lora_name, strength)
             if lora is not None:
                 lora_data.append((lora, strength))
-        return (self.apply_lora_stack(model, lora_data),)
+        # If no valid LoRAs selected, return original model
+        if not lora_data:
+            return (model,)
+        result = self.apply_lora_stack(model, lora_data)
+        # Double protection: never return None
+        if result is None:
+            return (model,)  # Fallback to original
+        return (result,)
 
 
 class GGLoRAFileStacker8(LoRAStackerBase):
@@ -1371,6 +1381,9 @@ class GGLoRAFileStacker8(LoRAStackerBase):
     CATEGORY = "GuliNodes/LoRA工具"
 
     def stack(self, model, **kwargs):
+        # Protect: model cannot be None
+        if model is None:
+            return (None,)
         lora_data = []
         for i in range(1, 9):
             lora_name = kwargs.get(f"lora{i}_name", "None")
@@ -1378,7 +1391,14 @@ class GGLoRAFileStacker8(LoRAStackerBase):
             lora = self.load_lora_file(lora_name, strength)
             if lora is not None:
                 lora_data.append((lora, strength))
-        return (self.apply_lora_stack(model, lora_data),)
+        # If no valid LoRAs selected, return original model
+        if not lora_data:
+            return (model,)
+        result = self.apply_lora_stack(model, lora_data)
+        # Double protection: never return None
+        if result is None:
+            return (model,)  # Fallback to original
+        return (result,)
 
 
 class GGGroupControllerM:
@@ -1409,81 +1429,6 @@ class GGGroupControllerS:
         return {}
 
 
-class GGVariableSet:
-    """Store any value in a named variable"""
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "value": ("*",),
-                "name": ("STRING", {"default": "my_variable", "multiline": False}),
-            },
-        }
-    RETURN_TYPES = ("*",)
-    RETURN_NAMES = ("value",)
-    FUNCTION = "set_variable"
-    OUTPUT_NODE = False
-    CATEGORY = "GuliNodes/工具"
-    DESCRIPTION = "Store a value to a named variable"
-
-    def set_variable(self, value, name):
-        global _variable_store
-        # Detect type based on input
-        var_type = "*"
-        if hasattr(value, 'shape'):
-            var_type = "IMAGE"
-        elif hasattr(value, 'keys'):
-            var_type = "LATENT"
-        
-        _variable_store[name] = value
-        _variable_store[f"_type_{name}"] = var_type
-        
-        return (value,)
-
-
-class GGVariableGet:
-    """Retrieve a stored variable by name"""
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "name": ("STRING", {"default": "my_variable", "multiline": False}),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-    RETURN_TYPES = ("*",)
-    RETURN_NAMES = ("value",)
-    FUNCTION = "get_variable"
-    OUTPUT_NODE = True
-    CATEGORY = "GuliNodes/工具"
-    DESCRIPTION = "Retrieve a stored variable"
-
-    def get_variable(self, name, prompt=None, extra_pnginfo=None):
-        global _variable_store
-        
-        # Try to get from storage
-        value = _variable_store.get(name, None)
-        
-        if value is not None:
-            return (value,)
-        
-        # Return appropriate empty value based on stored type
-        var_type = _variable_store.get(f"_type_{name}", "*")
-        
-        if var_type == "IMAGE":
-            return (torch.zeros([1, 64, 64, 3]),)
-        elif var_type == "LATENT":
-            return ({"samples": torch.zeros([1,4,8,8])},)
-        else:
-            # Generic empty - return None to let downstream handle it
-            return (None,)
-            value = torch.zeros([1, 4, 8, 8])
-        return (value,)
-
-
 NODE_CLASS_MAPPINGS = {
     "AspectRatioAdapter": AspectRatioAdapter,
     "AspectRatioLatent": AspectRatioLatent,
@@ -1497,8 +1442,6 @@ NODE_CLASS_MAPPINGS = {
     "GGLoRAFileStacker8": GGLoRAFileStacker8,
     "GGGroupControllerM": GGGroupControllerM,
     "GGGroupControllerS": GGGroupControllerS,
-    "GGVariableSet": GGVariableSet,
-    "GGVariableGet": GGVariableGet,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1514,6 +1457,4 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GGLoRAFileStacker8": "GG LoRA 文件选择堆 8个",
     "GGGroupControllerM": "GG 多组控制",
     "GGGroupControllerS": "GG 单组控制",
-    "GGVariableSet": "GG 变量设置",
-    "GGVariableGet": "GG 变量获取",
 }
