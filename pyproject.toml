@@ -1,6 +1,6 @@
 [project]
 name = "ComfyUI-GuliNodes"
-version = "1.0.2"
+version = "1.0.0"
 description = "GuliNodes - 尺寸适配 + 图像对比 + LoRA堆"
 authors = [{ name = "Guli" }]
 license = { text = "MIT" }
