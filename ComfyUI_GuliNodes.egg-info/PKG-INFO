@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: ComfyUI-GuliNodes
+Version: 1.0.0
+Summary: GuliNodes - 尺寸适配 + 图像对比 + LoRA堆
+Author: Guli
+License: MIT
+Project-URL: Repository, https://github.com/guliacer/ComfyUI-GuliNodes
+Requires-Python: >=3.10
+Requires-Dist: pyperclip
