@@ -1,7 +1,0 @@
-README.md
-pyproject.toml
-ComfyUI_GuliNodes.egg-info/PKG-INFO
-ComfyUI_GuliNodes.egg-info/SOURCES.txt
-ComfyUI_GuliNodes.egg-info/dependency_links.txt
-ComfyUI_GuliNodes.egg-info/requires.txt
-ComfyUI_GuliNodes.egg-info/top_level.txt

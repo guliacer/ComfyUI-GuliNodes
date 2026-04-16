@@ -293,20 +293,19 @@ app.registerExtension({
 
         document.getElementById("btn-auto-fit").onclick = () => {
             const nodes = getSelectedNodes();
-            if (nodes.length === 0) return showToast("请先选中节点", "error");
-            nodes.forEach(node => {
-                if (typeof node.computeSize === "function") {
-                    const ideal = node.computeSize();
-                    node.size[0] = Math.max(ideal[0], 180);
-                    node.size[1] = ideal[1];
-                }
-            });
-            app.graph.setDirtyCanvas(true, true);
-            showToast("节点已调整为最紧凑尺寸", "success");
+            if (nodes.length === 0) return showToast("请至少选中1个节点", "error");
+            nodes.forEach(n => n.size = [210, n.size[1]]);
+            app.graph.setDirtyCanvas(true);
         };
 
+        // 迷你图标点击事件
+        miniIcon.onclick = showPanel;
 
-
-
+        // 点击外部区域不关闭面板，避免误操作
+        // document.addEventListener('click', (e) => {
+        //     if (!panel.contains(e.target) && e.target !== miniIcon) {
+        //         hidePanel();
+        //     }
+        // });
     }
 });
