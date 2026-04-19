@@ -1,16 +1,14 @@
-# 图像反推模块初始化
-
-from .model_loader import GG模型加载器
-from .image_prompt import GG图像推理
+from .model_loader import GG反推模型
+from .image_prompt import GG图像反推
 
 NODE_CLASS_MAPPINGS = {
-    "GG模型加载器": GG模型加载器,
-    "GG图像推理": GG图像推理
+    "GG反推模型": GG反推模型,
+    "GG图像反推": GG图像反推
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "GG模型加载器": "GG 模型加载器",
-    "GG图像推理": "GG 图像推理"
+    "GG反推模型": "GG 反推模型",
+    "GG图像反推": "GG 图像反推"
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

@@ -12,7 +12,7 @@ from .model_loader import _调用chat_completion, _批量图片索引转base64, 
 默认图片系统提示词 = "描述这张图,300字左右."
 默认文本系统提示词 = "描述这张图,300字左右."
 
-class GG图像推理:
+class GG图像反推:
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -30,7 +30,7 @@ class GG图像推理:
             },
             "optional": {
                 "图片": ("IMAGE",),
-                "文本": ("STRING", {"default": "", "multiline": True, "tooltip": "当输入模式为文本时使用的文本输入。"}),
+                "文本": ("STRING", {"tooltip": "当输入模式为文本时使用的文本输入。"}),
             },
         }
 
@@ -56,7 +56,6 @@ class GG图像推理:
     ):
         from .model_loader import _QwenStorage, _Gemma4Storage
         
-        # 确定模型类型和存储
         model_family = getattr(模型, "settings", {}).get("family", "")
         if model_family in ["Qwen3-VL", "Qwen3.5-VL"]:
             storage = _QwenStorage
@@ -65,7 +64,6 @@ class GG图像推理:
         else:
             raise ValueError(f"未知模型类型：{model_family}")
         
-        # 卸载后 / 引用失效时：自动重载与同步到当前有效模型
         need_reload = False
         if storage.model is None:
             need_reload = True
@@ -97,7 +95,6 @@ class GG图像推理:
         if system_text:
             messages.append({"role": "system", "content": system_text})
 
-        # 根据输入模式检查相应的输入
         if 输入模式 == "图片":
             if 图片 is None:
                 raise ValueError("输入模式为图片时，未检测到图片输入。")
@@ -109,7 +106,6 @@ class GG图像推理:
         else:
             raise ValueError(f"未知输入模式：{输入模式}")
 
-        # 根据模型类型调整参数
         params = {
             "max_tokens": int(最大生成token),
             "temperature": float(温度),
@@ -125,7 +121,6 @@ class GG图像推理:
             if not text_input:
                 raise ValueError("文本模式下，文本输入不能为空。")
 
-            # 使用文本输入作为用户内容
             user_content = text_input
             if prompt_text:
                 user_content = f"{prompt_text}\n\n{text_input}"
@@ -137,8 +132,7 @@ class GG图像推理:
                 text = out["choices"][0]["message"]["content"]
             except Exception:
                 text = str(out)
-        else:  # 图片模式
-            # 只处理第一张图片
+        else:
             img_b64 = _批量图片索引转base64(图片, 0, int(最大边长))
             if not img_b64:
                 raise ValueError("图片转换失败，请检查输入图片。")
@@ -152,7 +146,6 @@ class GG图像推理:
             except Exception:
                 text = str(out)
 
-        # 根据模型类型清洗输出
         if model_family == "Gemma4":
             text = _清洗gemma4输出文本(text, bool(输出think块))
         elif not bool(输出think块):

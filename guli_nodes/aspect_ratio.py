@@ -12,26 +12,25 @@ class GGAspectRatioAdapter:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "aspect_ratio": (ASPECT_RATIOS, {"default": "16:9"}),
-                "side_length": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "side_type": (SIDE_TYPES, {"default": "最长边"}),
+                "宽高比例": (ASPECT_RATIOS, {"default": "16:9"}),
+                "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
+                "边长类型": (SIDE_TYPES, {"default": "最长边"}),
             }
         }
 
     RETURN_TYPES = ("INT", "INT")
-    RETURN_NAMES = ("width", "height")
+    RETURN_NAMES = ("宽度", "高度")
     FUNCTION = "calculate"
     CATEGORY = "GuliNodes/图像尺寸工具"
 
-    def calculate(self, aspect_ratio: str, side_length: int, side_type: str) -> tuple:
-        """计算指定比例和边长的宽高"""
-        wr, hr = ASPECT_PRESETS[aspect_ratio]
-        if side_type == "最长边":
-            width = side_length if wr > hr else int(side_length * wr / hr)
-            height = int(side_length * hr / wr) if wr > hr else side_length
+    def calculate(self, 宽高比例: str, 边长: int, 边长类型: str) -> tuple:
+        wr, hr = ASPECT_PRESETS[宽高比例]
+        if 边长类型 == "最长边":
+            width = 边长 if wr > hr else int(边长 * wr / hr)
+            height = int(边长 * hr / wr) if wr > hr else 边长
         else:
-            height = side_length if wr > hr else int(side_length * hr / wr)
-            width = int(side_length * wr / hr) if wr > hr else side_length
+            height = 边长 if wr > hr else int(边长 * hr / wr)
+            width = int(边长 * wr / hr) if wr > hr else 边长
         width = (width // 8) * 8
         height = (height // 8) * 8
         return (width, height)
@@ -42,10 +41,10 @@ class GGAspectRatioLatent:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "aspect_ratio": (ASPECT_RATIOS, {"default": "16:9"}),
-                "side_length": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "side_type": (SIDE_TYPES, {"default": "最长边"}),
-                "batch_size": ("INT", {"default": 1, "min": 1, "max": 64}),
+                "宽高比例": (ASPECT_RATIOS, {"default": "16:9"}),
+                "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
+                "边长类型": (SIDE_TYPES, {"default": "最长边"}),
+                "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
             }
         }
 
@@ -53,42 +52,42 @@ class GGAspectRatioLatent:
     FUNCTION = "generate"
     CATEGORY = "GuliNodes/图像尺寸工具"
 
-    def generate(self, aspect_ratio: str, side_length: int, side_type: str, batch_size: int) -> tuple:
-        """生成指定比例的Latent"""
+    def generate(self, 宽高比例: str, 边长: int, 边长类型: str, 批量大小: int) -> tuple:
         adapter = GGAspectRatioAdapter()
-        width, height = adapter.calculate(aspect_ratio, side_length, side_type)
-        latent = torch.zeros([batch_size, 4, height // 8, width // 8])
+        width, height = adapter.calculate(宽高比例, 边长, 边长类型)
+        latent = torch.zeros([批量大小, 4, height // 8, width // 8])
         return ({"samples": latent},)
 
 
-class GGImageToLatent(GGAspectRatioLatent):
+class GGImageToLatent:
     @classmethod
     def INPUT_TYPES(s):
-        base = GGAspectRatioLatent.INPUT_TYPES()
-        base["optional"] = base["required"]
-        base["required"] = {
-            "mode": (["手动", "参考图像"], {"default": "手动"}),
+        return {
+            "required": {
+                "模式": (["手动", "参考图像"], {"default": "手动"}),
+            },
+            "optional": {
+                "宽高比例": (ASPECT_RATIOS, {"default": "16:9"}),
+                "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
+                "边长类型": (SIDE_TYPES, {"default": "最长边"}),
+                "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
+                "image": ("IMAGE",),
+            }
         }
-        base["optional"]["image"] = ("IMAGE",)
-        return base
 
     RETURN_TYPES = ("LATENT",)
     RETURN_NAMES = ("latent",)
     FUNCTION = "convert"
     CATEGORY = "GuliNodes/图像尺寸工具"
 
-    def convert(self, mode: str = "手动", aspect_ratio: str = "16:9", side_length: int = 1024, side_type: str = "最长边", batch_size: int = 1, image: torch.Tensor = None) -> tuple:
-        """根据手动设置或参考图像生成Latent"""
-        if mode == "参考图像" and image is not None:
-            # Get image dimensions from input image
+    def convert(self, 模式: str = "手动", 宽高比例: str = "16:9", 边长: int = 1024, 边长类型: str = "最长边", 批量大小: int = 1, image: torch.Tensor = None) -> tuple:
+        if 模式 == "参考图像" and image is not None:
             if len(image.shape) == 4:
                 h, w = image.shape[1], image.shape[2]
             else:
                 h, w = image.shape[0], image.shape[1]
-            # Create latent with image dimensions
             return ({"samples": torch.zeros([batch_size, 4, h // 8, w // 8])},)
         else:
-            # Use manual settings like AspectRatioLatent
             adapter = GGAspectRatioAdapter()
             width, height = adapter.calculate(aspect_ratio, side_length, side_type)
             return ({"samples": torch.zeros([batch_size, 4, height // 8, width // 8])},)
