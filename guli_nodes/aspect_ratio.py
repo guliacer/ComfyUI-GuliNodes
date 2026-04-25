@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as torch_F
 
 ASPECT_RATIOS = ["1:1", "3:2", "4:3", "5:4", "16:9", "21:9", "9:16", "2:3", "3:4", "4:5", "9:21"]
 ASPECT_PRESETS = {"1:1": (1, 1), "3:2": (3, 2), "4:3": (4, 3), "5:4": (5, 4), "16:9": (16, 9),
@@ -8,6 +7,10 @@ SIDE_TYPES = ["最长边", "最短边"]
 
 
 class GGAspectRatioAdapter:
+    @staticmethod
+    def _align_to_eight(value: int) -> int:
+        return max(8, (value // 8) * 8)
+
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -31,8 +34,8 @@ class GGAspectRatioAdapter:
         else:
             height = 边长 if wr > hr else int(边长 * hr / wr)
             width = int(边长 * wr / hr) if wr > hr else 边长
-        width = (width // 8) * 8
-        height = (height // 8) * 8
+        width = self._align_to_eight(width)
+        height = self._align_to_eight(height)
         return (width, height)
 
 
@@ -86,11 +89,13 @@ class GGImageToLatent:
                 h, w = image.shape[1], image.shape[2]
             else:
                 h, w = image.shape[0], image.shape[1]
-            return ({"samples": torch.zeros([batch_size, 4, h // 8, w // 8])},)
+            height = GGAspectRatioAdapter._align_to_eight(int(h))
+            width = GGAspectRatioAdapter._align_to_eight(int(w))
+            return ({"samples": torch.zeros([批量大小, 4, height // 8, width // 8])},)
         else:
             adapter = GGAspectRatioAdapter()
-            width, height = adapter.calculate(aspect_ratio, side_length, side_type)
-            return ({"samples": torch.zeros([batch_size, 4, height // 8, width // 8])},)
+            width, height = adapter.calculate(宽高比例, 边长, 边长类型)
+            return ({"samples": torch.zeros([批量大小, 4, height // 8, width // 8])},)
 
 
 NODE_CLASS_MAPPINGS = {

@@ -60,33 +60,6 @@ class GGTextSplit:
         return tuple(parts)
 
 
-class GGTextCase:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "文本": ("STRING", {"default": "", "multiline": True}),
-                "大小写模式": (["大写", "小写", "首字母大写"], {"default": "首字母大写"}),
-            }
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("文本",)
-    FUNCTION = "convert"
-    CATEGORY = "GuliNodes/文本工具"
-
-    def convert(self, 文本: str = "", 大小写模式: str = "首字母大写") -> tuple:
-        if not 文本:
-            return ("",)
-
-        if 大小写模式 == "大写":
-            return (文本.upper(),)
-        elif 大小写模式 == "小写":
-            return (文本.lower(),)
-        else:
-            return (文本.title(),)
-
-
 class GGTextFilter:
     @classmethod
     def INPUT_TYPES(cls):
@@ -216,7 +189,6 @@ class GGTextFormat:
 NODE_CLASS_MAPPINGS = {
     "GGTextJoin": GGTextJoin,
     "GGTextSplit": GGTextSplit,
-    "GGTextCase": GGTextCase,
     "GGTextFilter": GGTextFilter,
     "GGTextReplace": GGTextReplace,
     "GGTextCounter": GGTextCounter,
@@ -227,7 +199,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGTextJoin": "GG 文本合并",
     "GGTextSplit": "GG 文本分割",
-    "GGTextCase": "GG 文本大小写",
     "GGTextFilter": "GG 文本过滤",
     "GGTextReplace": "GG 文本替换",
     "GGTextCounter": "GG 文本计数",

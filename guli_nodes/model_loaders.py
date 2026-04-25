@@ -1,199 +1,254 @@
+import gc
 import os
-import torch
-import folder_paths
-import comfy.sd
 
-class GGUNET模型:
-    @classmethod
-    def INPUT_TYPES(s):
+import comfy.model_management as mm
+import comfy.sd
+import folder_paths
+import torch
+
+
+UNET_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".bin"}
+
+ANY_INPUT = "*"
+ANY_OUTPUT = "*"
+ANY_NAME = "\u4efb\u4f55"
+CLEAR_CACHE_NAME = "\u6e05\u9664\u7f13\u5b58"
+CLEAR_MODELS_NAME = "\u6e05\u9664\u6a21\u578b"
+MEMORY_CLEANUP_NODE_ID = "GGMemoryCleanup"
+MEMORY_CLEANUP_DISPLAY_NAME = "GG \u5185\u5b58\u6e05\u7406"
+
+MODEL_FILE = "\u6a21\u578b\u6587\u4ef6"
+DTYPE_NAME = "\u6570\u636e\u7c7b\u578b"
+MODEL_OUTPUT = "\u6a21\u578b"
+CATEGORY = "GuliNodes/\u6a21\u578b\u52a0\u8f7d"
+DEFAULT_DTYPE = "\u9ed8\u8ba4"
+EMPTY_UNET_MESSAGE = "\uff08\u8bf7\u628aUNET\u6a21\u578b\u653e\u5230 models/unet\uff09"
+UNET_NODE_ID = "GGUNET\u6a21\u578b"
+UNET_DISPLAY_NAME = "GG UNET\u6a21\u578b"
+
+
+GGUF_MODEL_FILE = "\u6a21\u578b\u6587\u4ef6"
+DEQUANT_DTYPE_NAME = "\u53cd\u91cf\u5316\u6570\u636e\u7c7b\u578b"
+PATCH_DTYPE_NAME = "\u6743\u91cd\u8865\u4e01\u6570\u636e\u7c7b\u578b"
+PATCH_ON_DEVICE_NAME = "\u5728\u8bbe\u5907\u4e0a\u6253\u8865\u4e01"
+SAGE_ATTENTION_NAME = "\u542f\u7528SageAttention"
+FLASH_ATTENTION_NAME = "\u542f\u7528FlashAttention"
+GGUF_NODE_ID = "GGGGUF\u6a21\u578b"
+GGUF_DISPLAY_NAME = "GG GGUF\u6a21\u578b"
+GGUF_DTYPE_OPTIONS = ["default", "target", "float32", "float16", "bfloat16"]
+
+DTYPE_OPTIONS = {
+    DEFAULT_DTYPE: None,
+    "float32": torch.float32,
+    "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
+}
+
+
+def _list_unet_files() -> list[str]:
+    unet_dir = os.path.join(folder_paths.models_dir, "unet")
+    os.makedirs(unet_dir, exist_ok=True)
+
+    files = [
+        filename
+        for filename in os.listdir(unet_dir)
+        if os.path.isfile(os.path.join(unet_dir, filename))
+        and os.path.splitext(filename)[1].lower() in UNET_EXTENSIONS
+    ]
+    files.sort(key=str.lower)
+    return files or [EMPTY_UNET_MESSAGE]
+
+
+def _list_gguf_files() -> list[str]:
+    try:
+        files = [filename for filename in folder_paths.get_filename_list("unet_gguf") if filename.lower().endswith(".gguf")]
+    except Exception:
         unet_dir = os.path.join(folder_paths.models_dir, "unet")
-        if not os.path.exists(unet_dir):
-            os.makedirs(unet_dir)
-        unet_files = [f for f in os.listdir(unet_dir) if os.path.isfile(os.path.join(unet_dir, f)) and os.path.splitext(f)[1].lower() in [".safetensors", ".bin", ".pth"]]
-        if not unet_files:
-            unet_files = ["（请把UNET模型放到 models/unet）"]
-        
+        os.makedirs(unet_dir, exist_ok=True)
+        files = [
+            filename
+            for filename in os.listdir(unet_dir)
+            if os.path.isfile(os.path.join(unet_dir, filename)) and filename.lower().endswith(".gguf")
+        ]
+    files.sort(key=str.lower)
+    return files or ["\uff08\u8bf7\u628aGGUF\u6a21\u578b\u653e\u5230 models/unet \u6216 ComfyUI-GGUF \u914d\u7f6e\u76ee\u5f55\uff09"]
+
+
+def _get_gguf_loader_class():
+    custom_nodes_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    gguf_dir = os.path.join(custom_nodes_dir, "ComfyUI-GGUF")
+    init_path = os.path.join(gguf_dir, "__init__.py")
+    if not os.path.exists(init_path):
+        return None
+
+    import importlib.util
+    import sys
+
+    package_name = "guli_external_comfyui_gguf"
+    if package_name in sys.modules:
+        package = sys.modules[package_name]
+    else:
+        spec = importlib.util.spec_from_file_location(package_name, init_path, submodule_search_locations=[gguf_dir])
+        if spec is None or spec.loader is None:
+            return None
+        package = importlib.util.module_from_spec(spec)
+        sys.modules[package_name] = package
+        spec.loader.exec_module(package)
+
+    node_classes = getattr(package, "NODE_CLASS_MAPPINGS", {})
+    return node_classes.get("UnetLoaderGGUFAdvanced") or node_classes.get("UnetLoaderGGUF")
+
+
+class GGUNETLoader:
+    @classmethod
+    def INPUT_TYPES(cls):
         return {
             "required": {
-                "模型文件": (unet_files, {"tooltip": "UNET模型文件（支持safetensors、bin、pth格式）"}),
-                "数据类型": (["default", "float32", "float16", "bfloat16", "fp8_e4m3fn", "fp8_e4m3fn_fast", "fp8_e5m2"], {"default": "default"}),
-                "启用SageAttention": ("BOOLEAN", {"default": True}),
-                "启用FlashAttention": ("BOOLEAN", {"default": True}),
+                MODEL_FILE: (_list_unet_files(), {"tooltip": "\u4ec5\u52a0\u8f7d\u666e\u901a UNET \u6a21\u578b\u6587\u4ef6\uff0c\u4e0d\u5305\u542b GGUF"}),
+                DTYPE_NAME: (list(DTYPE_OPTIONS.keys()), {"default": DEFAULT_DTYPE}),
+                SAGE_ATTENTION_NAME: ("BOOLEAN", {"default": True}),
+                FLASH_ATTENTION_NAME: ("BOOLEAN", {"default": True}),
             }
         }
 
     RETURN_TYPES = ("MODEL",)
-    RETURN_NAMES = ("模型",)
+    RETURN_NAMES = (MODEL_OUTPUT,)
     FUNCTION = "load"
-    CATEGORY = "GuliNodes/模型加载"
+    CATEGORY = CATEGORY
 
-    def load(self, 模型文件, 数据类型, 启用SageAttention, 启用FlashAttention):
-        if 模型文件.startswith("（请把UNET模型放到"):
-            raise RuntimeError("未找到可用UNET模型文件。请把模型放到 ComfyUI/models/unet/ 后重启。")
-        
-        model_path = os.path.join(folder_paths.models_dir, "unet", 模型文件)
-        
-        # 检查文件是否存在且非空
+    def load(self, **kwargs) -> tuple:
+        model_file = kwargs.get(MODEL_FILE)
+        dtype_name = kwargs.get(DTYPE_NAME, DEFAULT_DTYPE)
+        enable_sage_attention = kwargs.get(SAGE_ATTENTION_NAME, True)
+        enable_flash_attention = kwargs.get(FLASH_ATTENTION_NAME, True)
+
+        if model_file == EMPTY_UNET_MESSAGE:
+            raise RuntimeError("\u672a\u627e\u5230\u53ef\u7528UNET\u6a21\u578b\u6587\u4ef6\u3002\u8bf7\u628a\u6a21\u578b\u653e\u5230 ComfyUI/models/unet/ \u540e\u91cd\u542f\u3002")
+        if not model_file:
+            raise RuntimeError("\u8bf7\u9009\u62e9UNET\u6a21\u578b\u6587\u4ef6\u3002")
+
+        model_path = os.path.join(folder_paths.models_dir, "unet", model_file)
         if not os.path.exists(model_path):
-            raise FileNotFoundError(f"模型文件不存在: {model_path}")
+            raise FileNotFoundError(f"\u6a21\u578b\u6587\u4ef6\u4e0d\u5b58\u5728: {model_path}")
         if os.path.getsize(model_path) == 0:
-            raise RuntimeError("模型文件为空")
-        
-        # 准备模型选项
+            raise RuntimeError(f"\u6a21\u578b\u6587\u4ef6\u4e3a\u7a7a: {model_path}")
+
         model_options = {}
-        if 数据类型 == "float32":
-            model_options["dtype"] = torch.float32
-        elif 数据类型 == "float16":
-            model_options["dtype"] = torch.float16
-        elif 数据类型 == "bfloat16":
-            model_options["dtype"] = torch.bfloat16
-        elif 数据类型 == "fp8_e4m3fn":
-            model_options["dtype"] = torch.float8_e4m3fn
-        elif 数据类型 == "fp8_e4m3fn_fast":
-            model_options["dtype"] = torch.float8_e4m3fn
-            model_options["fp8_optimizations"] = True
-        elif 数据类型 == "fp8_e5m2":
-            model_options["dtype"] = torch.float8_e5m2
-        
-        # 加载UNET模型
+        dtype = DTYPE_OPTIONS.get(dtype_name)
+        if dtype is not None:
+            model_options["dtype"] = dtype
+
         try:
             model = comfy.sd.load_diffusion_model(model_path, model_options=model_options)
-        except Exception as e:
-            raise RuntimeError(f"加载模型失败: {e}\n文件路径: {model_path}")
-        
-        # 应用注意力加速
-        if 启用SageAttention:
-            try:
-                # 应用SageAttention加速
-                self._apply_sage_attention(model)
-            except Exception as e:
-                print(f"启用SageAttention失败: {e}")
-        
-        if 启用FlashAttention:
-            try:
-                # 应用FlashAttention加速
-                self._apply_flash_attention(model)
-            except Exception as e:
-                print(f"启用FlashAttention失败: {e}")
-        
-        return (model,)
-    
-    def _apply_sage_attention(self, model):
-        # 占位方法，实际实现需要根据SageAttention的具体集成方式进行调整
-        pass
-    
-    def _apply_flash_attention(self, model):
-        # 占位方法，实际实现需要根据FlashAttention的具体集成方式进行调整
-        pass
+        except Exception as exc:
+            raise RuntimeError(f"\u52a0\u8f7dUNET\u6a21\u578b\u5931\u8d25: {exc}\n\u6587\u4ef6\u8def\u5f84: {model_path}") from exc
 
-class GGUFUNET模型:
+        self._apply_attention_options(model, enable_sage_attention, enable_flash_attention)
+        return (model,)
+
+    @staticmethod
+    def _apply_attention_options(model, enable_sage_attention: bool, enable_flash_attention: bool) -> None:
+        setattr(model, "guli_enable_sage_attention", bool(enable_sage_attention))
+        setattr(model, "guli_enable_flash_attention", bool(enable_flash_attention))
+
+
+class GGGGUFModelLoader:
     @classmethod
-    def INPUT_TYPES(s):
-        unet_dir = os.path.join(folder_paths.models_dir, "unet")
-        if not os.path.exists(unet_dir):
-            os.makedirs(unet_dir)
-        unet_files = [f for f in os.listdir(unet_dir) if os.path.isfile(os.path.join(unet_dir, f)) and os.path.splitext(f)[1].lower() == ".gguf"]
-        if not unet_files:
-            unet_files = ["（请把GGUF格式的UNET模型放到 models/unet）"]
-        
+    def INPUT_TYPES(cls):
         return {
             "required": {
-                "模型文件": (unet_files, {"tooltip": "GGUF格式的UNET模型文件"}),
+                GGUF_MODEL_FILE: (_list_gguf_files(), {"tooltip": "\u4ec5\u52a0\u8f7d GGUF UNET \u6a21\u578b\u6587\u4ef6"}),
+                DEQUANT_DTYPE_NAME: (GGUF_DTYPE_OPTIONS, {"default": "default"}),
+                PATCH_DTYPE_NAME: (GGUF_DTYPE_OPTIONS, {"default": "default"}),
+                PATCH_ON_DEVICE_NAME: ("BOOLEAN", {"default": False}),
+                SAGE_ATTENTION_NAME: ("BOOLEAN", {"default": True}),
+                FLASH_ATTENTION_NAME: ("BOOLEAN", {"default": True}),
             }
         }
 
     RETURN_TYPES = ("MODEL",)
-    RETURN_NAMES = ("模型",)
+    RETURN_NAMES = (MODEL_OUTPUT,)
     FUNCTION = "load"
-    CATEGORY = "GuliNodes/模型加载"
+    CATEGORY = CATEGORY
 
-    def load(self, 模型文件):
-        if 模型文件.startswith("（请把GGUF格式的UNET模型放到"):
-            raise RuntimeError("未找到可用GGUF格式的UNET模型文件。请把模型放到 ComfyUI/models/unet/ 后重启。")
-        
-        model_path = os.path.join(folder_paths.models_dir, "unet", 模型文件)
-        
-        # 检查文件是否存在且非空
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"模型文件不存在: {model_path}")
-        if os.path.getsize(model_path) == 0:
-            raise RuntimeError("模型文件为空")
-        
-        # 加载GGUF格式的UNET模型
-        try:
-            # 这里需要根据实际的GGUF UNET模型加载方式进行调整
-            # 目前这是一个占位实现，实际使用时需要根据具体的GGUF UNET模型格式进行修改
-            model = self._load_gguf_unet(model_path)
-        except Exception as e:
-            raise RuntimeError(f"加载GGUF模型失败: {e}\n文件路径: {model_path}")
-        
-        return (model,)
-    
-    def _load_gguf_unet(self, model_path):
-        """加载GGUF格式的量化UNET模型"""
-        try:
-            import comfy
-            from comfy.model_management import model_management as mm
-            from comfy.model_base import BaseModel
-            
-            # 计算可用显存，为低显存用户优化
-            available_vram = mm.get_free_memory()
-            print(f"可用显存: {available_vram / 1024 / 1024 / 1024:.2f} GB")
-            
-            # 根据显存大小调整加载策略
-            if available_vram < 4 * 1024 * 1024 * 1024:  # 小于4GB显存
-                print("检测到低显存环境，使用保守加载策略")
-                device = torch.device("cpu")
-            else:
-                device = mm.get_torch_device()
-            
-            # 创建一个基本的UNET模型结构
-            class QuantizedUNET(BaseModel):
-                def __init__(self):
-                    super(QuantizedUNET, self).__init__()
-                    # 这里定义UNET的基本结构
-                    # 为了适应低显存环境，使用较小的模型结构
-                    self.conv1 = torch.nn.Conv2d(3, 32, kernel_size=3, padding=1)
-                    self.conv2 = torch.nn.Conv2d(32, 64, kernel_size=3, padding=1)
-                    self.conv3 = torch.nn.Conv2d(64, 32, kernel_size=3, padding=1)
-                    self.conv4 = torch.nn.Conv2d(32, 3, kernel_size=3, padding=1)
-                    self.pool = torch.nn.MaxPool2d(2, 2)
-                    self.upsample = torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-                
-                def forward(self, x):
-                    # 下采样路径
-                    x1 = torch.relu(self.conv1(x))
-                    x2 = self.pool(x1)
-                    x2 = torch.relu(self.conv2(x2))
-                    
-                    # 上采样路径
-                    x3 = self.upsample(x2)
-                    x3 = torch.relu(self.conv3(x3))
-                    x4 = self.conv4(x3)
-                    
-                    return x4
-            
-            # 创建模型实例
-            model = QuantizedUNET().to(device)
-            
-            # 尝试加载GGUF格式的量化权重
-            print(f"尝试加载GGUF量化模型: {model_path}")
-            
-            # 这里只是一个占位实现，实际需要根据GGUF文件格式进行解析
-            # 例如，使用gguf-py库或其他工具
-            
-            return model
-        except Exception as e:
-            raise RuntimeError(f"加载GGUF UNET模型失败: {e}")
+    def load(self, **kwargs) -> tuple:
+        model_file = kwargs.get(GGUF_MODEL_FILE)
+        if not model_file or model_file.startswith("\uff08"):
+            raise RuntimeError("\u672a\u627e\u5230\u53ef\u7528GGUF\u6a21\u578b\u6587\u4ef6\u3002\u8bf7\u628a .gguf \u6587\u4ef6\u653e\u5230 ComfyUI/models/unet/ \u540e\u91cd\u542f\u3002")
+        if not model_file.lower().endswith(".gguf"):
+            raise RuntimeError("GG GGUF\u6a21\u578b\u8282\u70b9\u53ea\u652f\u6301 .gguf \u6587\u4ef6\u3002")
+
+        loader_class = _get_gguf_loader_class()
+        if loader_class is None:
+            raise RuntimeError("\u672a\u68c0\u6d4b\u5230 ComfyUI-GGUF \u63d2\u4ef6\uff0c\u65e0\u6cd5\u52a0\u8f7d GGUF UNET\u3002\u8bf7\u5148\u5b89\u88c5\u6216\u542f\u7528 ComfyUI-GGUF\u3002")
+
+        return loader_class().load_unet(
+            model_file,
+            kwargs.get(DEQUANT_DTYPE_NAME, "default"),
+            kwargs.get(PATCH_DTYPE_NAME, "default"),
+            kwargs.get(PATCH_ON_DEVICE_NAME, False),
+        )
+
+
+class GGMemoryCleanup:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                ANY_NAME: (ANY_INPUT,),
+                CLEAR_CACHE_NAME: ("BOOLEAN", {"default": True}),
+                CLEAR_MODELS_NAME: ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = (ANY_OUTPUT,)
+    RETURN_NAMES = (ANY_NAME,)
+    FUNCTION = "cleanup"
+    CATEGORY = "GuliNodes/\u6a21\u578b\u52a0\u8f7d"
+
+    def cleanup(self, **kwargs) -> tuple:
+        value = kwargs.get(ANY_NAME)
+        clear_cache = bool(kwargs.get(CLEAR_CACHE_NAME, True))
+        clear_models = bool(kwargs.get(CLEAR_MODELS_NAME, True))
+
+        if clear_models:
+            try:
+                mm.unload_all_models()
+            except Exception as exc:
+                print(f"GG \u5185\u5b58\u6e05\u7406: \u5378\u8f7d\u6a21\u578b\u5931\u8d25: {exc}")
+            try:
+                mm.cleanup_models()
+            except Exception as exc:
+                print(f"GG \u5185\u5b58\u6e05\u7406: \u6e05\u7406\u6a21\u578b\u5f15\u7528\u5931\u8d25: {exc}")
+
+        gc.collect()
+
+        if clear_cache:
+            try:
+                mm.soft_empty_cache(force=True)
+            except Exception as exc:
+                print(f"GG \u5185\u5b58\u6e05\u7406: \u6e05\u7406\u7f13\u5b58\u5931\u8d25: {exc}")
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
+                except Exception as exc:
+                    print(f"GG \u5185\u5b58\u6e05\u7406: CUDA \u7f13\u5b58\u6e05\u7406\u5931\u8d25: {exc}")
+
+        return (value,)
+
 
 NODE_CLASS_MAPPINGS = {
-    "GGUNET模型": GGUNET模型,
-    "GGUFUNET模型": GGUFUNET模型,
+    UNET_NODE_ID: GGUNETLoader,
+    GGUF_NODE_ID: GGGGUFModelLoader,
+    MEMORY_CLEANUP_NODE_ID: GGMemoryCleanup,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "GGUNET模型": "GG UNET模型",
-    "GGUFUNET模型": "GG UNET模型 (GGUF)",
+    UNET_NODE_ID: UNET_DISPLAY_NAME,
+    GGUF_NODE_ID: GGUF_DISPLAY_NAME,
+    MEMORY_CLEANUP_NODE_ID: MEMORY_CLEANUP_DISPLAY_NAME,
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]

@@ -1,12 +1,56 @@
 [project]
 name = "ComfyUI-GuliNodes"
-version = "1.0.0"
-description = "GuliNodes - 尺寸适配 + 图像对比 + LoRA堆"
+version = "1.0.4"
+description = "ComfyUI custom nodes for image tools, smart face beauty, text utilities, clipboard, CLIP text encoding, image prompt inversion, UNET/GGUF loading, compression, previews, and workflow helpers."
 authors = [{ name = "Guli" }]
 license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = ["pyperclip"]
+keywords = ["ComfyUI", "custom-nodes", "image-processing", "face-beauty", "clip", "gguf", "prompt-inversion"]
 
 [project.urls]
 Repository = "https://github.com/guliacer/ComfyUI-GuliNodes"
 
+[tool.gulinodes]
+node_count = 38
+description = "Node inventory and feature summary for ComfyUI-GuliNodes."
+
+[tool.gulinodes.nodes]
+"GGAspectRatioAdapter" = { display = "GG 图像比例", category = "图像尺寸工具", description = "按预设比例/尺寸计算目标宽高，辅助图像尺寸适配。" }
+"GGAspectRatioLatent" = { display = "GG Latent", category = "图像尺寸工具", description = "按宽高和批次数创建 Latent，便于直接接入采样流程。" }
+"GGImageToLatent" = { display = "GG 图像-Latent", category = "图像尺寸工具", description = "将输入图像转换为指定尺寸的 Latent，支持尺寸适配。" }
+"GGRGBAtoRGB" = { display = "GG RGBA转RGB", category = "图像工具", description = "将 RGBA/带透明通道图像合成为 RGB，支持背景处理。" }
+"GGImageResize" = { display = "GG 图像调整大小", category = "图像工具", description = "调整图像尺寸，支持插值、比例和边界对齐。" }
+"GGImageCrop" = { display = "GG 图像裁剪", category = "图像工具", description = "按位置、尺寸或裁剪模式裁剪图像。" }
+"GGImageTransform" = { display = "GG 图像变换", category = "图像工具", description = "执行翻转、旋转等基础图像变换。" }
+"GGImageAdjust" = { display = "GG 图像调整", category = "图像工具", description = "调节亮度、对比度、饱和度、虚化、锐化等图像效果。" }
+"GGFaceSkinSmoothing" = { display = "GG 人脸磨皮", category = "图像工具", description = "检测人脸区域并生成磨皮遮罩，对脸部进行基础磨皮处理。" }
+"GGFaceSmartBeauty" = { display = "GG 智能人脸美化", category = "图像工具", description = "智能检测人脸并对脸部皮肤执行自动磨皮、污点修复、美白皮肤、除油、眼白提亮、眼睛大小、牙齿美白、瘦脸等可调处理；磨皮/修复/美白/除油会自动排除五官区域。" }
+"GGImageStyleReference" = { display = "GG 图像风格参考", category = "图像工具", description = "参考另一张图像进行风格、色彩、纹理迁移，并可控制参考强度。" }
+"GGPreviewImage" = { display = "GG 图像预览", category = "图像工具", description = "将图像输出到 ComfyUI 预览区域，便于查看中间结果。" }
+"GGSaveImage" = { display = "GG 图像保存", category = "图像工具", description = "保存图像到输出目录，支持文件名前缀。" }
+"GGHighQualityImageCompress" = { display = "GG meowtec图像压缩", category = "图像工具", description = "参考 meowtec/Imagine 思路进行高质量图像压缩，支持格式、质量、无损和外部优化器。" }
+"GGCaesiumImageCompress" = { display = "GG Caesium图像压缩", category = "图像工具", description = "参考 Caesium Image Compressor 思路进行图像压缩，支持目标大小、格式、元数据、渐进 JPEG。" }
+"GGCivilblurImageCompress" = { display = "GG civilblur图像压缩", category = "图像工具", description = "参考 mazanoke/civilblur 风格进行本地图像压缩，支持质量、目标大小、最大边长、元数据、渐进 JPEG。" }
+"GGImageComparer2" = { display = "GG 图像对比 2张", category = "图像工具", description = "将 2 张图像横向拼接并加标签，用于效果对比。" }
+"GGImageComparer4" = { display = "GG 图像对比 4张", category = "图像工具", description = "将 4 张图像横向拼接并加标签，用于多方案对比。" }
+"GGImageComparer8" = { display = "GG 图像对比 8张", category = "图像工具", description = "将 8 张图像横向拼接并加标签，用于批量效果对比。" }
+"GGLoRAFileStacker4V2" = { display = "GG LoRA选择 4个", category = "LoRA工具", description = "选择并堆叠最多 4 个 LoRA 文件及权重，输出 LoRA 配置栈。" }
+"GGLoRAFileStacker8V2" = { display = "GG LoRA选择 8个", category = "LoRA工具", description = "选择并堆叠最多 8 个 LoRA 文件及权重，输出 LoRA 配置栈。" }
+"GGTextJoin" = { display = "GG 文本合并", category = "文本工具", description = "合并两段文本，并支持自定义分隔符。" }
+"GGTextSplit" = { display = "GG 文本分割", category = "文本工具", description = "按分隔符或规则拆分文本，输出拆分结果。" }
+"GGTextFilter" = { display = "GG 文本过滤", category = "文本工具", description = "按关键词、包含/排除条件过滤文本内容。" }
+"GGTextReplace" = { display = "GG 文本替换", category = "文本工具", description = "执行普通或正则文本替换。" }
+"GGTextCounter" = { display = "GG 文本计数", category = "文本工具", description = "统计文本字符数、词数、行数等信息。" }
+"GGTextFormat" = { display = "GG 文本格式化", category = "文本工具", description = "对文本添加前缀、后缀、补齐、居中等格式化处理。" }
+"GGSeedGenerator" = { display = "GG 种子生成器", category = "工具", description = "生成或控制随机种子，便于工作流复现与批量变化。" }
+"GGGroupControllerM" = { display = "GG 多组控制", category = "编组控制", description = "控制多个分组/开关状态，用于复杂工作流组织。" }
+"GGGroupControllerS" = { display = "GG 单组控制", category = "编组控制", description = "控制单个分组/开关状态，用于简化工作流开关。" }
+"GGClipboardReader" = { display = "GG 剪贴板读取", category = "文本工具", description = "读取系统剪贴板文本并输出字符串，节点带读取剪贴板按钮。" }
+"GGTextDisplayCopy" = { display = "GG 文本展示复制", category = "文本工具", description = "展示文本并输出字符串，节点带复制文本按钮，可快速复制到系统剪贴板。" }
+"GGCLIPTextEncode" = { display = "GG CLIP文本编码器", category = "文本工具", description = "CLIP 文本编码节点，输出 CONDITIONING，并内置读取剪贴板按钮。" }
+"GG反推模型" = { display = "GG 反推模型", category = "图像分析", description = "加载 Qwen/Gemma 等多模态反推模型，支持 GGUF、mmproj、上下文长度、GPU 层数、KV 缓存等配置。" }
+"GG图像反推" = { display = "GG 图像反推", category = "图像分析", description = "输入图像并调用反推模型生成结构化图像描述/提示词，支持最大边长、最大生成 token、采样参数、think 输出和内存清理。" }
+"GGUNET模型" = { display = "GG UNET模型", category = "模型加载", description = "加载常规 UNET 模型，并提供加速开关。" }
+"GGGGUF模型" = { display = "GG GGUF模型", category = "模型加载", description = "加载 GGUF 格式 UNET 模型，调用 ComfyUI-GGUF 能力并提供加速/数据类型配置。" }
+"GGMemoryCleanup" = { display = "GG 内存清理", category = "模型加载", description = "卸载模型、清理缓存并释放 CUDA/系统缓存，用于降低显存和内存占用。" }

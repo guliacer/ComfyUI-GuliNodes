@@ -1,68 +1,36 @@
+from importlib import import_module
+
+
 NODE_CLASS_MAPPINGS = {}
 NODE_DISPLAY_NAME_MAPPINGS = {}
 
-try:
-    from .aspect_ratio import NODE_CLASS_MAPPINGS as AR_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as AR_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(AR_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(AR_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 aspect_ratio 模块失败: {e}")
+_NODE_MODULES = (
+    "aspect_ratio",
+    "image_tools",
+    "lora_tools",
+    "text_tools",
+    "seed_tools",
+    "group_controller",
+    "clipboard",
+    "image_prompt",
+    "model_loaders",
+)
 
-try:
-    from .image_tools import NODE_CLASS_MAPPINGS as IM_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as IM_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(IM_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(IM_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 image_tools 模块失败: {e}")
 
-try:
-    from .lora_tools import NODE_CLASS_MAPPINGS as LORA_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as LORA_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(LORA_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(LORA_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 lora_tools 模块失败: {e}")
+def _load_node_module(module_name: str) -> None:
+    try:
+        module = import_module(f"{__name__}.{module_name}")
+    except Exception as exc:
+        print(f"导入 {module_name} 模块失败: {exc}")
+        return
 
-try:
-    from .text_tools import NODE_CLASS_MAPPINGS as TEXT_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as TEXT_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(TEXT_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(TEXT_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 text_tools 模块失败: {e}")
+    NODE_CLASS_MAPPINGS.update(getattr(module, "NODE_CLASS_MAPPINGS", {}))
+    NODE_DISPLAY_NAME_MAPPINGS.update(getattr(module, "NODE_DISPLAY_NAME_MAPPINGS", {}))
 
-try:
-    from .seed_tools import NODE_CLASS_MAPPINGS as SEED_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as SEED_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(SEED_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(SEED_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 seed_tools 模块失败: {e}")
 
-try:
-    from .group_controller import NODE_CLASS_MAPPINGS as GROUP_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as GROUP_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(GROUP_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(GROUP_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 group_controller 模块失败: {e}")
+for _module_name in _NODE_MODULES:
+    _load_node_module(_module_name)
 
-try:
-    from .clipboard import NODE_CLASS_MAPPINGS as CLIPBOARD_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as CLIPBOARD_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(CLIPBOARD_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(CLIPBOARD_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 clipboard 模块失败: {e}")
-
-try:
-    from .image_prompt import NODE_CLASS_MAPPINGS as IMAGE_PROMPT_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as IMAGE_PROMPT_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(IMAGE_PROMPT_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(IMAGE_PROMPT_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 image_prompt 模块失败: {e}")
-
-try:
-    from .model_loaders import NODE_CLASS_MAPPINGS as MODEL_LOADERS_NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS as MODEL_LOADERS_NODE_DISPLAY_NAME_MAPPINGS
-    NODE_CLASS_MAPPINGS.update(MODEL_LOADERS_NODE_CLASS_MAPPINGS)
-    NODE_DISPLAY_NAME_MAPPINGS.update(MODEL_LOADERS_NODE_DISPLAY_NAME_MAPPINGS)
-except Exception as e:
-    print(f"导入 model_loaders 模块失败: {e}")
 
 print(f"成功导入 {len(NODE_CLASS_MAPPINGS)} 个节点")
 

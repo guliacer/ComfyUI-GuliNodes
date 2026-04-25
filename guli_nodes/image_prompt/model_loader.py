@@ -14,17 +14,28 @@ import comfy.model_management as mm
 
 try:
     from llama_cpp import Llama
-    from llama_cpp.llama_chat服务 import Qwen3VLChatHandler, Qwen35ChatHandler, Gemma4ChatHandler
 except Exception:
     Llama = None
-    Qwen3VLChatHandler = None
-    Qwen35ChatHandler = None
-    Gemma4ChatHandler = None
 
 try:
-    from gguf import GGML_TYPE_Q8_0
+    from llama_cpp import GGML_TYPE_Q8_0
 except Exception:
-    GGML_TYPE_Q8_0 = None
+    GGML_TYPE_Q8_0 = 8
+
+try:
+    from llama_cpp.llama_chat_format import Qwen3VLChatHandler
+except Exception:
+    Qwen3VLChatHandler = None
+
+try:
+    from llama_cpp.llama_chat_format import Qwen35ChatHandler
+except Exception:
+    Qwen35ChatHandler = None
+
+try:
+    from llama_cpp.llama_chat_format import Gemma4ChatHandler
+except Exception:
+    Gemma4ChatHandler = None
 
 默认KV缓存类型 = "默认"
 KV缓存类型选项 = ["默认", "q8_0"]
