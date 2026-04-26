@@ -54,6 +54,17 @@ def _to_rgb_image(image: torch.Tensor) -> torch.Tensor:
     return _empty_image(image.device, image.dtype)
 
 
+def _pil_to_tensor(image: Image.Image, device=None, dtype=torch.float32) -> torch.Tensor:
+    rgb_image = image.convert("RGB")
+    array = np.asarray(rgb_image).astype(np.float32) / 255.0
+    tensor = torch.from_numpy(array)
+    if device is not None:
+        tensor = tensor.to(device=device, dtype=dtype)
+    elif dtype is not None:
+        tensor = tensor.to(dtype=dtype)
+    return tensor
+
+
 def _gaussian_blur(image: torch.Tensor, kernel_size: int | None = None, sigma: float = 1.0) -> torch.Tensor:
     sigma = max(float(sigma), 0.001)
     if kernel_size is None:
@@ -994,7 +1005,7 @@ class GGSaveImage(SaveImage):
         return {
             "required": {
                 "图像": ("IMAGE",),
-                "文件名前缀": ("STRING", {"default": "GG.save"}),
+                "文件名前缀": ("STRING", {"default": "%date:yyyy_MM_dd%/图像"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -1006,7 +1017,7 @@ class GGSaveImage(SaveImage):
     CATEGORY = "GuliNodes/图像工具"
     OUTPUT_NODE = True
 
-    def save(self, 图像, 文件名前缀="GG.save", prompt=None, extra_pnginfo=None):
+    def save(self, 图像, 文件名前缀="%date:yyyy_MM_dd%/图像", prompt=None, extra_pnginfo=None):
         return self.save_images(图像, filename_prefix=文件名前缀, prompt=prompt, extra_pnginfo=extra_pnginfo)
 
 
@@ -1016,7 +1027,6 @@ class GGHighQualityImageCompress(SaveImage):
         return {
             "required": {
                 "图像": ("IMAGE",),
-                "文件名前缀": ("STRING", {"default": "%date:yyyy_MM_dd%/meowtec图像压缩"}),
                 "格式": (["WEBP", "JPEG", "PNG"], {"default": "JPEG"}),
                 "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
             },
@@ -1031,13 +1041,15 @@ class GGHighQualityImageCompress(SaveImage):
             },
         }
 
-    RETURN_TYPES = ()
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("图像",)
     FUNCTION = "compress"
     CATEGORY = "GuliNodes/图像工具"
     OUTPUT_NODE = True
 
-    def compress(self, 图像, 文件名前缀="%date:yyyy_MM_dd%/meowtec图像压缩", 格式="JPEG", 质量=85, 无损=False,
+    def compress(self, 图像, 格式="JPEG", 质量=85, 无损=False,
                  保留元数据=False, 优先外部优化器=True, prompt=None, extra_pnginfo=None):
+        文件名前缀 = "%date:yyyy_MM_dd%/meowtec图像压缩"
         output_dir = folder_paths.get_output_directory()
         ext = self._extension(格式)
         full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(
@@ -1045,6 +1057,7 @@ class GGHighQualityImageCompress(SaveImage):
         )
 
         results = []
+        output_images = []
         for batch_number, image in enumerate(图像):
             pil_image = self._to_pil(image, 格式)
             filename_with_batch_num = filename.replace("%batch_num%", str(batch_number))
@@ -1052,9 +1065,11 @@ class GGHighQualityImageCompress(SaveImage):
             output_path = os.path.join(full_output_folder, file)
             self._save_optimized(pil_image, output_path, 格式, int(质量), bool(无损), bool(保留元数据), bool(优先外部优化器))
             results.append({"filename": file, "subfolder": subfolder, "type": "output"})
+            with Image.open(output_path) as saved_image:
+                output_images.append(_pil_to_tensor(saved_image, device=image.device, dtype=image.dtype))
             counter += 1
 
-        return {"ui": {"images": results}}
+        return {"ui": {"images": results}, "result": (torch.stack(output_images, dim=0).contiguous(),)}
 
     @staticmethod
     def _extension(format_name: str) -> str:
@@ -1139,7 +1154,6 @@ class GGCaesiumImageCompress(GGHighQualityImageCompress):
         return {
             "required": {
                 "图像": ("IMAGE",),
-                "文件名前缀": ("STRING", {"default": "%date:yyyy_MM_dd%/Caesium图像压缩"}),
                 "格式": (["自动", "JPEG", "PNG", "WEBP", "TIFF"], {"default": "JPEG"}),
                 "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
             },
@@ -1162,9 +1176,10 @@ class GGCaesiumImageCompress(GGHighQualityImageCompress):
     CATEGORY = "GuliNodes/图像工具"
     OUTPUT_NODE = True
 
-    def compress_caesium(self, 图像, 文件名前缀="%date:yyyy_MM_dd%/Caesium图像压缩", 格式="JPEG", 质量=85, 无损=True,
+    def compress_caesium(self, 图像, 格式="JPEG", 质量=85, 无损=True,
                          保留元数据=False, 缩放百分比=100, 最大宽度=0, 最大高度=0,
                          目标大小KB=0, 渐进JPEG=True, prompt=None, extra_pnginfo=None):
+        文件名前缀 = "%date:yyyy_MM_dd%/Caesium图像压缩"
         output_dir = folder_paths.get_output_directory()
         output_format = "WEBP" if 格式 == "自动" else 格式
         ext = self._extension(output_format)
@@ -1173,6 +1188,7 @@ class GGCaesiumImageCompress(GGHighQualityImageCompress):
         )
 
         results = []
+        output_images = []
         for batch_number, image in enumerate(图像):
             pil_image = self._to_pil(image, output_format)
             pil_image = self._resize_like_caesium(pil_image, int(缩放百分比), int(最大宽度), int(最大高度))
@@ -1181,9 +1197,11 @@ class GGCaesiumImageCompress(GGHighQualityImageCompress):
             output_path = os.path.join(full_output_folder, file)
             self._save_caesium_style(pil_image, output_path, output_format, int(质量), bool(无损), bool(保留元数据), bool(渐进JPEG), int(目标大小KB))
             results.append({"filename": file, "subfolder": subfolder, "type": "output"})
+            with Image.open(output_path) as saved_image:
+                output_images.append(_pil_to_tensor(saved_image, device=image.device, dtype=image.dtype))
             counter += 1
 
-        return {"ui": {"images": results}}
+        return {"ui": {"images": results}, "result": (torch.stack(output_images, dim=0).contiguous(),)}
 
     @staticmethod
     def _extension(format_name: str) -> str:
@@ -1268,7 +1286,6 @@ class GGCivilblurImageCompress(GGHighQualityImageCompress):
         return {
             "required": {
                 "图像": ("IMAGE",),
-                "文件名前缀": ("STRING", {"default": "%date:yyyy_MM_dd%/civilblur图像压缩"}),
                 "格式": (["WEBP", "JPEG", "PNG"], {"default": "JPEG"}),
                 "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
             },
@@ -1289,9 +1306,10 @@ class GGCivilblurImageCompress(GGHighQualityImageCompress):
     CATEGORY = "GuliNodes/图像工具"
     OUTPUT_NODE = True
 
-    def compress_civilblur(self, 图像, 文件名前缀="%date:yyyy_MM_dd%/civilblur图像压缩", 格式="JPEG", 质量=85,
+    def compress_civilblur(self, 图像, 格式="JPEG", 质量=85,
                            目标大小KB=0, 最大边长=0, 移除元数据=True,
                            渐进JPEG=True, 强制压缩=False, prompt=None, extra_pnginfo=None):
+        文件名前缀 = "%date:yyyy_MM_dd%/civilblur图像压缩"
         output_dir = folder_paths.get_output_directory()
         ext = self._extension(格式)
         full_output_folder, filename, counter, subfolder, filename_prefix = folder_paths.get_save_image_path(
@@ -1299,6 +1317,7 @@ class GGCivilblurImageCompress(GGHighQualityImageCompress):
         )
 
         results = []
+        output_images = []
         for batch_number, image in enumerate(图像):
             pil_image = self._to_pil(image, 格式)
             pil_image = self._resize_max_edge(pil_image, int(最大边长))
@@ -1316,9 +1335,11 @@ class GGCivilblurImageCompress(GGHighQualityImageCompress):
                 force_compress=bool(强制压缩),
             )
             results.append({"filename": file, "subfolder": subfolder, "type": "output"})
+            with Image.open(output_path) as saved_image:
+                output_images.append(_pil_to_tensor(saved_image, device=image.device, dtype=image.dtype))
             counter += 1
 
-        return {"ui": {"images": results}}
+        return {"ui": {"images": results}, "result": (torch.stack(output_images, dim=0).contiguous(),)}
 
     @staticmethod
     def _resize_max_edge(pil_image: Image.Image, max_edge: int) -> Image.Image:

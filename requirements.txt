@@ -1,0 +1,13 @@
+# Core runtime
+torch
+numpy
+pillow
+
+# Utilities
+pyperclip
+
+# Image enhancement / face processing
+opencv-python
+
+# Image prompt / multimodal inference
+llama-cpp-python
