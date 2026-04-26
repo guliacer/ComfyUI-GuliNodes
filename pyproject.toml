@@ -36,6 +36,7 @@ dependencies = [
   "pillow",
   "pyperclip",
   "opencv-python",
+  "mediapipe",
   "llama-cpp-python"
 ]
 
