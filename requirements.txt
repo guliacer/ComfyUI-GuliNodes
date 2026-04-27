@@ -3,11 +3,9 @@ torch
 numpy
 pillow
 
-# Utilities
-pyperclip
-
 # Image enhancement / face processing
 opencv-python
+mediapipe
 
 # Image prompt / multimodal inference
 llama-cpp-python

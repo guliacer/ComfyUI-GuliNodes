@@ -7,6 +7,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {}
 _NODE_MODULES = (
     "aspect_ratio",
     "image_tools",
+    "video_tools",
     "lora_tools",
     "text_tools",
     "seed_tools",

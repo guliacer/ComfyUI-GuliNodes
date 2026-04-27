@@ -34,7 +34,6 @@ dependencies = [
   "torch",
   "numpy",
   "pillow",
-  "pyperclip",
   "opencv-python",
   "mediapipe",
   "llama-cpp-python"
