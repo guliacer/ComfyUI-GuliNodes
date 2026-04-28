@@ -46,32 +46,55 @@ DTYPE_OPTIONS = {
 
 
 def _list_unet_files() -> list[str]:
-    unet_dir = os.path.join(folder_paths.models_dir, "unet")
-    os.makedirs(unet_dir, exist_ok=True)
+    try:
+        files = [
+            filename
+            for filename in folder_paths.get_filename_list("diffusion_models")
+            if os.path.splitext(filename)[1].lower() in UNET_EXTENSIONS
+        ]
+    except Exception:
+        search_dirs = [
+            os.path.join(folder_paths.models_dir, "unet"),
+            os.path.join(folder_paths.models_dir, "diffusion_models"),
+        ]
+        files = []
+        for directory in search_dirs:
+            os.makedirs(directory, exist_ok=True)
+            files.extend(
+                filename
+                for filename in os.listdir(directory)
+                if os.path.isfile(os.path.join(directory, filename))
+                and os.path.splitext(filename)[1].lower() in UNET_EXTENSIONS
+            )
 
-    files = [
-        filename
-        for filename in os.listdir(unet_dir)
-        if os.path.isfile(os.path.join(unet_dir, filename))
-        and os.path.splitext(filename)[1].lower() in UNET_EXTENSIONS
-    ]
-    files.sort(key=str.lower)
+    files = sorted(set(files), key=str.lower)
     return files or [EMPTY_UNET_MESSAGE]
 
 
 def _list_gguf_files() -> list[str]:
+    files = []
     try:
-        files = [filename for filename in folder_paths.get_filename_list("unet_gguf") if filename.lower().endswith(".gguf")]
-    except Exception:
-        unet_dir = os.path.join(folder_paths.models_dir, "unet")
-        os.makedirs(unet_dir, exist_ok=True)
-        files = [
+        files.extend(
             filename
-            for filename in os.listdir(unet_dir)
-            if os.path.isfile(os.path.join(unet_dir, filename)) and filename.lower().endswith(".gguf")
-        ]
-    files.sort(key=str.lower)
-    return files or ["\uff08\u8bf7\u628aGGUF\u6a21\u578b\u653e\u5230 models/unet \u6216 ComfyUI-GGUF \u914d\u7f6e\u76ee\u5f55\uff09"]
+            for filename in folder_paths.get_filename_list("unet_gguf")
+            if filename.lower().endswith(".gguf")
+        )
+    except Exception:
+        pass
+
+    search_dirs = [
+        os.path.join(folder_paths.models_dir, "unet"),
+        os.path.join(folder_paths.models_dir, "diffusion_models"),
+    ]
+    for directory in search_dirs:
+        os.makedirs(directory, exist_ok=True)
+        files.extend(
+            filename
+            for filename in os.listdir(directory)
+            if os.path.isfile(os.path.join(directory, filename)) and filename.lower().endswith(".gguf")
+        )
+    files = sorted(set(files), key=str.lower)
+    return files or ["\uff08\u8bf7\u628aGGUF\u6a21\u578b\u653e\u5230 models/unet \u3001models/diffusion_models \u6216 ComfyUI-GGUF \u914d\u7f6e\u76ee\u5f55\uff09"]
 
 
 def _get_gguf_loader_class():
@@ -123,13 +146,20 @@ class GGUNETLoader:
         enable_flash_attention = kwargs.get(FLASH_ATTENTION_NAME, True)
 
         if model_file == EMPTY_UNET_MESSAGE:
-            raise RuntimeError("\u672a\u627e\u5230\u53ef\u7528UNET\u6a21\u578b\u6587\u4ef6\u3002\u8bf7\u628a\u6a21\u578b\u653e\u5230 ComfyUI/models/unet/ \u540e\u91cd\u542f\u3002")
+            raise RuntimeError("\u672a\u627e\u5230\u53ef\u7528UNET\u6a21\u578b\u6587\u4ef6\u3002\u8bf7\u628a\u6a21\u578b\u653e\u5230 ComfyUI/models/unet/ \u6216 ComfyUI/models/diffusion_models/ \u540e\u91cd\u542f\u3002")
         if not model_file:
             raise RuntimeError("\u8bf7\u9009\u62e9UNET\u6a21\u578b\u6587\u4ef6\u3002")
 
-        model_path = os.path.join(folder_paths.models_dir, "unet", model_file)
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"\u6a21\u578b\u6587\u4ef6\u4e0d\u5b58\u5728: {model_path}")
+        try:
+            model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_file)
+        except Exception:
+            fallback_paths = [
+                os.path.join(folder_paths.models_dir, "unet", model_file),
+                os.path.join(folder_paths.models_dir, "diffusion_models", model_file),
+            ]
+            model_path = next((path for path in fallback_paths if os.path.exists(path)), "")
+        if not model_path or not os.path.exists(model_path):
+            raise FileNotFoundError(f"\u6a21\u578b\u6587\u4ef6\u4e0d\u5b58\u5728: {model_file}")
         if os.path.getsize(model_path) == 0:
             raise RuntimeError(f"\u6a21\u578b\u6587\u4ef6\u4e3a\u7a7a: {model_path}")
 
@@ -174,13 +204,29 @@ class GGGGUFModelLoader:
     def load(self, **kwargs) -> tuple:
         model_file = kwargs.get(GGUF_MODEL_FILE)
         if not model_file or model_file.startswith("\uff08"):
-            raise RuntimeError("\u672a\u627e\u5230\u53ef\u7528GGUF\u6a21\u578b\u6587\u4ef6\u3002\u8bf7\u628a .gguf \u6587\u4ef6\u653e\u5230 ComfyUI/models/unet/ \u540e\u91cd\u542f\u3002")
+            raise RuntimeError("\u672a\u627e\u5230\u53ef\u7528GGUF\u6a21\u578b\u6587\u4ef6\u3002\u8bf7\u628a .gguf \u6587\u4ef6\u653e\u5230 ComfyUI/models/unet/ \u6216 ComfyUI/models/diffusion_models/ \u540e\u91cd\u542f\u3002")
         if not model_file.lower().endswith(".gguf"):
             raise RuntimeError("GG GGUF\u6a21\u578b\u8282\u70b9\u53ea\u652f\u6301 .gguf \u6587\u4ef6\u3002")
 
         loader_class = _get_gguf_loader_class()
         if loader_class is None:
             raise RuntimeError("\u672a\u68c0\u6d4b\u5230 ComfyUI-GGUF \u63d2\u4ef6\uff0c\u65e0\u6cd5\u52a0\u8f7d GGUF UNET\u3002\u8bf7\u5148\u5b89\u88c5\u6216\u542f\u7528 ComfyUI-GGUF\u3002")
+
+        model_path = ""
+        try:
+            model_path = folder_paths.get_full_path("unet_gguf", model_file) or ""
+        except Exception:
+            model_path = ""
+
+        if not model_path:
+            fallback_paths = [
+                os.path.join(folder_paths.models_dir, "unet", model_file),
+                os.path.join(folder_paths.models_dir, "diffusion_models", model_file),
+            ]
+            model_path = next((path for path in fallback_paths if os.path.exists(path)), "")
+
+        if not model_path:
+            raise FileNotFoundError(f"\u6a21\u578b\u6587\u4ef6\u4e0d\u5b58\u5728: {model_file}")
 
         return loader_class().load_unet(
             model_file,
