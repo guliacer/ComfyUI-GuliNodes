@@ -2,7 +2,6 @@ import os
 import re
 import shutil
 import subprocess
-import threading
 import time
 from datetime import datetime
 from pathlib import Path
@@ -38,7 +37,6 @@ except Exception:
 VIDEO_TYPE = "VIDEO"
 VIDEO_RETURN_TYPE = IO.VIDEO if IO is not None else VIDEO_TYPE
 UPLOAD_VIDEO_EXTENSIONS = {"mp4", "flv", "mov", "avi", "f4v"}
-VIDEO_FILE_FILTER = " ".join(f"*.{ext}" for ext in sorted(UPLOAD_VIDEO_EXTENSIONS))
 PRESET_OPTIONS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
 
 CN_VIDEO = "\u89c6\u9891"
@@ -73,7 +71,6 @@ CPU_ENCODER_OPTIONS = [
     "x265-64-12bit.exe",
 ]
 DEFAULT_ENCODER_LABEL = "x264_64-8bit.exe"
-NATIVE_DIALOG_LOCK = threading.Lock()
 LEGACY_ENCODER_ALIASES = {
     "CPU H.264 (libx264)": "x264_64-8bit.exe",
     "CPU H.265 (libx265)": "x265-64-8bit.exe",
@@ -277,7 +274,7 @@ def _probe_video_readable(source_path: str) -> tuple[bool, str]:
     return False, (result.stderr or result.stdout or "").strip()[-800:]
 
 
-def _resolve_path_loader_input(file: str, directory: str = "") -> str:
+def _resolve_video_preview_path(file: str, directory: str = "") -> str:
     file_norm = _normalize_user_video_path(file)
     dir_norm = _normalize_user_video_path(directory)
 
@@ -578,87 +575,10 @@ def _summarize_encoder_error(candidate_encoder: str, stderr_text: str) -> str:
     return f"[{candidate_encoder}] {text[-600:]}"
 
 
-def _open_native_dialog_file(initial_dir: str = "") -> str:
-    if os.name != "nt":
-        return ""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except Exception:
-        return ""
-
-    initial_dir = _normalize_user_video_path(initial_dir)
-    initial_dir = initial_dir if Path(initial_dir).is_dir() else ""
-
-    with NATIVE_DIALOG_LOCK:
-        root = tk.Tk()
-        root.withdraw()
-        try:
-            root.attributes("-topmost", True)
-        except Exception:
-            pass
-        try:
-            path = filedialog.askopenfilename(
-                title="\u9009\u62e9\u89c6\u9891\u6587\u4ef6",
-                initialdir=initial_dir or None,
-                filetypes=[("Video Files", VIDEO_FILE_FILTER), ("All Files", "*.*")],
-            )
-        finally:
-            root.destroy()
-    return _normalize_user_video_path(path)
-
-
-def _open_native_dialog_directory(initial_dir: str = "") -> str:
-    if os.name != "nt":
-        return ""
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-    except Exception:
-        return ""
-
-    initial_dir = _normalize_user_video_path(initial_dir)
-    initial_dir = initial_dir if Path(initial_dir).is_dir() else ""
-
-    with NATIVE_DIALOG_LOCK:
-        root = tk.Tk()
-        root.withdraw()
-        try:
-            root.attributes("-topmost", True)
-        except Exception:
-            pass
-        try:
-            path = filedialog.askdirectory(
-                title="\u9009\u62e9\u89c6\u9891\u76ee\u5f55",
-                initialdir=initial_dir or None,
-                mustexist=True,
-            )
-        finally:
-            root.destroy()
-    return _normalize_user_video_path(path)
-
-
-def _register_video_picker_routes() -> None:
+def _register_video_preview_route() -> None:
     global _ROUTES_REGISTERED
-    if _ROUTES_REGISTERED or PromptServer is None or web is None:
+    if _ROUTES_REGISTERED or PromptServer is None or getattr(PromptServer, "instance", None) is None or web is None:
         return
-
-    @PromptServer.instance.routes.get("/guli/video/pick-file")
-    async def guli_pick_video_file(request):
-        directory = request.query.get("directory", "")
-        path = _open_native_dialog_file(directory)
-        if not path:
-            return web.json_response({"ok": False, "cancelled": True})
-        resolved = Path(path)
-        return web.json_response({"ok": True, "path": str(resolved), "directory": str(resolved.parent), "file": resolved.name})
-
-    @PromptServer.instance.routes.get("/guli/video/pick-directory")
-    async def guli_pick_video_directory(request):
-        directory = request.query.get("directory", "")
-        path = _open_native_dialog_directory(directory)
-        if not path:
-            return web.json_response({"ok": False, "cancelled": True})
-        return web.json_response({"ok": True, "path": str(Path(path))})
 
     @PromptServer.instance.routes.get("/guli/video/preview")
     async def guli_preview_video(request):
@@ -666,7 +586,7 @@ def _register_video_picker_routes() -> None:
         directory = request.query.get("directory", "")
         raw_path = request.query.get("path", "")
 
-        video_path = _resolve_path_loader_input(raw_path or file_value, directory)
+        video_path = _resolve_video_preview_path(raw_path or file_value, directory)
         if not video_path or not os.path.isfile(video_path):
             raise web.HTTPNotFound(text=f"找不到视频文件: {video_path or raw_path or file_value}")
 
@@ -679,7 +599,7 @@ def _register_video_picker_routes() -> None:
     _ROUTES_REGISTERED = True
 
 
-_register_video_picker_routes()
+_register_video_preview_route()
 
 
 class GGVideoLoad(ComfyNodeABC):
@@ -738,45 +658,6 @@ class GGVideoLoad(ComfyNodeABC):
     def VALIDATE_INPUTS(cls, file):
         suffix = Path(file).suffix.lower().lstrip(".")
         return True if suffix in UPLOAD_VIDEO_EXTENSIONS else f"Invalid video file: {file}"
-
-
-class GGVideoLoadPath(ComfyNodeABC):
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "file": ("STRING", {"default": "", "multiline": False, "placeholder": "W:/path/to/video.mp4 or file:///W:/path/to/video.mp4 or video.mp4"}),
-                "directory": ("STRING", {"default": "", "multiline": False, "placeholder": "Optional: W:/path/to/folder"}),
-            }
-        }
-
-    RETURN_TYPES = (VIDEO_RETURN_TYPE, "PATH")
-    RETURN_NAMES = (CN_VIDEO, CN_PATH)
-    FUNCTION = "load_video"
-    CATEGORY = "GuliNodes/\u89c6\u9891\u5de5\u5177"
-
-    def load_video(self, file, directory=""):
-        video_path = _resolve_path_loader_input(file, directory)
-        if not os.path.isfile(video_path):
-            raise FileNotFoundError(f"\u627e\u4e0d\u5230\u89c6\u9891\u6587\u4ef6: {video_path or file}")
-        ok, probe_error = _probe_video_readable(video_path)
-        if not ok:
-            raise RuntimeError(f"\u89c6\u9891\u6587\u4ef6\u65e0\u6cd5\u6b63\u5e38\u8bfb\u53d6: {video_path}\n{probe_error}")
-        if InputImpl is None:
-            return (_build_video_payload(video_path, Path(video_path).suffix.lstrip("."), "", video_path), video_path)
-        return (InputImpl.VideoFromFile(video_path), video_path)
-
-    @classmethod
-    def IS_CHANGED(cls, file, directory=""):
-        video_path = _resolve_path_loader_input(file, directory)
-        return os.path.getmtime(video_path) if os.path.isfile(video_path) else f"{directory}|{file}"
-
-    @classmethod
-    def VALIDATE_INPUTS(cls, file, directory=""):
-        suffix = Path(file).suffix.lower().lstrip(".")
-        if suffix:
-            return True if suffix in UPLOAD_VIDEO_EXTENSIONS else f"Invalid video file: {file}"
-        return True
 
 
 class GGVideoCompress:
@@ -904,7 +785,7 @@ class GGVideoSave:
         remux_command = [ffmpeg_path, "-y", "-i", source_path, "-c", "copy", destination_path]
         remux_result = _run_ffmpeg_command(remux_command)
         if remux_result.returncode == 0 and os.path.exists(destination_path):
-            return ()
+            return {"ui": {"guli_video_preview": [{"path": destination_path, "format": target_format, "source_path": source_path}]}}
 
         fallback_profile = _pick_encoder_profile(target_format, DEFAULT_ENCODER_LABEL, MODE_COMPAT)
         fallback_audio = _pick_audio_codec(target_format)
@@ -937,8 +818,6 @@ class GGVideoSave:
 NODE_CLASS_MAPPINGS = {
     "GGVideoLoad": GGVideoLoad,
     "LoadVideoGG": GGVideoLoad,
-    "GGVideoLoadPath": GGVideoLoadPath,
-    "LoadVideoPathGG": GGVideoLoadPath,
     "GGVideoCompress": GGVideoCompress,
     "CompressVideoGG": GGVideoCompress,
     "GGVideoSave": GGVideoSave,
@@ -949,8 +828,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGVideoLoad": "GG \u89c6\u9891\u52a0\u8f7d",
     "LoadVideoGG": "\u52a0\u8f7d\u89c6\u9891",
-    "GGVideoLoadPath": "GG \u89c6\u9891\u8def\u5f84\u52a0\u8f7d",
-    "LoadVideoPathGG": "\u8def\u5f84\u52a0\u8f7d\u89c6\u9891",
     "GGVideoCompress": "GG \u89c6\u9891\u538b\u7f29",
     "CompressVideoGG": "\u538b\u7f29\u89c6\u9891",
     "GGVideoSave": "GG \u89c6\u9891\u4fdd\u5b58",

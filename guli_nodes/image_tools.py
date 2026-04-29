@@ -1,12 +1,13 @@
 import torch
 import torch.nn.functional as torch_F
 from PIL import Image, ImageDraw, ImageFont
+from PIL.PngImagePlugin import PngInfo
 import numpy as np
 from nodes import PreviewImage, SaveImage
+from comfy.cli_args import args
 import folder_paths
+import json
 import os
-import shutil
-import subprocess
 import tempfile
 from datetime import datetime
 from typing import Any
@@ -1940,6 +1941,93 @@ class GGPreviewImage(PreviewImage):
         return self.save_images(图像, filename_prefix="GG.preview", prompt=prompt, extra_pnginfo=extra_pnginfo)
 
 
+_GG_RECOMMENDED_FORMAT_ATTR = "_gg_recommended_format"
+_GG_COMPRESSION_METHOD_ATTR = "_gg_compression_method"
+_GG_COMPRESSION_QUALITY_ATTR = "_gg_compression_quality"
+_GG_TARGET_SIZE_ATTR = "_gg_target_size_kb"
+_GG_SUPPORTED_SAVE_FORMATS = {"JPEG", "PNG", "WEBP"}
+
+
+def _coerce_gg_format(format_name: Any) -> str | None:
+    if format_name is None:
+        return None
+    value = str(format_name).strip()
+    if not value or value == "自动":
+        return None
+    value = value.upper()
+    if value == "JPG":
+        value = "JPEG"
+    return value if value in _GG_SUPPORTED_SAVE_FORMATS else None
+
+
+def _normalize_gg_format(format_name: Any, default: str = "JPEG", allow_auto: bool = False) -> str:
+    value = str(format_name or "").strip()
+    if allow_auto and (value == "自动" or value.upper() == "AUTO"):
+        return "AUTO"
+    return _coerce_gg_format(value) or default
+
+
+def _set_gg_image_hints(
+    images: torch.Tensor,
+    format_name: str,
+    quality: int,
+    target_size_kb: int,
+    method: str,
+) -> None:
+    try:
+        setattr(images, _GG_RECOMMENDED_FORMAT_ATTR, format_name)
+        setattr(images, _GG_COMPRESSION_QUALITY_ATTR, int(quality))
+        setattr(images, _GG_TARGET_SIZE_ATTR, int(target_size_kb))
+        setattr(images, _GG_COMPRESSION_METHOD_ATTR, method)
+    except Exception:
+        pass
+
+
+def _get_gg_recommended_format(images: torch.Tensor) -> str | None:
+    return _coerce_gg_format(getattr(images, _GG_RECOMMENDED_FORMAT_ATTR, None))
+
+
+def _get_gg_int_hint(images: torch.Tensor, attr_name: str, default: int) -> int:
+    try:
+        return int(getattr(images, attr_name, default))
+    except Exception:
+        return default
+
+
+def _tensor_image_to_pil(image: torch.Tensor) -> Image.Image:
+    array = np.clip(255.0 * image.detach().cpu().numpy(), 0, 255).astype(np.uint8)
+    if array.ndim == 2:
+        return Image.fromarray(array, mode="L")
+
+    channels = array.shape[-1] if array.ndim == 3 else 1
+    if channels == 1:
+        return Image.fromarray(array[..., 0], mode="L")
+    if channels == 2:
+        return Image.fromarray(array[..., :2], mode="LA")
+    if channels == 3:
+        return Image.fromarray(array[..., :3], mode="RGB")
+    return Image.fromarray(array[..., :4], mode="RGBA")
+
+
+def _prepare_pil_for_format(pil_image: Image.Image, format_name: str) -> Image.Image:
+    if format_name == "JPEG":
+        if pil_image.mode in ("RGBA", "LA") or (pil_image.mode == "P" and "transparency" in pil_image.info):
+            rgba = pil_image.convert("RGBA")
+            background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+            background.alpha_composite(rgba)
+            return background.convert("RGB")
+        return pil_image.convert("RGB")
+
+    if format_name == "WEBP":
+        if pil_image.mode in ("RGBA", "RGB"):
+            return pil_image
+        if pil_image.mode == "LA" or (pil_image.mode == "P" and "transparency" in pil_image.info):
+            return pil_image.convert("RGBA")
+        return pil_image.convert("RGB")
+
+    return pil_image
+
+
 class GGSaveImage(SaveImage):
     @classmethod
     def INPUT_TYPES(cls):
@@ -1947,6 +2035,7 @@ class GGSaveImage(SaveImage):
             "required": {
                 "图像": ("IMAGE",),
                 "文件名前缀": ("STRING", {"default": "%date:yyyy_MM_dd%/图像"}),
+                "格式": (["JPEG", "PNG", "WEBP", "自动"], {"default": "自动"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -1958,27 +2047,193 @@ class GGSaveImage(SaveImage):
     CATEGORY = "GuliNodes/图像工具"
     OUTPUT_NODE = True
 
-    def save(self, 图像, 文件名前缀="%date:yyyy_MM_dd%/图像", prompt=None, extra_pnginfo=None):
-        return self.save_images(图像, filename_prefix=_resolve_output_prefix(文件名前缀), prompt=prompt, extra_pnginfo=extra_pnginfo)
+    def save(self, 图像, 文件名前缀="%date:yyyy_MM_dd%/图像", 格式="自动", prompt=None, extra_pnginfo=None):
+        resolved_prefix = _resolve_output_prefix(文件名前缀) + self.prefix_append
+        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+            resolved_prefix,
+            self.output_dir,
+            图像[0].shape[1],
+            图像[0].shape[0],
+        )
+
+        quality = max(1, min(_get_gg_int_hint(图像, _GG_COMPRESSION_QUALITY_ATTR, 95), 100))
+        target_size_kb = max(0, _get_gg_int_hint(图像, _GG_TARGET_SIZE_ATTR, 0))
+        requested_format = _normalize_gg_format(格式, default="AUTO", allow_auto=True)
+        results = []
+
+        for batch_number, image in enumerate(图像):
+            format_name = self._select_format(图像, image, requested_format)
+            pil_image = _tensor_image_to_pil(image)
+            filename_with_batch_num = filename.replace("%batch_num%", str(batch_number))
+            file = f"{filename_with_batch_num}_{counter:05}_.{self._extension(format_name)}"
+            output_path = os.path.join(full_output_folder, file)
+            self._save_encoded_image(
+                pil_image,
+                output_path,
+                format_name,
+                quality,
+                target_size_kb,
+                prompt,
+                extra_pnginfo,
+            )
+            results.append({
+                "filename": file,
+                "subfolder": subfolder,
+                "type": self.type,
+            })
+            counter += 1
+
+        return {"ui": {"images": results}}
+
+    def _select_format(self, images: torch.Tensor, image: torch.Tensor, requested_format: str) -> str:
+        if requested_format != "AUTO":
+            return requested_format
+        recommended_format = _get_gg_recommended_format(images)
+        if recommended_format is not None:
+            return recommended_format
+        return self._choose_auto_format(image)
+
+    @staticmethod
+    def _choose_auto_format(image: torch.Tensor) -> str:
+        if image.shape[-1] >= 4:
+            alpha = image[..., 3]
+            try:
+                if bool(torch.any(alpha < 0.999).item()):
+                    return "PNG"
+            except Exception:
+                return "PNG"
+
+        try:
+            cpu_image = (image.detach().cpu().clamp(0.0, 1.0) * 255.0).to(torch.uint8)
+            colors = cpu_image.reshape(-1, cpu_image.shape[-1])[:, :3]
+            if colors.shape[0] > 32768:
+                step = max(1, colors.shape[0] // 32768)
+                colors = colors[::step][:32768]
+            if torch.unique(colors, dim=0).shape[0] <= 256:
+                return "PNG"
+        except Exception:
+            pass
+
+        return "JPEG"
+
+    @staticmethod
+    def _extension(format_name: str) -> str:
+        return {"WEBP": "webp", "JPEG": "jpg", "PNG": "png"}.get(format_name, "jpg")
+
+    @staticmethod
+    def _png_metadata(prompt=None, extra_pnginfo=None) -> PngInfo | None:
+        if args.disable_metadata:
+            return None
+        metadata = PngInfo()
+        if prompt is not None:
+            metadata.add_text("prompt", json.dumps(prompt))
+        if extra_pnginfo is not None:
+            for key in extra_pnginfo:
+                metadata.add_text(key, json.dumps(extra_pnginfo[key]))
+        return metadata
+
+    def _save_encoded_image(
+        self,
+        pil_image: Image.Image,
+        output_path: str,
+        format_name: str,
+        quality: int,
+        target_size_kb: int = 0,
+        prompt=None,
+        extra_pnginfo=None,
+    ) -> None:
+        if target_size_kb > 0 and format_name in ("JPEG", "WEBP"):
+            self._save_target_size(pil_image, output_path, format_name, quality, target_size_kb)
+            return
+
+        save_image = _prepare_pil_for_format(pil_image, format_name)
+        if format_name == "PNG":
+            save_image.save(
+                output_path,
+                format="PNG",
+                pnginfo=self._png_metadata(prompt, extra_pnginfo),
+                compress_level=self.compress_level,
+            )
+        elif format_name == "WEBP":
+            save_image.save(output_path, format="WEBP", quality=quality, method=6, optimize=True)
+        else:
+            save_image.save(
+                output_path,
+                format="JPEG",
+                quality=quality,
+                optimize=True,
+                progressive=True,
+                subsampling=0 if quality >= 90 else "4:2:0",
+            )
+
+    def _save_target_size(
+        self,
+        pil_image: Image.Image,
+        output_path: str,
+        format_name: str,
+        quality: int,
+        target_size_kb: int,
+    ) -> None:
+        target_bytes = max(1, int(target_size_kb)) * 1024
+
+        def save_once(path: str, current_quality: int) -> None:
+            self._save_encoded_image(pil_image, path, format_name, current_quality, 0)
+
+        _save_target_size_by_quality(
+            output_path,
+            format_name,
+            target_bytes,
+            quality,
+            save_once,
+            iterations=8,
+        )
 
 
-class GGHighQualityImageCompress(SaveImage):
+def _save_target_size_by_quality(
+    output_path: str,
+    format_name: str,
+    target_bytes: int,
+    max_quality: int,
+    save_once,
+    iterations: int = 8,
+) -> None:
+    low, high = 1, max(1, min(int(max_quality), 100))
+    best_data = None
+
+    for _ in range(iterations):
+        current_quality = (low + high) // 2
+        with tempfile.NamedTemporaryFile(suffix="." + GGImageCompress._extension(format_name), delete=False) as temp_file:
+            temp_path = temp_file.name
+        try:
+            save_once(temp_path, current_quality)
+            size = os.path.getsize(temp_path)
+            with open(temp_path, "rb") as handle:
+                data = handle.read()
+            if size <= target_bytes:
+                best_data = data
+                low = current_quality + 1
+            else:
+                high = current_quality - 1
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    if best_data is None:
+        save_once(output_path, 1)
+        return
+    with open(output_path, "wb") as handle:
+        handle.write(best_data)
+
+
+class GGImageCompress:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "图像": ("IMAGE",),
-                "格式": (["WEBP", "JPEG", "PNG"], {"default": "JPEG"}),
+                "压缩方式": (["civilblur", "Caesium", "meowtec"], {"default": "civilblur"}),
                 "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
-            },
-            "optional": {
-                "无损": ("BOOLEAN", {"default": True}),
-                "保留元数据": ("BOOLEAN", {"default": False}),
-                "优先外部优化器": ("BOOLEAN", {"default": True}),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
+                "目标大小KB": ("INT", {"default": 0, "min": 0, "max": 1048576, "step": 16}),
             },
         }
 
@@ -1986,350 +2241,190 @@ class GGHighQualityImageCompress(SaveImage):
     RETURN_NAMES = ("图像",)
     FUNCTION = "compress"
     CATEGORY = "GuliNodes/图像工具"
-    def compress(self, 图像, 格式="JPEG", 质量=85, 无损=False,
-                 保留元数据=False, 优先外部优化器=True, prompt=None, extra_pnginfo=None):
-        output_images = []
-        for image in 图像:
-            pil_image = self._to_pil(image, 格式)
-            output_images.append(
-                self._compress_with_tempfile(
-                    image,
-                    格式,
-                    lambda output_path, current_image=pil_image: self._save_optimized(
-                        current_image, output_path, 格式, int(质量), bool(无损), bool(保留元数据), bool(优先外部优化器)
-                    ),
-                )
-            )
+    OUTPUT_NODE = False
 
-        return (torch.stack(output_images, dim=0).contiguous(),)
+    def compress(self, 图像, 压缩方式="civilblur", 质量=85, 目标大小KB=0):
+        return self._compress_with_method(图像, 压缩方式, 质量, 目标大小KB)
+
+    def _compress_with_method(
+        self,
+        图像: torch.Tensor,
+        压缩方式: str,
+        质量: int = 85,
+        目标大小KB: int = 0,
+        preferred_format: str | None = None,
+    ) -> tuple:
+        method = self._normalize_method(压缩方式)
+        quality = max(1, min(int(质量), 100))
+        target_size_kb = max(0, int(目标大小KB))
+        output_format = preferred_format or self._preferred_format(method, target_size_kb)
+        output_images = []
+
+        for image in 图像:
+            pil_image = _prepare_pil_for_format(_tensor_image_to_pil(image), output_format)
+
+            def save_callback(output_path: str, current_image=pil_image) -> None:
+                self._save_by_method(
+                    current_image,
+                    output_path,
+                    output_format,
+                    quality,
+                    target_size_kb,
+                    method,
+                )
+
+            output_images.append(self._compress_with_tempfile(image, output_format, save_callback))
+
+        image_result = torch.stack(output_images, dim=0).contiguous()
+        _set_gg_image_hints(image_result, output_format, quality, target_size_kb, method)
+        return (image_result,)
+
+    @staticmethod
+    def _normalize_method(method: str) -> str:
+        value = str(method or "civilblur").strip().lower()
+        if value in ("caesium", "cesium"):
+            return "caesium"
+        if value in ("meowtec", "meow"):
+            return "meowtec"
+        return "civilblur"
+
+    @staticmethod
+    def _preferred_format(method: str, target_size_kb: int) -> str:
+        if method == "meowtec":
+            return "WEBP"
+        if method == "caesium" and target_size_kb > 0:
+            return "WEBP"
+        return "JPEG"
 
     @staticmethod
     def _extension(format_name: str) -> str:
-        return {"WEBP": "webp", "JPEG": "jpg", "PNG": "png"}.get(format_name, "webp")
+        return {"WEBP": "webp", "JPEG": "jpg", "PNG": "png"}.get(format_name, "jpg")
 
-    @staticmethod
-    def _to_pil(image: torch.Tensor, format_name: str) -> Image.Image:
-        array = np.clip(255.0 * image.detach().cpu().numpy(), 0, 255).astype(np.uint8)
-        pil_image = Image.fromarray(array)
-        if format_name in ("WEBP", "JPEG") and pil_image.mode != "RGB":
-            pil_image = pil_image.convert("RGB")
-        return pil_image
+    def _save_by_method(
+        self,
+        pil_image: Image.Image,
+        output_path: str,
+        format_name: str,
+        quality: int,
+        target_size_kb: int,
+        method: str,
+    ) -> None:
+        if method == "caesium":
+            self._save_caesium_style(pil_image, output_path, format_name, quality, target_size_kb)
+        elif method == "meowtec":
+            self._save_meowtec_style(pil_image, output_path, format_name, quality, target_size_kb)
+        else:
+            self._save_civilblur_style(pil_image, output_path, format_name, quality, target_size_kb)
 
-    def _save_optimized(self, pil_image: Image.Image, output_path: str, format_name: str, quality: int,
-                        lossless: bool, keep_metadata: bool, prefer_external: bool) -> None:
-        if prefer_external and self._save_with_external_optimizer(pil_image, output_path, format_name, quality, lossless):
+    def _save_meowtec_style(
+        self,
+        pil_image: Image.Image,
+        output_path: str,
+        format_name: str,
+        quality: int,
+        target_size_kb: int,
+    ) -> None:
+        pil_image.info.clear()
+        if target_size_kb > 0 and format_name in ("JPEG", "WEBP"):
+            target_bytes = max(1, int(target_size_kb)) * 1024
+            _save_target_size_by_quality(
+                output_path,
+                format_name,
+                target_bytes,
+                quality,
+                lambda path, current_quality: self._save_meowtec_style(pil_image, path, format_name, current_quality, 0),
+                iterations=7,
+            )
+            return
+        self._save_single_pass(pil_image, output_path, format_name, quality)
+
+    def _save_caesium_style(
+        self,
+        pil_image: Image.Image,
+        output_path: str,
+        format_name: str,
+        quality: int,
+        target_size_kb: int,
+    ) -> None:
+        pil_image.info.clear()
+        if target_size_kb > 0 and format_name in ("JPEG", "WEBP"):
+            target_bytes = max(1, int(target_size_kb)) * 1024
+            _save_target_size_by_quality(
+                output_path,
+                format_name,
+                target_bytes,
+                quality,
+                lambda path, current_quality: self._save_caesium_style(pil_image, path, format_name, current_quality, 0),
+                iterations=7,
+            )
             return
 
-        save_kwargs = {"optimize": True}
-        if format_name == "WEBP":
-            save_kwargs.update({"quality": quality, "method": 6, "lossless": lossless})
-        elif format_name == "JPEG":
-            save_kwargs.update({"quality": quality, "progressive": True, "subsampling": 0 if quality >= 90 else "4:2:0"})
-        elif format_name == "PNG":
-            save_kwargs.update({"compress_level": 9})
-        if not keep_metadata:
-            pil_image.info.clear()
-        pil_image.save(output_path, format=format_name, **save_kwargs)
+        if format_name == "JPEG":
+            pil_image.convert("RGB").save(
+                output_path,
+                format="JPEG",
+                quality=quality,
+                optimize=True,
+                progressive=True,
+                subsampling=0 if quality >= 90 else "4:2:0",
+            )
+            return
 
-    def _save_with_external_optimizer(self, pil_image: Image.Image, output_path: str, format_name: str, quality: int, lossless: bool) -> bool:
-        if format_name == "WEBP" and shutil.which("cwebp"):
-            return self._run_cwebp(pil_image, output_path, quality, lossless)
-        if format_name == "JPEG" and shutil.which("cjpeg"):
-            return self._run_cjpeg(pil_image, output_path, quality)
-        if format_name == "PNG" and shutil.which("pngquant") and not lossless:
-            return self._run_pngquant(pil_image, output_path, quality)
-        return False
+        self._save_single_pass(pil_image, output_path, format_name, quality)
+
+    def _save_civilblur_style(
+        self,
+        pil_image: Image.Image,
+        output_path: str,
+        format_name: str,
+        quality: int,
+        target_size_kb: int,
+    ) -> None:
+        pil_image.info.clear()
+        if target_size_kb > 0 and format_name in ("WEBP", "JPEG"):
+            target_bytes = max(1, int(target_size_kb)) * 1024
+            _save_target_size_by_quality(
+                output_path,
+                format_name,
+                target_bytes,
+                quality,
+                lambda path, current_quality: self._save_single_pass(pil_image, path, format_name, current_quality),
+                iterations=8,
+            )
+            return
+
+        self._save_single_pass(pil_image, output_path, format_name, quality)
+
+    def _save_single_pass(self, pil_image: Image.Image, output_path: str, format_name: str, quality: int) -> None:
+        save_image = _prepare_pil_for_format(pil_image, format_name)
+        if format_name == "WEBP":
+            save_image.save(output_path, format="WEBP", quality=quality, method=6, optimize=True)
+        elif format_name == "PNG":
+            save_image.save(output_path, format="PNG", optimize=True, compress_level=9)
+        else:
+            save_image.convert("RGB").save(
+                output_path,
+                format="JPEG",
+                quality=quality,
+                optimize=True,
+                progressive=True,
+                subsampling=0 if quality >= 90 else "4:2:0",
+            )
 
     def _compress_with_tempfile(self, source_image: torch.Tensor, format_name: str, save_callback) -> torch.Tensor:
         suffix = "." + self._extension(format_name)
         with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
             temp_path = temp_file.name
         try:
-            save_callback(temp_path)
-            with Image.open(temp_path) as saved_image:
-                return _pil_to_tensor(saved_image, device=source_image.device, dtype=source_image.dtype)
+            return self._compress_to_path(source_image, temp_path, save_callback)
         finally:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
-    @staticmethod
-    def _run_cwebp(pil_image: Image.Image, output_path: str, quality: int, lossless: bool) -> bool:
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-            temp_path = temp_file.name
-        try:
-            pil_image.save(temp_path, format="PNG")
-            command = ["cwebp", "-quiet", "-m", "6"]
-            command += ["-lossless"] if lossless else ["-q", str(quality)]
-            command += [temp_path, "-o", output_path]
-            return subprocess.run(command, check=False).returncode == 0 and os.path.exists(output_path)
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-
-    @staticmethod
-    def _run_cjpeg(pil_image: Image.Image, output_path: str, quality: int) -> bool:
-        with tempfile.NamedTemporaryFile(suffix=".ppm", delete=False) as temp_file:
-            temp_path = temp_file.name
-        try:
-            pil_image.convert("RGB").save(temp_path, format="PPM")
-            command = ["cjpeg", "-quality", str(quality), "-optimize", "-progressive", "-outfile", output_path, temp_path]
-            return subprocess.run(command, check=False).returncode == 0 and os.path.exists(output_path)
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-
-    @staticmethod
-    def _run_pngquant(pil_image: Image.Image, output_path: str, quality: int) -> bool:
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
-            temp_path = temp_file.name
-        try:
-            pil_image.save(temp_path, format="PNG")
-            min_quality = max(0, quality - 20)
-            command = ["pngquant", "--force", "--quality", f"{min_quality}-{quality}", "--output", output_path, temp_path]
-            return subprocess.run(command, check=False).returncode == 0 and os.path.exists(output_path)
-        finally:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-
-
-class GGCaesiumImageCompress(GGHighQualityImageCompress):
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "图像": ("IMAGE",),
-                "格式": (["自动", "JPEG", "PNG", "WEBP", "TIFF"], {"default": "JPEG"}),
-                "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
-            },
-            "optional": {
-                "无损": ("BOOLEAN", {"default": True}),
-                "保留元数据": ("BOOLEAN", {"default": False}),
-                "缩放百分比": ("INT", {"default": 100, "min": 1, "max": 400, "step": 1}),
-                "最大宽度": ("INT", {"default": 0, "min": 0, "max": 16384, "step": 8}),
-                "最大高度": ("INT", {"default": 0, "min": 0, "max": 16384, "step": 8}),
-                "目标大小KB": ("INT", {"default": 0, "min": 0, "max": 1048576, "step": 16}),
-                "渐进JPEG": ("BOOLEAN", {"default": True}),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    FUNCTION = "compress_caesium"
-    CATEGORY = "GuliNodes/图像工具"
-    def compress_caesium(self, 图像, 格式="JPEG", 质量=85, 无损=True,
-                         保留元数据=False, 缩放百分比=100, 最大宽度=0, 最大高度=0,
-                         目标大小KB=0, 渐进JPEG=True, prompt=None, extra_pnginfo=None):
-        output_format = "WEBP" if 格式 == "自动" else 格式
-        output_images = []
-        for image in 图像:
-            pil_image = self._to_pil(image, output_format)
-            pil_image = self._resize_like_caesium(pil_image, int(缩放百分比), int(最大宽度), int(最大高度))
-            output_images.append(
-                self._compress_with_tempfile(
-                    image,
-                    output_format,
-                    lambda output_path, current_image=pil_image: self._save_caesium_style(
-                        current_image,
-                        output_path,
-                        output_format,
-                        int(质量),
-                        bool(无损),
-                        bool(保留元数据),
-                        bool(渐进JPEG),
-                        int(目标大小KB),
-                    ),
-                )
-            )
-
-        return (torch.stack(output_images, dim=0).contiguous(),)
-
-    @staticmethod
-    def _extension(format_name: str) -> str:
-        return {"WEBP": "webp", "JPEG": "jpg", "PNG": "png", "TIFF": "tif"}.get(format_name, "webp")
-
-    @staticmethod
-    def _resize_like_caesium(pil_image: Image.Image, scale_percent: int, max_width: int, max_height: int) -> Image.Image:
-        width, height = pil_image.size
-        scale = max(1, scale_percent) / 100.0
-        target_width = max(1, int(width * scale))
-        target_height = max(1, int(height * scale))
-
-        if max_width > 0 and target_width > max_width:
-            ratio = max_width / target_width
-            target_width = max_width
-            target_height = max(1, int(target_height * ratio))
-        if max_height > 0 and target_height > max_height:
-            ratio = max_height / target_height
-            target_height = max_height
-            target_width = max(1, int(target_width * ratio))
-
-        if (target_width, target_height) == pil_image.size:
-            return pil_image
-        return pil_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
-
-    def _save_caesium_style(self, pil_image: Image.Image, output_path: str, format_name: str, quality: int,
-                            lossless: bool, keep_metadata: bool, progressive_jpeg: bool, target_size_kb: int) -> None:
-        quality = max(1, min(int(quality), 100))
-        if target_size_kb > 0 and format_name in ("JPEG", "WEBP") and not lossless:
-            self._save_target_size(pil_image, output_path, format_name, quality, keep_metadata, progressive_jpeg, target_size_kb)
-            return
-
-        if format_name == "TIFF":
-            if not keep_metadata:
-                pil_image.info.clear()
-            pil_image.save(output_path, format="TIFF", compression="tiff_lzw")
-            return
-
-        if format_name == "JPEG":
-            pil_image = pil_image.convert("RGB")
-            if not keep_metadata:
-                pil_image.info.clear()
-            pil_image.save(output_path, format="JPEG", quality=quality, optimize=True, progressive=progressive_jpeg, subsampling=0 if quality >= 90 else "4:2:0")
-            return
-
-        self._save_optimized(pil_image, output_path, format_name, quality, lossless, keep_metadata, True)
-
-    def _save_target_size(self, pil_image: Image.Image, output_path: str, format_name: str, quality: int,
-                          keep_metadata: bool, progressive_jpeg: bool, target_size_kb: int) -> None:
-        target_bytes = target_size_kb * 1024
-        low, high = 1, quality
-        best_data = None
-
-        for _ in range(7):
-            current_quality = (low + high) // 2
-            with tempfile.NamedTemporaryFile(suffix="." + self._extension(format_name), delete=False) as temp_file:
-                temp_path = temp_file.name
-            try:
-                self._save_caesium_style(pil_image, temp_path, format_name, current_quality, False, keep_metadata, progressive_jpeg, 0)
-                size = os.path.getsize(temp_path)
-                with open(temp_path, "rb") as handle:
-                    data = handle.read()
-                if size <= target_bytes:
-                    best_data = data
-                    low = current_quality + 1
-                else:
-                    high = current_quality - 1
-            finally:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-
-        if best_data is None:
-            self._save_caesium_style(pil_image, output_path, format_name, 1, False, keep_metadata, progressive_jpeg, 0)
-            return
-        with open(output_path, "wb") as handle:
-            handle.write(best_data)
-
-
-class GGCivilblurImageCompress(GGHighQualityImageCompress):
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "图像": ("IMAGE",),
-                "格式": (["WEBP", "JPEG", "PNG"], {"default": "JPEG"}),
-                "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
-            },
-            "optional": {
-                "目标大小KB": ("INT", {"default": 0, "min": 0, "max": 1048576, "step": 16}),
-                "最大边长": ("INT", {"default": 0, "min": 0, "max": 16384, "step": 8}),
-                "移除元数据": ("BOOLEAN", {"default": True}),
-                "渐进JPEG": ("BOOLEAN", {"default": True}),
-                "强制压缩": ("BOOLEAN", {"default": False}),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO",
-            },
-        }
-
-    FUNCTION = "compress_civilblur"
-    CATEGORY = "GuliNodes/图像工具"
-    def compress_civilblur(self, 图像, 格式="JPEG", 质量=85,
-                           目标大小KB=0, 最大边长=0, 移除元数据=True,
-                           渐进JPEG=True, 强制压缩=False, prompt=None, extra_pnginfo=None):
-        output_images = []
-        for image in 图像:
-            pil_image = self._to_pil(image, 格式)
-            pil_image = self._resize_max_edge(pil_image, int(最大边长))
-            output_images.append(
-                self._compress_with_tempfile(
-                    image,
-                    格式,
-                    lambda output_path, current_image=pil_image: self._save_mazanoke_style(
-                        current_image,
-                        output_path,
-                        格式,
-                        int(质量),
-                        int(目标大小KB),
-                        remove_metadata=bool(移除元数据),
-                        progressive_jpeg=bool(渐进JPEG),
-                        force_compress=bool(强制压缩),
-                    ),
-                )
-            )
-
-        return (torch.stack(output_images, dim=0).contiguous(),)
-
-    @staticmethod
-    def _resize_max_edge(pil_image: Image.Image, max_edge: int) -> Image.Image:
-        if max_edge <= 0:
-            return pil_image
-        width, height = pil_image.size
-        longest = max(width, height)
-        if longest <= max_edge:
-            return pil_image
-        ratio = max_edge / longest
-        new_size = (max(1, int(width * ratio)), max(1, int(height * ratio)))
-        return pil_image.resize(new_size, Image.Resampling.LANCZOS)
-
-    def _save_mazanoke_style(self, pil_image: Image.Image, output_path: str, format_name: str, quality: int,
-                             target_size_kb: int, remove_metadata: bool, progressive_jpeg: bool,
-                             force_compress: bool) -> None:
-        quality = max(1, min(int(quality), 100))
-        if remove_metadata:
-            pil_image.info.clear()
-
-        if target_size_kb > 0 and format_name in ("WEBP", "JPEG"):
-            self._save_target_size_like_mazanoke(pil_image, output_path, format_name, quality, target_size_kb, progressive_jpeg)
-            return
-
-        self._save_single_pass(pil_image, output_path, format_name, quality, progressive_jpeg)
-
-    def _save_target_size_like_mazanoke(self, pil_image: Image.Image, output_path: str, format_name: str,
-                                        quality: int, target_size_kb: int, progressive_jpeg: bool) -> None:
-        target_bytes = target_size_kb * 1024
-        low, high = 1, quality
-        best_path = None
-
-        for _ in range(8):
-            current_quality = (low + high) // 2
-            with tempfile.NamedTemporaryFile(suffix="." + self._extension(format_name), delete=False) as temp_file:
-                temp_path = temp_file.name
-            self._save_single_pass(pil_image, temp_path, format_name, current_quality, progressive_jpeg)
-            size = os.path.getsize(temp_path)
-            if size <= target_bytes:
-                if best_path and os.path.exists(best_path):
-                    os.remove(best_path)
-                best_path = temp_path
-                low = current_quality + 1
-            else:
-                os.remove(temp_path)
-                high = current_quality - 1
-
-        if best_path is None:
-            self._save_single_pass(pil_image, output_path, format_name, 1, progressive_jpeg)
-        else:
-            shutil.move(best_path, output_path)
-
-    def _save_single_pass(self, pil_image: Image.Image, output_path: str, format_name: str, quality: int, progressive_jpeg: bool) -> None:
-        if format_name == "WEBP":
-            pil_image.save(output_path, format="WEBP", quality=quality, method=6, optimize=True)
-        elif format_name == "JPEG":
-            pil_image.convert("RGB").save(output_path, format="JPEG", quality=quality, optimize=True, progressive=progressive_jpeg, subsampling=0 if quality >= 90 else "4:2:0")
-        elif format_name == "PNG":
-            pil_image.save(output_path, format="PNG", optimize=True, compress_level=9)
+    def _compress_to_path(self, source_image: torch.Tensor, output_path: str, save_callback) -> torch.Tensor:
+        save_callback(output_path)
+        with Image.open(output_path) as saved_image:
+            return _pil_to_tensor(saved_image, device=source_image.device, dtype=source_image.dtype)
 
 
 class ImageComparerBase:
@@ -2450,9 +2545,7 @@ NODE_CLASS_MAPPINGS = {
     "GGImageStyleReference": GGImageStyleReference,
     "GGPreviewImage": GGPreviewImage,
     "GGSaveImage": GGSaveImage,
-    "GGHighQualityImageCompress": GGHighQualityImageCompress,
-    "GGCaesiumImageCompress": GGCaesiumImageCompress,
-    "GGCivilblurImageCompress": GGCivilblurImageCompress,
+    "GGImageCompress": GGImageCompress,
     "GGImageComparer2": GGImageComparer2,
     "GGImageComparer4": GGImageComparer4,
     "GGImageComparer8": GGImageComparer8,
@@ -2470,9 +2563,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GGImageStyleReference": "GG 图像风格参考",
     "GGPreviewImage": "GG 图像预览",
     "GGSaveImage": "GG 图像保存",
-    "GGHighQualityImageCompress": "GG meowtec图像压缩",
-    "GGCaesiumImageCompress": "GG Caesium图像压缩",
-    "GGCivilblurImageCompress": "GG civilblur图像压缩",
+    "GGImageCompress": "GG 图像压缩",
     "GGImageComparer2": "GG 图像对比 2张",
     "GGImageComparer4": "GG 图像对比 4张",
     "GGImageComparer8": "GG 图像对比 8张",
