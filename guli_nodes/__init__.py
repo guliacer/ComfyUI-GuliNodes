@@ -15,6 +15,7 @@ _NODE_MODULES = (
     "clipboard",
     "image_prompt",
     "model_loaders",
+    "web_ai_tools",
 )
 
 
