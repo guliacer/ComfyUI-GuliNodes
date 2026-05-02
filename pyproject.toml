@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "comfyui-gulinodes"
-version = "1.0.4"
-description = "A practical collection of ComfyUI custom nodes for image processing, text utilities, LoRA workflows, model loading, and image analysis."
+version = "1.0.7"
+description = "GuliNodes - 工具栏 + 图像尺寸工具 + 图像工具 + 图像对比 + LoRA工具 + 编组控制 + 文本工具 + 种子工具 + 模型加载 + 图像反推"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

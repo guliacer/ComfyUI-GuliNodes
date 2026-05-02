@@ -1060,50 +1060,60 @@ class GGImageCrop:
         if 图像 is None:
             return (_empty_image(),)
 
+        img_height, img_width = 图像.shape[1], 图像.shape[2]
+
+        def safe_crop(x: int, y: int, width: int, height: int) -> torch.Tensor:
+            width = max(1, min(int(width), img_width))
+            height = max(1, min(int(height), img_height))
+            x = max(0, min(int(x), img_width - width))
+            y = max(0, min(int(y), img_height - height))
+            return 图像[:, y:y+height, x:x+width, :].contiguous()
+
         if 模式 == "按比例裁剪":
             aspect_presets = {"1:1": (1, 1), "3:2": (3, 2), "4:3": (4, 3), "5:4": (5, 4), "16:9": (16, 9),
                            "21:9": (21, 9), "9:16": (9, 16), "2:3": (2, 3), "3:4": (3, 4), "4:5": (4, 5), "9:21": (9, 21)}
 
             wr, hr = aspect_presets[宽高比例]
             if 边长类型 == "最长边":
-                crop_width = 边长 if wr > hr else int(边长 * wr / hr)
-                crop_height = int(边长 * hr / wr) if wr > hr else 边长
+                target_width = 边长 if wr > hr else int(边长 * wr / hr)
+                target_height = int(边长 * hr / wr) if wr > hr else 边长
             else:
-                crop_height = 边长 if wr > hr else int(边长 * hr / wr)
-                crop_width = int(边长 * wr / hr) if wr > hr else 边长
+                target_height = 边长 if wr > hr else int(边长 * hr / wr)
+                target_width = int(边长 * wr / hr) if wr > hr else 边长
 
-            crop_width = _align_to_eight(crop_width)
-            crop_height = _align_to_eight(crop_height)
+            target_width = _align_to_eight(target_width)
+            target_height = _align_to_eight(target_height)
 
-            img_height, img_width = 图像.shape[1], 图像.shape[2]
+            if target_width <= img_width and target_height <= img_height:
+                crop_width = target_width
+                crop_height = target_height
+            elif img_width * hr <= img_height * wr:
+                crop_width = img_width
+                crop_height = max(1, min(img_height, int(img_width * hr / wr)))
+            else:
+                crop_height = img_height
+                crop_width = max(1, min(img_width, int(img_height * wr / hr)))
+
             x = (img_width - crop_width) // 2
             y = (img_height - crop_height) // 2
+            cropped = safe_crop(x, y, crop_width, crop_height)
 
-            x = max(0, x)
-            y = max(0, y)
-
-            crop_width = min(crop_width, img_width - x)
-            crop_height = min(crop_height, img_height - y)
-
-            cropped = 图像[:, y:y+crop_height, x:x+crop_width, :]
+            if cropped.shape[1] != target_height or cropped.shape[2] != target_width:
+                cropped = _resize_image(cropped, target_height, target_width, "bilinear")
             return (cropped,)
 
         elif 模式 == "中心裁剪":
-            img_height, img_width = 图像.shape[1], 图像.shape[2]
-            x = (img_width - 宽度) // 2
-            y = (img_height - 高度) // 2
+            width = max(1, min(int(宽度), img_width))
+            height = max(1, min(int(高度), img_height))
+            x = (img_width - width) // 2
+            y = (img_height - height) // 2
         else:
+            width = max(1, min(int(宽度), img_width))
+            height = max(1, min(int(高度), img_height))
             x = X坐标
             y = Y坐标
 
-        x = max(0, x)
-        y = max(0, y)
-
-        img_height, img_width = 图像.shape[1], 图像.shape[2]
-        width = min(宽度, img_width - x)
-        height = min(高度, img_height - y)
-
-        cropped = 图像[:, y:y+height, x:x+width, :]
+        cropped = safe_crop(x, y, width, height)
         return (cropped,)
 
 
@@ -1148,11 +1158,11 @@ class GGImageAdjust:
                 "图像": ("IMAGE",),
             },
             "optional": {
-                "亮度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.1, "round": 0.01}),
-                "对比度": ("FLOAT", {"default": 1.1, "min": 0.0, "max": 5.0, "step": 0.1, "round": 0.01}),
-                "饱和度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.1, "round": 0.01}),
-                "锐化": ("FLOAT", {"default": 1.2, "min": 0.0, "max": 10.0, "step": 0.1, "round": 0.01}),
-                "虚化": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 20.0, "step": 0.1, "round": 0.01}),
+                "亮度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.01, "round": 0.01}),
+                "对比度": ("FLOAT", {"default": 1.1, "min": 0.0, "max": 5.0, "step": 0.01, "round": 0.01}),
+                "饱和度": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.01, "round": 0.01}),
+                "锐化": ("FLOAT", {"default": 1.2, "min": 0.0, "max": 10.0, "step": 0.01, "round": 0.01}),
+                "虚化": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 20.0, "step": 0.01, "round": 0.01}),
             }
         }
 
