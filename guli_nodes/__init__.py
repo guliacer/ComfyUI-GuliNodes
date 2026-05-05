@@ -16,6 +16,7 @@ _NODE_MODULES = (
     "image_prompt",
     "model_loaders",
     "web_ai_tools",
+    "prompt_optimizer",
 )
 
 

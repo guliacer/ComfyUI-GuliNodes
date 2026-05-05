@@ -59,6 +59,9 @@ app.registerExtension({
                 <button id="btn-clear-color" class="tool-btn" data-tooltip="删除节点颜色" style="background:transparent;border:none;padding:4px;">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 14h10l1-14"/><path d="M9 7V4h6v3"/></svg>
                 </button>
+                <button id="btn-custom-action" class="tool-btn" data-tooltip="自定义" style="background:transparent;border:none;padding:4px;">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+                </button>
                 <input id="gg-custom-color-input-1" type="color" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
                 <input id="gg-custom-color-input-2" type="color" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
             </div>
@@ -98,6 +101,10 @@ app.registerExtension({
                 <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
                 <button id="btn-auto-fit" class="tool-btn" data-tooltip="自适应尺寸（紧凑）" style="background:transparent;border:none;padding:4px;">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M8 8h8v8H8z"/></svg>
+                </button>
+                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <button id="btn-close-toolbar" class="tool-btn" data-tooltip="关闭工具栏" style="background:transparent;border:none;padding:4px;">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6"/><path d="M9 9l6 6"/></svg>
                 </button>
             </div>
         `;
@@ -717,7 +724,8 @@ app.registerExtension({
         const hidePanel = () => {
             lastPosition = { left: panel.style.left, top: panel.style.top, bottom: panel.style.bottom };
             panel.style.display = "none";
-            miniIcon.style.display = "flex";
+            miniIcon.style.display = "none";
+            localStorage.setItem("ggNodes_visible", "false");
         };
 
         const showPanel = () => {
@@ -727,6 +735,7 @@ app.registerExtension({
             panel.style.bottom = lastPosition.bottom || "30px";
             panel.style.transform = lastPosition.top ? "none" : "translateX(-50%)";
             miniIcon.style.display = "none";
+            localStorage.setItem("ggNodes_visible", "true");
         };
 
         // 为面板添加右键菜单事件
@@ -751,7 +760,7 @@ app.registerExtension({
                 return;
             }
             if (e.button !== 0) return;
-            if (e.target.tagName === "BUTTON" || e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
+            if (e.target.closest("button") || e.target.tagName === "SELECT" || e.target.tagName === "INPUT") return;
             isDragging = true;
             const rect = panel.getBoundingClientRect();
             offsetX = e.clientX - rect.left;
@@ -1567,6 +1576,12 @@ app.registerExtension({
 
         // 迷你图标点击事件
         miniIcon.onclick = showPanel;
+
+        // 关闭按钮点击事件
+        document.getElementById("btn-close-toolbar").onclick = () => hidePanel();
+
+        // 启动时始终显示工具栏，恢复到上次记忆的位置
+        showPanel();
 
         // 点击外部区域不关闭面板，避免误操作
         // document.addEventListener('click', (e) => {
