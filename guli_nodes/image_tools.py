@@ -990,12 +990,11 @@ class GGImageResize:
         return {
             "required": {
                 "图像": ("IMAGE",),
-                "模式": (["按比例", "按尺寸"], {"default": "按比例"}),
+                "模式": (["按比例", "按最长边", "按最短边"], {"default": "按比例"}),
             },
             "optional": {
                 "缩放比例": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.1}),
-                "宽度": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8}),
-                "高度": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8}),
+                "边长": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8}),
                 "插值方法": (["bilinear", "nearest", "bicubic"], {"default": "bilinear"}),
             }
         }
@@ -1006,16 +1005,30 @@ class GGImageResize:
     CATEGORY = "GuliNodes/图像工具"
 
     def resize(self, 图像: torch.Tensor, 模式: str = "按比例", 缩放比例: float = 1.0,
-               宽度: int = 512, 高度: int = 512, 插值方法: str = "bilinear") -> tuple:
+               边长: int = 512, 插值方法: str = "bilinear") -> tuple:
         if 图像 is None:
             return (_empty_image(),)
 
         if 模式 == "按比例":
             new_height = int(图像.shape[1] * 缩放比例)
             new_width = int(图像.shape[2] * 缩放比例)
+        elif 模式 == "按最长边":
+            src_height = 图像.shape[1]
+            src_width = 图像.shape[2]
+            max_dim = max(src_height, src_width)
+            scale = 边长 / max_dim
+            new_height = int(src_height * scale)
+            new_width = int(src_width * scale)
+        elif 模式 == "按最短边":
+            src_height = 图像.shape[1]
+            src_width = 图像.shape[2]
+            min_dim = min(src_height, src_width)
+            scale = 边长 / min_dim
+            new_height = int(src_height * scale)
+            new_width = int(src_width * scale)
         else:
-            new_height = 高度
-            new_width = 宽度
+            new_height = int(图像.shape[1] * 缩放比例)
+            new_width = int(图像.shape[2] * 缩放比例)
 
         new_width = _align_to_eight(new_width)
         new_height = _align_to_eight(new_height)
@@ -2045,7 +2058,7 @@ class GGSaveImage(SaveImage):
             "required": {
                 "图像": ("IMAGE",),
                 "文件名前缀": ("STRING", {"default": "%date:yyyy_MM_dd%/图像"}),
-                "格式": (["JPEG", "PNG", "WEBP", "自动"], {"default": "自动"}),
+                "格式": (["JPEG", "PNG", "WEBP", "自动"], {"default": "JPEG"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -2443,10 +2456,10 @@ class ImageComparerBase:
         return {
             "required": {},
             "optional": {
-                "font_size": ("INT", {"default": 40, "min": 20, "max": 120, "step": 2}),
-                "border": ("INT", {"default": 32, "min": 0, "max": 80, "step": 2}),
-                "label_height": ("INT", {"default": 80, "min": 50, "max": 200, "step": 2}),
-                "spacing": ("INT", {"default": 20, "min": 0, "max": 100, "step": 2}),
+                "字体大小": ("INT", {"default": 40, "min": 20, "max": 120, "step": 2}),
+                "边框宽度": ("INT", {"default": 32, "min": 0, "max": 80, "step": 2}),
+                "标签高度": ("INT", {"default": 80, "min": 50, "max": 200, "step": 2}),
+                "图像间距": ("INT", {"default": 20, "min": 0, "max": 100, "step": 2}),
             }
         }
 
@@ -2456,8 +2469,8 @@ class ImageComparerBase:
         labels = {}
         for i in range(count):
             char = chr(65 + i)
-            inputs[f"image_{char}"] = ("IMAGE",)
-            labels[f"label_{char}"] = ("STRING", {"default": f"图像 {char}"})
+            inputs[f"图像_{char}"] = ("IMAGE",)
+            labels[f"标签_{char}"] = ("STRING", {"default": f"图像 {char}"})
         return inputs, labels
 
 
@@ -2475,14 +2488,14 @@ class GGImageComparer4(ImageComparerBase):
     FUNCTION = "compare"
     CATEGORY = "GuliNodes/图像工具"
 
-    def compare(self, image_A: torch.Tensor = None, image_B: torch.Tensor = None, image_C: torch.Tensor = None, image_D: torch.Tensor = None,
-                label_A: str = "图像 A", label_B: str = "图像 B", label_C: str = "图像 C", label_D: str = "图像 D",
-                font_size: int = 40, border: int = 32, label_height: int = 80, spacing: int = 20, **kwargs) -> tuple:
-        images = [img for img in [image_A, image_B, image_C, image_D] if img is not None]
-        labels = [label_A, label_B, label_C, label_D][:len(images)]
+    def compare(self, 图像_A: torch.Tensor = None, 图像_B: torch.Tensor = None, 图像_C: torch.Tensor = None, 图像_D: torch.Tensor = None,
+                标签_A: str = "图像 A", 标签_B: str = "图像 B", 标签_C: str = "图像 C", 标签_D: str = "图像 D",
+                字体大小: int = 40, 边框宽度: int = 32, 标签高度: int = 80, 图像间距: int = 20, **kwargs) -> tuple:
+        images = [img for img in [图像_A, 图像_B, 图像_C, 图像_D] if img is not None]
+        labels = [标签_A, 标签_B, 标签_C, 标签_D][:len(images)]
         if len(images) < 2:
-            return (image_A or image_B or image_C or image_D,)
-        return (concatenate_images_horizontally(images, labels, font_size, border, label_height, spacing),)
+            return (图像_A or 图像_B or 图像_C or 图像_D,)
+        return (concatenate_images_horizontally(images, labels, 字体大小, 边框宽度, 标签高度, 图像间距),)
 
 
 class GGImageComparer2(PreviewImage):
@@ -2490,8 +2503,8 @@ class GGImageComparer2(PreviewImage):
     def INPUT_TYPES(s):
         return {
             "required": {
-                "image_A": ("IMAGE",),
-                "image_B": ("IMAGE",),
+                "图像_A": ("IMAGE",),
+                "图像_B": ("IMAGE",),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -2502,17 +2515,17 @@ class GGImageComparer2(PreviewImage):
     FUNCTION = "compare"
     CATEGORY = "GuliNodes/图像工具"
 
-    def compare(self, image_A: torch.Tensor, image_B: torch.Tensor,
+    def compare(self, 图像_A: torch.Tensor, 图像_B: torch.Tensor,
                 filename_prefix="GG.compare.",
                 prompt=None, extra_pnginfo=None) -> dict:
         result = {"ui": {"a_images": [], "b_images": []}}
-        if image_A is not None and len(image_A) > 0:
+        if 图像_A is not None and len(图像_A) > 0:
             result["ui"]["a_images"] = self.save_images(
-                image_A, f"{filename_prefix}a_", prompt, extra_pnginfo
+                图像_A, f"{filename_prefix}a_", prompt, extra_pnginfo
             )["ui"]["images"]
-        if image_B is not None and len(image_B) > 0:
+        if 图像_B is not None and len(图像_B) > 0:
             result["ui"]["b_images"] = self.save_images(
-                image_B, f"{filename_prefix}b_", prompt, extra_pnginfo
+                图像_B, f"{filename_prefix}b_", prompt, extra_pnginfo
             )["ui"]["images"]
         return result
 
@@ -2532,13 +2545,13 @@ class GGImageComparer8(ImageComparerBase):
     CATEGORY = "GuliNodes/图像工具"
 
     def compare(self, **kwargs) -> tuple:
-        images = [kwargs.get(f"image_{chr(65 + i)}") for i in range(8)]
+        images = [kwargs.get(f"图像_{chr(65 + i)}") for i in range(8)]
         images = [img for img in images if img is not None]
-        labels = [kwargs.get(f"label_{chr(65 + i)}", f"图像 {chr(65 + i)}") for i in range(8)][:len(images)]
-        font_size = kwargs.get("font_size", 40)
-        border = kwargs.get("border", 32)
-        label_height = kwargs.get("label_height", 80)
-        spacing = kwargs.get("spacing", 20)
+        labels = [kwargs.get(f"标签_{chr(65 + i)}", f"图像 {chr(65 + i)}") for i in range(8)][:len(images)]
+        font_size = kwargs.get("字体大小", 40)
+        border = kwargs.get("边框宽度", 32)
+        label_height = kwargs.get("标签高度", 80)
+        spacing = kwargs.get("图像间距", 20)
         if len(images) < 2:
             return (images[0] if images else None,)
         return (concatenate_images_horizontally(images, labels, font_size, border, label_height, spacing),)
@@ -2564,7 +2577,7 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGRGBAtoRGB": "GG RGBA转RGB",
-    "GGImageResize": "GG 图像调整大小",
+    "GGImageResize": "GG 尺寸调整",
     "GGImageCrop": "GG 图像裁剪",
     "GGImageTransform": "GG 图像变换",
     "GGImageAdjust": "GG 图像调整",

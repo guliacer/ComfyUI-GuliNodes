@@ -17,7 +17,7 @@ ASPECT_PRESETS = {
     for ratio in [*ASPECT_RATIOS, *LATENT_ASPECT_RATIOS]
 }
 SIDE_TYPES = ["最长边", "最短边"]
-ORIENTATION_TYPES = ["保持原比例", "横屏", "竖屏"]
+ORIENTATION_TYPES = ["横屏", "竖屏"]
 
 
 class GGAspectRatioAdapter:
@@ -48,7 +48,7 @@ class GGAspectRatioAdapter:
     FUNCTION = "calculate"
     CATEGORY = "GuliNodes/图像尺寸工具"
 
-    def calculate(self, 宽高比例: str, 边长: int, 边长类型: str, 画面方向: str = "保持原比例") -> tuple:
+    def calculate(self, 宽高比例: str, 边长: int, 边长类型: str, 画面方向: str = "横屏") -> tuple:
         wr, hr = ASPECT_PRESETS[宽高比例]
         wr, hr = self._apply_orientation(wr, hr, 画面方向)
         if 边长类型 == "最长边":
@@ -71,7 +71,7 @@ class GGAspectRatioLatent:
                 "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
                 "边长类型": (SIDE_TYPES, {"default": "最长边"}),
                 "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
-                "画面方向": (ORIENTATION_TYPES, {"default": "保持原比例"}),
+                "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
             }
         }
 
@@ -79,11 +79,36 @@ class GGAspectRatioLatent:
     FUNCTION = "generate"
     CATEGORY = "GuliNodes/图像尺寸工具"
 
-    def generate(self, 宽高比例: str, 边长: int, 边长类型: str, 批量大小: int, 画面方向: str = "保持原比例") -> tuple:
+    def generate(self, 宽高比例: str, 边长: int, 边长类型: str, 批量大小: int, 画面方向: str = "横屏") -> tuple:
         adapter = GGAspectRatioAdapter()
         width, height = adapter.calculate(宽高比例, 边长, 边长类型, 画面方向)
         latent = torch.zeros([批量大小, 4, height // 8, width // 8])
         return ({"samples": latent},)
+
+
+class GGAspectRatioLatent2:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "宽高比例": (LATENT_ASPECT_RATIOS, {"default": "9:16"}),
+                "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
+                "边长类型": (SIDE_TYPES, {"default": "最长边"}),
+                "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
+                "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT", "INT", "INT")
+    RETURN_NAMES = ("LATENT", "宽度", "高度")
+    FUNCTION = "generate"
+    CATEGORY = "GuliNodes/图像尺寸工具"
+
+    def generate(self, 宽高比例: str, 边长: int, 边长类型: str, 批量大小: int, 画面方向: str = "横屏") -> tuple:
+        adapter = GGAspectRatioAdapter()
+        width, height = adapter.calculate(宽高比例, 边长, 边长类型, 画面方向)
+        latent = torch.zeros([批量大小, 4, height // 8, width // 8])
+        return ({"samples": latent}, width, height)
 
 
 class GGImageToLatent:
@@ -98,22 +123,24 @@ class GGImageToLatent:
                 "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
                 "边长类型": (SIDE_TYPES, {"default": "最长边"}),
                 "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
-                "画面方向": (ORIENTATION_TYPES, {"default": "保持原比例"}),
-                "image": ("IMAGE",),
+                "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
+                "图像": ("IMAGE",),
             }
         }
 
     RETURN_TYPES = ("LATENT",)
-    RETURN_NAMES = ("latent",)
+    RETURN_NAMES = ("Latent",)
     FUNCTION = "convert"
     CATEGORY = "GuliNodes/图像尺寸工具"
 
-    def convert(self, 模式: str = "手动", 宽高比例: str = "16:9", 边长: int = 1024, 边长类型: str = "最长边", 批量大小: int = 1, image: torch.Tensor = None, 画面方向: str = "保持原比例") -> tuple:
-        if 模式 == "参考图像" and image is not None:
-            if len(image.shape) == 4:
-                h, w = image.shape[1], image.shape[2]
+    def convert(self, 模式: str = "手动", 宽高比例: str = "16:9", 边长: int = 1024, 边长类型: str = "最长边", 批量大小: int = 1, 图像: torch.Tensor = None, 画面方向: str = "横屏") -> tuple:
+        if 模式 == "参考图像":
+            if 图像 is None:
+                raise ValueError("模式设置为「参考图像」时，必须连接图像输入。")
+            if len(图像.shape) == 4:
+                h, w = 图像.shape[1], 图像.shape[2]
             else:
-                h, w = image.shape[0], image.shape[1]
+                h, w = 图像.shape[0], 图像.shape[1]
             w, h = GGAspectRatioAdapter._apply_orientation(int(w), int(h), 画面方向)
             height = GGAspectRatioAdapter._align_to_eight(int(h))
             width = GGAspectRatioAdapter._align_to_eight(int(w))
@@ -127,6 +154,7 @@ class GGImageToLatent:
 NODE_CLASS_MAPPINGS = {
     "GGAspectRatioAdapter": GGAspectRatioAdapter,
     "GGAspectRatioLatent": GGAspectRatioLatent,
+    "GGAspectRatioLatent2": GGAspectRatioLatent2,
     "GGImageToLatent": GGImageToLatent,
 }
 
@@ -134,5 +162,6 @@ NODE_CLASS_MAPPINGS = {
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGAspectRatioAdapter": "GG 图像比例",
     "GGAspectRatioLatent": "GG Latent",
+    "GGAspectRatioLatent2": "GG Latent2",
     "GGImageToLatent": "GG 图像-Latent",
 }

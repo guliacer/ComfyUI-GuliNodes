@@ -181,6 +181,16 @@ class GGUNETLoader:
         setattr(model, "guli_enable_sage_attention", bool(enable_sage_attention))
         setattr(model, "guli_enable_flash_attention", bool(enable_flash_attention))
 
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        import hashlib
+        m = hashlib.sha256()
+        m.update(str(kwargs.get(MODEL_FILE, "")).encode("utf-8"))
+        m.update(str(kwargs.get(DTYPE_NAME, DEFAULT_DTYPE)).encode("utf-8"))
+        m.update(str(kwargs.get(SAGE_ATTENTION_NAME, True)).encode("utf-8"))
+        m.update(str(kwargs.get(FLASH_ATTENTION_NAME, True)).encode("utf-8"))
+        return m.hexdigest()
+
 
 class GGGGUFModelLoader:
     @classmethod
@@ -234,6 +244,18 @@ class GGGGUFModelLoader:
             kwargs.get(PATCH_DTYPE_NAME, "default"),
             kwargs.get(PATCH_ON_DEVICE_NAME, False),
         )
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        import hashlib
+        m = hashlib.sha256()
+        m.update(str(kwargs.get(GGUF_MODEL_FILE, "")).encode("utf-8"))
+        m.update(str(kwargs.get(DEQUANT_DTYPE_NAME, "default")).encode("utf-8"))
+        m.update(str(kwargs.get(PATCH_DTYPE_NAME, "default")).encode("utf-8"))
+        m.update(str(kwargs.get(PATCH_ON_DEVICE_NAME, False)).encode("utf-8"))
+        m.update(str(kwargs.get(SAGE_ATTENTION_NAME, True)).encode("utf-8"))
+        m.update(str(kwargs.get(FLASH_ATTENTION_NAME, True)).encode("utf-8"))
+        return m.hexdigest()
 
 
 class GGMemoryCleanup:

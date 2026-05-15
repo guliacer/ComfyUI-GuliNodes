@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import gc
 import inspect
@@ -84,32 +84,19 @@ def _调用chat_completion(llm, messages, params):
     return llm.create_chat_completion(messages=messages, **params)
 
 
-def _清洗think块文本(text: str) -> str:
-    if not isinstance(text, str) or not text:
-        return "" if text is None else str(text)
-    cleaned = text.replace("\r\n", "\n")
-    if "<channel|>" in cleaned:
-        cleaned = re.sub(r"^.*?<channel\|>\s*", "", cleaned, count=1, flags=re.DOTALL)
-    cleaned = re.sub(r"<think\b[^>]*>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
-    if re.search(r"</think>", cleaned, flags=re.IGNORECASE):
-        cleaned = re.sub(r"^.*?</think>\s*", "", cleaned, count=1, flags=re.DOTALL | re.IGNORECASE)
-    cleaned = re.sub(r"<\|channel\>\s*[\w-]*\s*\n?", "", cleaned, flags=re.IGNORECASE)
-    cleaned = cleaned.replace("<channel|>", "").replace("<|think|>", "").replace("<think>", "").replace("</think>", "")
-    return cleaned.strip()
 
-
-def _清洗gemma4输出文本(text: str, 保留think块: bool) -> str:
+def _清洗LLM输出文本(text: str, 保留think块: bool = False) -> str:
     if not isinstance(text, str) or not text:
         return "" if text is None else str(text)
     cleaned = text.replace("\r\n", "\n")
     if not 保留think块 and "<channel|>" in cleaned:
-        cleaned = re.sub(r"^.*?<channel\|>\s*", "", cleaned, count=1, flags=re.DOTALL)
+        cleaned = re.sub(r"^.*?<channel\|\>\s*", "", cleaned, count=1, flags=re.DOTALL)
     if not 保留think块:
-        cleaned = re.sub(r"<think\b[^>]*>.*?</think>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
-        if re.search(r"</think>", cleaned, flags=re.IGNORECASE):
-            cleaned = re.sub(r"^.*?</think>\s*", "", cleaned, count=1, flags=re.DOTALL | re.IGNORECASE)
+        cleaned = re.sub(r"<think\b[^>]*>.*?</think\>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+        if re.search(r"</think\>", cleaned, flags=re.IGNORECASE):
+            cleaned = re.sub(r"^.*?</think\>\s*", "", cleaned, count=1, flags=re.DOTALL | re.IGNORECASE)
     cleaned = re.sub(r"<\|channel\>\s*[\w-]*\s*\n?", "", cleaned, flags=re.IGNORECASE)
-    cleaned = cleaned.replace("<channel|>", "").replace("<|think|>", "").replace("<think>", "").replace("</think>", "")
+    cleaned = cleaned.replace("<channel|>", "").replace("<|think|>", "").replace("<think", "").replace("</think", "")
     return cleaned.strip()
 
 

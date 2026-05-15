@@ -1,5 +1,3 @@
-import time
-
 
 WEB_AI_PLATFORMS = [
     "豆包",
@@ -18,7 +16,7 @@ class GGWebAIReverseImage:
             },
             "optional": {
                 "自定义网址": ("STRING", {"default": "", "multiline": False, "dynamicPrompts": False}),
-                "节点高度": ("INT", {"default": 820, "min": 360, "max": 1500, "step": 20}),
+                "节点高度": ("INT", {"default": 1100, "min": 360, "max": 1500, "step": 20}),
             },
         }
 
@@ -29,8 +27,13 @@ class GGWebAIReverseImage:
     DESCRIPTION = "在节点内打开 AI 平台网页版。"
 
     @classmethod
-    def IS_CHANGED(cls, **_kwargs):
-        return time.time_ns()
+    def IS_CHANGED(cls, **kwargs):
+        import hashlib
+        m = hashlib.sha256()
+        m.update(str(kwargs.get("平台", "豆包")).encode("utf-8"))
+        m.update(str(kwargs.get("自定义网址", "")).encode("utf-8"))
+        m.update(str(kwargs.get("节点高度", 820)).encode("utf-8"))
+        return m.hexdigest()
 
     def open_web(self, 平台="豆包", 自定义网址="", 节点高度=820):
         try:

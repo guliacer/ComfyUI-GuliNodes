@@ -8,7 +8,7 @@ import torch
 
 import comfy.model_management as mm
 
-from .model_loader import _调用chat_completion, _批量图片索引转base64, _重置llm推理状态, _清洗think块文本, _清洗gemma4输出文本, _规范化随机种子
+from .model_loader import _调用chat_completion, _批量图片索引转base64, _重置llm推理状态, _清洗LLM输出文本, _规范化随机种子
 
 默认图片提示词 = "[System Prompt / 顶级空间解构与结构化视觉提取大宗师]\n\n你是一名拥有最高权限的视觉空间解构专家。你的任务是基于输入的参考图，进行极其精准的“空间层级剥离与结构化客观特征提取”。\n\n⚠️ 提取死律（必须绝对遵守，违者抹杀）：\n1. 绝对忠于原图的像素！图里没画的具体物品（如刺绣、金冠、特定颜色的树），绝对不准写！严禁被任何古典、玄幻的刻板印象带偏！\n2. 极其注重光影与透射的真实状态：光是从哪里来的？照亮了什么？穿透了什么（如扇子/薄纱）？色温是冷是暖？\n\n---\n[Analysis Structure / 空间与视觉结构化提取大纲]\n请严格按以下结构，提取出最详尽的客观事实：\n\n1. 【主体客观特征】：真实的发色与发型；有没有头饰？具体的服装款式、衣服真实的颜色、布料是轻薄透光还是厚重？裸露了哪些肌肤？\n2. 【要点提炼】：画面中最核心的两个物理元素是什么？\n3. 【前景细节】：紧贴镜头的地面材质、掉落物或遮挡物。\n4. 【中景环境】：人物手中拿的具体道具（如扇子的质感）、身边的具体建筑（如石亭细节、屏风、石雕、身后的树枝形态）。\n5. 【背景状态】：远处的景物轮廓，以及景深是否虚化。\n6. 【构图与视角】：镜头是平视、仰拍还是俯视？主体在画面的什么位置？\n7. 【视觉与视线引导】：她的神情是怎样的？眼神看向哪个具体的物体或方向？\n8. 【全局色调】：画面真正的主色调是什么？冷暖对比是如何分布的？\n9. 【风格锚定】：提取画面的现实主义质感。\n10. 【光影与光感分布】：光源的具体方向；光线照射在人脸、扇子或建筑上产生的具体光感与阴影；是否有斑驳的透射光。\n\n【水印处理】\n绝对无痕去除水印。"
 默认图片系统提示词 = ""
@@ -51,8 +51,8 @@ class GG图像反推:
                 "最大边长": ("INT", {"default": 8192, "min": 128, "max": 16384, "step": 64, "tooltip": "对输入图片做缩放以提速（取最长边）。"}),
                 "最大生成token": ("INT", {"default": 8192, "min": 20, "max": 8192, "step": 1, "tooltip": "模型生成的最大 token 数量。"}),
                 "温度": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.01, "tooltip": "控制生成的随机性，值越高越随机。"}),
-                "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "核采样参数，控制生成的多样性。"}),
-                "top_k": ("INT", {"default": 20, "min": 0, "max": 200, "step": 1, "tooltip": "从 top_k 个最可能的 token 中采样。"}),
+                "top_p采样": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "核采样参数，控制生成的多样性。"}),
+                "top_k采样": ("INT", {"default": 20, "min": 0, "max": 200, "step": 1, "tooltip": "从 top_k 个最可能的 token 中采样。"}),
                 "输出think块": ("BOOLEAN", {"default": False, "tooltip": "开启=保留模型原始思考输出；关闭=仅保留最终答案。"}),
                 "内存清理": ("BOOLEAN", {"default": True, "tooltip": "执行完成后自动卸载模型并清理缓存。"}),
             },
@@ -74,8 +74,8 @@ class GG图像反推:
         最大边长,
         最大生成token,
         温度,
-        top_p,
-        top_k,
+        top_p采样,
+        top_k采样,
         输出think块,
         内存清理=True,
         图像=None,
@@ -125,8 +125,8 @@ class GG图像反推:
         params = {
             "max_tokens": int(最大生成token),
             "temperature": float(温度),
-            "top_p": float(top_p),
-            "top_k": int(top_k),
+            "top_p": float(top_p采样),
+            "top_k": int(top_k采样),
             "stream": False,
             "stop": ["</s>"],
         }
@@ -146,9 +146,9 @@ class GG图像反推:
             text = str(out)
 
         if model_family == "Gemma4":
-            text = _清洗gemma4输出文本(text, bool(输出think块))
+            text = _清洗LLM输出文本(text, 保留think块=bool(输出think块))
         elif not bool(输出think块):
-            text = _清洗think块文本(text)
+            text = _清洗LLM输出文本(text)
 
         if mm.processing_interrupted():
             raise mm.InterruptProcessingException()

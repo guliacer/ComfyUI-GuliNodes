@@ -67,6 +67,17 @@ class LoRAStackerBase:
                 print(f"Error applying LoRA: {exc}")
         return result_model
 
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        import hashlib
+        m = hashlib.sha256()
+        m.update(str(id(kwargs.get("model", None))).encode("utf-8"))
+        for key in sorted(kwargs.keys()):
+            val = kwargs.get(key)
+            if isinstance(val, (str, int, float, bool)):
+                m.update(f"{key}={val}".encode("utf-8"))
+        return m.hexdigest()
+
 
 class GGLoRAFileStacker4V2(LoRAStackerBase):
     @classmethod

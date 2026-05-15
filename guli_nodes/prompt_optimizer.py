@@ -5,7 +5,7 @@ from datetime import datetime
 
 import comfy.model_management as mm
 
-from .image_prompt.model_loader import _QwenStorage, _Gemma4Storage, _调用chat_completion, _重置llm推理状态, _清洗think块文本, _清洗gemma4输出文本
+from .image_prompt.model_loader import _QwenStorage, _Gemma4Storage, _调用chat_completion, _重置llm推理状态, _清洗LLM输出文本
 
 默认提示词规则 = "你是一名专业的AI绘图提示词优化专家。请根据以下规则优化提示词：\n\n1. 保持原始提示词的核心意图不变\n2. 增加更多具体的视觉细节描述\n3. 优化关键词的排列顺序，将最重要的描述放在前面\n4. 添加适当的画质和风格关键词\n5. 使用英文输出优化后的提示词\n6. 直接输出优化后的提示词，不要添加任何解释或前缀"
 
@@ -60,31 +60,27 @@ class _PromptOptimizerSeed:
 _PromptOptimizerSeed._init_random_state()
 
 
-def _执行内存清理(清理缓存: bool = True, 卸载模型: bool = True) -> None:
-    if 卸载模型:
+def _执行内存清理(清理缓存: bool = True, 卸载LLM: bool = True) -> None:
+    if 卸载LLM:
         try:
-            mm.unload_all_models()
-        except Exception as exc:
-            print(f"GG 提示词优化: 卸载模型失败: {exc}")
+            _QwenStorage.unload()
+        except Exception:
+            pass
         try:
-            mm.cleanup_models()
-        except Exception as exc:
-            print(f"GG 提示词优化: 清理模型引用失败: {exc}")
+            _Gemma4Storage.unload()
+        except Exception:
+            pass
 
     gc.collect()
 
     if 清理缓存:
-        try:
-            mm.soft_empty_cache(force=True)
-        except Exception as exc:
-            print(f"GG 提示词优化: 清理缓存失败: {exc}")
         if torch.cuda.is_available():
             try:
                 torch.cuda.synchronize()
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
-            except Exception as exc:
-                print(f"GG 提示词优化: CUDA 缓存清理失败: {exc}")
+            except Exception:
+                pass
 
 
 class GG提示词优化:
@@ -101,10 +97,11 @@ class GG提示词优化:
                 "步长": ("INT", {"default": 500, "min": 1, "max": 0xFFFFFFFF}),
                 "最大生成token": ("INT", {"default": 2048, "min": 20, "max": 8192}),
                 "温度": ("FLOAT", {"default": 0.7, "min": 0.0, "max": 2.0, "step": 0.01}),
-                "top_p": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "top_k": ("INT", {"default": 20, "min": 0, "max": 200}),
+                "top_p采样": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "top_k采样": ("INT", {"default": 20, "min": 0, "max": 200}),
                 "输出think块": ("BOOLEAN", {"default": False}),
-                "内存清理": ("BOOLEAN", {"default": True}),
+                "内存清理": ("BOOLEAN", {"default": False}),
+                "卸载LLM模型": ("BOOLEAN", {"default": True}),
             },
             "optional": {
                 "提示词B": ("STRING", {"default": "", "multiline": True}),
@@ -127,10 +124,11 @@ class GG提示词优化:
         步长,
         最大生成token,
         温度,
-        top_p,
-        top_k,
+        top_p采样,
+        top_k采样,
         输出think块,
-        内存清理=True,
+        内存清理=False,
+        卸载LLM模型=True,
         提示词B="",
     ):
         seed = _PromptOptimizerSeed._normalize_seed(种子)
@@ -185,8 +183,8 @@ class GG提示词优化:
         params = {
             "max_tokens": int(最大生成token),
             "temperature": float(温度),
-            "top_p": float(top_p),
-            "top_k": int(top_k),
+            "top_p": float(top_p采样),
+            "top_k": int(top_k采样),
             "stream": False,
             "stop": ["</s>"],
             "seed": result_seed,
@@ -200,17 +198,17 @@ class GG提示词优化:
             text = str(out)
 
         if model_family == "Gemma4":
-            text = _清洗gemma4输出文本(text, bool(输出think块))
+            text = _清洗LLM输出文本(text, 保留think块=bool(输出think块))
         elif not bool(输出think块):
-            text = _清洗think块文本(text)
+            text = _清洗LLM输出文本(text)
 
         if mm.processing_interrupted():
             raise mm.InterruptProcessingException()
 
         result_text = text.lstrip().removeprefix(": ").strip()
 
-        if bool(内存清理):
-            _执行内存清理(True, True)
+        if bool(内存清理) or bool(卸载LLM模型):
+            _执行内存清理(bool(内存清理), bool(卸载LLM模型))
 
         return (result_text,)
 

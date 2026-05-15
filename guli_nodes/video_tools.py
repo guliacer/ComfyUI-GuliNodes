@@ -617,24 +617,24 @@ class GGVideoLoad(ComfyNodeABC):
                     files = [name for name in files if Path(name).suffix.lower().lstrip(".") in UPLOAD_VIDEO_EXTENSIONS]
             else:
                 files = [name for name in files if Path(name).suffix.lower().lstrip(".") in UPLOAD_VIDEO_EXTENSIONS]
-        return {"required": {"file": (sorted(files), {"video_upload": True})}}
+        return {"required": {"视频文件": (sorted(files), {"video_upload": True})}}
 
     RETURN_TYPES = (VIDEO_RETURN_TYPE, "PATH")
     RETURN_NAMES = (CN_VIDEO, CN_PATH)
     FUNCTION = "load_video"
     CATEGORY = "GuliNodes/\u89c6\u9891\u5de5\u5177"
 
-    def load_video(self, file):
+    def load_video(self, 视频文件):
         try:
-            video_path = folder_paths.get_annotated_filepath(file)
+            video_path = folder_paths.get_annotated_filepath(视频文件)
         except Exception:
-            video_path = _resolve_video_file_reference(file)
+            video_path = _resolve_video_file_reference(视频文件)
 
         if not video_path or not os.path.isfile(video_path):
-            video_path = _resolve_video_file_reference(file)
+            video_path = _resolve_video_file_reference(视频文件)
 
         if not video_path or not os.path.isfile(video_path):
-            raise FileNotFoundError(f"\u627e\u4e0d\u5230\u89c6\u9891\u6587\u4ef6: {file}")
+            raise FileNotFoundError(f"\u627e\u4e0d\u5230\u89c6\u9891\u6587\u4ef6: {视频文件}")
 
         ok, probe_error = _probe_video_readable(video_path)
         if not ok:
@@ -645,19 +645,19 @@ class GGVideoLoad(ComfyNodeABC):
         return (InputImpl.VideoFromFile(video_path), video_path)
 
     @classmethod
-    def IS_CHANGED(cls, file):
+    def IS_CHANGED(cls, 视频文件):
         try:
-            video_path = folder_paths.get_annotated_filepath(file)
+            video_path = folder_paths.get_annotated_filepath(视频文件)
         except Exception:
-            video_path = _resolve_video_file_reference(file)
+            video_path = _resolve_video_file_reference(视频文件)
         if not video_path or not os.path.isfile(video_path):
-            video_path = _resolve_video_file_reference(file)
-        return os.path.getmtime(video_path) if video_path and os.path.isfile(video_path) else file
+            video_path = _resolve_video_file_reference(视频文件)
+        return os.path.getmtime(video_path) if video_path and os.path.isfile(video_path) else 视频文件
 
     @classmethod
-    def VALIDATE_INPUTS(cls, file):
-        suffix = Path(file).suffix.lower().lstrip(".")
-        return True if suffix in UPLOAD_VIDEO_EXTENSIONS else f"Invalid video file: {file}"
+    def VALIDATE_INPUTS(cls, 视频文件):
+        suffix = Path(视频文件).suffix.lower().lstrip(".")
+        return True if suffix in UPLOAD_VIDEO_EXTENSIONS else f"Invalid video file: {视频文件}"
 
 
 class GGVideoCompress:

@@ -115,30 +115,6 @@ app.registerExtension({
         toolbarSettings.id = "gg-toolbar-settings";
         toolbarSettings.style.cssText = `
             position: fixed; display: none; z-index: 100002;
-            background: #ffffff; border: 1px solid #e0e0e0; border-radius: 8px;
-            padding: 8px; box-shadow: 0 6px 18px rgba(0,0,0,0.16);
-            user-select: none; min-width: 188px;
-        `;
-        toolbarSettings.innerHTML = `
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-                <button id="gg-toolbar-bg-chip" class="tool-btn" data-tooltip="工具栏颜色" style="background:transparent;border:none;padding:4px;">
-                    <span class="color-dot" style="background:#ffffff;"></span>
-                </button>
-                <input id="gg-toolbar-bg-input" type="color" value="#ffffff" style="width:36px;height:28px;border:none;background:transparent;padding:0;cursor:pointer;">
-                <button id="gg-toolbar-reset" class="tool-btn" data-tooltip="恢复默认工具栏样式" style="background:transparent;border:none;padding:4px;margin-left:auto;">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>
-                </button>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><path d="M12 5v14"/></svg>
-                <input id="gg-toolbar-opacity-input" type="range" min="0" max="100" step="1" value="100" style="width:116px;accent-color:#777;">
-                <span id="gg-toolbar-opacity-label" style="width:34px;text-align:right;font-size:12px;color:#555;">100%</span>
-            </div>
-        `;
-        document.body.appendChild(toolbarSettings);
-
-        toolbarSettings.style.cssText = `
-            position: fixed; display: none; z-index: 100002;
             width: 248px; padding: 14px;
             border-radius: 16px;
             border: 1px solid rgba(255,255,255,0.72);
@@ -151,65 +127,25 @@ app.registerExtension({
         toolbarSettings.innerHTML = `
             <div class="gg-toolbar-settings-head">
                 <div>
-                    <div class="gg-toolbar-settings-title">工具栏外观</div>
-                    <div class="gg-toolbar-settings-subtitle">实时调整颜色与透明度</div>
-                </div>
-                <button id="gg-toolbar-reset" class="tool-btn gg-toolbar-icon-btn" data-tooltip="恢复默认工具栏样式" type="button">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>
-                </button>
-            </div>
-            <div class="gg-toolbar-settings-card">
-                <div class="gg-toolbar-settings-row">
-                    <div class="gg-toolbar-settings-label">背景颜色</div>
-                    <div class="gg-toolbar-settings-value" id="gg-toolbar-color-hex">#FFFFFF</div>
-                </div>
-                <div class="gg-toolbar-settings-color-row">
-                    <button id="gg-toolbar-bg-chip" class="tool-btn gg-toolbar-color-chip" data-tooltip="工具栏颜色" type="button">
-                        <span class="color-dot" style="background:#ffffff;"></span>
-                    </button>
-                    <input id="gg-toolbar-bg-input" type="color" value="#ffffff" class="gg-toolbar-color-input">
-                    <div class="gg-toolbar-color-presets">
-                        <button class="gg-toolbar-swatch" type="button" data-color="#f3f0ea" style="background:#f3f0ea;"></button>
-                        <button class="gg-toolbar-swatch" type="button" data-color="#e5ebea" style="background:#e5ebea;"></button>
-                        <button class="gg-toolbar-swatch" type="button" data-color="#ede2d8" style="background:#ede2d8;"></button>
-                        <button class="gg-toolbar-swatch" type="button" data-color="#ded8eb" style="background:#ded8eb;"></button>
-                    </div>
-                </div>
-            </div>
-            <div class="gg-toolbar-settings-card">
-                <div class="gg-toolbar-settings-row">
-                    <div class="gg-toolbar-settings-label">背景透明度</div>
-                    <div class="gg-toolbar-settings-value" id="gg-toolbar-opacity-label">100%</div>
-                </div>
-                <div class="gg-toolbar-slider-row">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7"/><path d="M12 5v14"/></svg>
-                    <input id="gg-toolbar-opacity-input" type="range" min="0" max="100" step="1" value="100" class="gg-toolbar-opacity-input">
-                </div>
-            </div>
-        `;
-
-        toolbarSettings.innerHTML = `
-            <div class="gg-toolbar-settings-head">
-                <div>
-                    <div class="gg-toolbar-settings-title">Toolbar Style</div>
-                    <div class="gg-toolbar-settings-subtitle">Live color and opacity</div>
+                    <div class="gg-toolbar-settings-title">\u5de5\u5177\u680f\u5916\u89c2</div>
+                    <div class="gg-toolbar-settings-subtitle">\u5b9e\u65f6\u8c03\u6574\u989c\u8272\u4e0e\u900f\u660e\u5ea6</div>
                 </div>
                 <div class="gg-toolbar-head-actions">
-                    <button id="gg-toolbar-reset" class="tool-btn gg-toolbar-icon-btn" data-tooltip="Reset toolbar style" type="button">
+                    <button id="gg-toolbar-reset" class="tool-btn gg-toolbar-icon-btn" data-tooltip="\u6062\u590d\u9ed8\u8ba4\u5de5\u5177\u680f\u6837\u5f0f" type="button">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>
                     </button>
-                    <button id="gg-toolbar-close" class="tool-btn gg-toolbar-icon-btn" data-tooltip="Close" type="button">
+                    <button id="gg-toolbar-close" class="tool-btn gg-toolbar-icon-btn" data-tooltip="\u5173\u95ed" type="button">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18"/><path d="M6 6l12 12"/></svg>
                     </button>
                 </div>
             </div>
             <div class="gg-toolbar-settings-card">
                 <div class="gg-toolbar-settings-row">
-                    <div class="gg-toolbar-settings-label">Color</div>
+                    <div class="gg-toolbar-settings-label">\u80cc\u666f\u989c\u8272</div>
                     <div class="gg-toolbar-settings-value" id="gg-toolbar-color-hex">#FFFFFF</div>
                 </div>
                 <div class="gg-toolbar-settings-color-row">
-                    <button id="gg-toolbar-bg-chip" class="tool-btn gg-toolbar-color-chip" data-tooltip="Toolbar color" type="button">
+                    <button id="gg-toolbar-bg-chip" class="tool-btn gg-toolbar-color-chip" data-tooltip="\u5de5\u5177\u680f\u989c\u8272" type="button">
                         <span class="color-dot" style="background:#ffffff;"></span>
                     </button>
                     <input id="gg-toolbar-bg-input" type="color" value="#ffffff" class="gg-toolbar-color-input">
@@ -223,7 +159,7 @@ app.registerExtension({
             </div>
             <div class="gg-toolbar-settings-card">
                 <div class="gg-toolbar-settings-row">
-                    <div class="gg-toolbar-settings-label">Opacity</div>
+                    <div class="gg-toolbar-settings-label">\u80cc\u666f\u900f\u660e\u5ea6</div>
                     <div class="gg-toolbar-settings-value" id="gg-toolbar-opacity-label">100%</div>
                 </div>
                 <div class="gg-toolbar-slider-row">
@@ -232,6 +168,7 @@ app.registerExtension({
                 </div>
             </div>
         `;
+        document.body.appendChild(toolbarSettings);
 
         const style = document.createElement("style");
         style.textContent = `
@@ -463,13 +400,21 @@ app.registerExtension({
         // 创建迷你图标
         const miniIcon = document.createElement("button");
         miniIcon.id = "gg-nodes-mini";
+        miniIcon.title = "点击展开工具栏";
         miniIcon.style.cssText = `
             position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
-            width: 32px; height: 32px; background: #ffffff; border: 1px solid #e0e0e0; 
-            border-radius: 6px; color: #555555; cursor: pointer; display: none; 
+            width: 36px; height: 36px; background: rgba(255,255,255,0.95); border: 1px solid rgba(0,0,0,0.1); 
+            border-radius: 50%; color: #666; cursor: pointer; display: none; 
             align-items: center; justify-content: center; z-index: 99999;
+            box-shadow: none; transition: all 0.2s ease;
         `;
-        miniIcon.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M8 8h8v8H8z"/></svg>`;
+        miniIcon.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M8 8h8v8H8z"/></svg>`;
+        miniIcon.addEventListener("mouseenter", () => {
+            miniIcon.style.transform = "translateX(-50%) scale(1.15)";
+        });
+        miniIcon.addEventListener("mouseleave", () => {
+            miniIcon.style.transform = "translateX(-50%) scale(1)";
+        });
         document.body.appendChild(miniIcon);
 
         const toast = document.createElement("div");
@@ -724,7 +669,7 @@ app.registerExtension({
         const hidePanel = () => {
             lastPosition = { left: panel.style.left, top: panel.style.top, bottom: panel.style.bottom };
             panel.style.display = "none";
-            miniIcon.style.display = "none";
+            miniIcon.style.display = "flex";
             localStorage.setItem("ggNodes_visible", "false");
         };
 
@@ -738,9 +683,15 @@ app.registerExtension({
             localStorage.setItem("ggNodes_visible", "true");
         };
 
-        // 为面板添加右键菜单事件
-        panel.addEventListener("contextmenu", e => { e.preventDefault(); hidePanel(); });
-        miniIcon.addEventListener("contextmenu", e => { e.preventDefault(); showPanel(); });
+        panel.addEventListener("contextmenu", e => {
+            e.preventDefault();
+            hidePanel();
+        });
+        miniIcon.addEventListener("click", e => {
+            e.preventDefault();
+            showPanel();
+        });
+        miniIcon.addEventListener("contextmenu", e => { e.preventDefault(); });
         panel.addEventListener("auxclick", e => {
             if (e.button === 1) showToolbarSettings(e);
         });
@@ -883,65 +834,32 @@ app.registerExtension({
         }
 
         function getSelectedNodes() {
-            console.log("尝试获取选中节点:");
-            console.log("app对象:", app);
-            console.log("app.graph:", app.graph);
-            console.log("app.canvas:", app.canvas);
-            
             const canvasSelected = getCanvasSelectedNodes();
-            if (canvasSelected.length > 0) {
-                console.log("从LGraphCanvas/app.canvas.selected_nodes获取:", canvasSelected.length);
-                console.log("选中节点详情:", canvasSelected);
-                return uniqueNodes(canvasSelected);
-            }
+            if (canvasSelected.length > 0) return uniqueNodes(canvasSelected);
 
             if (app.graph && app.graph.selected_nodes) {
                 const selected = normalizeSelectedNodes(app.graph.selected_nodes);
-                if (selected.length > 0) {
-                    console.log("从app.graph.selected_nodes获取:", selected.length);
-                    console.log("选中节点详情:", selected);
-                    return uniqueNodes(selected);
-                }
+                if (selected.length > 0) return uniqueNodes(selected);
             }
             
             const selectedFromGraph = getSelectedNodesFromGraph();
-            if (selectedFromGraph.length > 0) {
-                const selected = uniqueNodes(selectedFromGraph);
-                console.log("从app.graph._nodes.filter获取:", selected.length);
-                console.log("选中节点详情:", selected);
-                return selected;
-            }
+            if (selectedFromGraph.length > 0) return uniqueNodes(selectedFromGraph);
 
-            // 尝试其他可能的方式
             if (app.graph && app.graph.getSelection) {
                 const selection = uniqueNodes(normalizeSelectedNodes(app.graph.getSelection()));
-                console.log("从app.graph.getSelection获取:", selection.length);
-                if (selection && selection.length > 0) {
-                    console.log("选中节点详情:", selection);
-                    return selection;
-                }
+                if (selection && selection.length > 0) return selection;
             }
             
-            // 尝试通过全局变量获取
             if (window.canvas && window.canvas.selected_nodes) {
                 const selected = normalizeSelectedNodes(window.canvas.selected_nodes);
-                if (selected.length > 0) {
-                    console.log("从window.canvas.selected_nodes获取:", selected.length);
-                    return uniqueNodes(selected);
-                }
+                if (selected.length > 0) return uniqueNodes(selected);
             }
             
-            // 尝试通过LiteGraph的方式获取
             if (window.LiteGraph && window.LiteGraph.getSelectedNodes) {
                 const selected = uniqueNodes(normalizeSelectedNodes(window.LiteGraph.getSelectedNodes()));
-                console.log("从window.LiteGraph.getSelectedNodes获取:", selected.length);
-                if (selected && selected.length > 0) {
-                    console.log("选中节点详情:", selected);
-                    return selected;
-                }
+                if (selected && selected.length > 0) return selected;
             }
             
-            console.log("未找到选中节点");
             return [];
         }
 
@@ -1262,41 +1180,12 @@ app.registerExtension({
             });
         }
 
-        function beginPaintColor(color) {
-            paintAction = { type: "color", color };
-            const selectedNodes = getSelectedColorTargets();
-            if (selectedNodes.length > 0) {
-                applyColorToNodes(selectedNodes, color);
-                showToast("已上色，也可继续点击节点上色", "success");
-                return;
-            }
-            showToast("点击节点上色", "success");
-        }
-
-        function beginClearColor() {
-            paintAction = { type: "clear" };
-            const selectedNodes = getSelectedColorTargets();
-            if (selectedNodes.length > 0) {
-                clearColorFromNodes(selectedNodes);
-                showToast("已删除颜色，也可继续点击节点删除颜色", "success");
-                return;
-            }
-            showToast("点击节点删除颜色", "success");
-        }
-
         function applyNodeColor(color) {
             beginPaintColor(color);
         }
 
         function clearNodeColor() {
             beginClearColor();
-        }
-
-        function setColorMode(mode) {
-            colorMode = mode;
-            panel.querySelectorAll(".color-mode-btn").forEach(btn => {
-                btn.classList.toggle("active", btn.dataset.mode === mode);
-            });
         }
 
         function refreshColorButtons() {
@@ -1570,24 +1459,28 @@ app.registerExtension({
         document.getElementById("btn-auto-fit").onclick = () => {
             const nodes = getSelectedNodes();
             if (nodes.length === 0) return showToast("请至少选中1个节点", "error");
-            nodes.forEach(n => n.size = [210, n.size[1]]);
-            app.graph.setDirtyCanvas(true);
+            nodes.forEach(n => {
+                if (typeof n.computeSize === "function") {
+                    const minSize = n.computeSize();
+                    n.setSize([Math.ceil(minSize[0]), Math.ceil(minSize[1])]);
+                }
+            });
+            app.graph.setDirtyCanvas(true, true);
         };
-
-        // 迷你图标点击事件
-        miniIcon.onclick = showPanel;
 
         // 关闭按钮点击事件
         document.getElementById("btn-close-toolbar").onclick = () => hidePanel();
 
-        // 启动时始终显示工具栏，恢复到上次记忆的位置
-        showPanel();
-
-        // 点击外部区域不关闭面板，避免误操作
-        // document.addEventListener('click', (e) => {
-        //     if (!panel.contains(e.target) && e.target !== miniIcon) {
-        //         hidePanel();
-        //     }
-        // });
+        try {
+            const toolbarEnabled = app.ui.settings.getSettingValue("GuliNodes.enableToolbar", true);
+            if (toolbarEnabled) {
+                showPanel();
+            } else {
+                panel.style.display = "none";
+                miniIcon.style.display = "none";
+            }
+        } catch {
+            showPanel();
+        }
     }
 });

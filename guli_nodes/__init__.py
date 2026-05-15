@@ -14,9 +14,10 @@ _NODE_MODULES = (
     "group_controller",
     "clipboard",
     "image_prompt",
-    "model_loaders",
     "web_ai_tools",
     "prompt_optimizer",
+    "model_loaders",
+    "zimage_sampler",
 )
 
 
