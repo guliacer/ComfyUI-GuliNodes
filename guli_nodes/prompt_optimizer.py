@@ -111,7 +111,7 @@ class GG提示词优化:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("优化提示词",)
     FUNCTION = "optimize"
-    CATEGORY = "GuliNodes/AI工具"
+    CATEGORY = "GuliNodes/AI"
 
     def optimize(
         self,

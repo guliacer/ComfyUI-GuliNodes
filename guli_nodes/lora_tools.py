@@ -10,7 +10,7 @@ class LoRAStackerBase:
 
     @classmethod
     def get_base_inputs(cls):
-        return {"required": {"model": ("MODEL",)}}
+        return {"required": {"模型": ("MODEL",)}}
 
     @classmethod
     def get_lora_file_inputs(cls, count: int) -> dict:
@@ -20,8 +20,8 @@ class LoRAStackerBase:
 
         inputs = {}
         for index in range(1, count + 1):
-            inputs[f"lora{index}_name"] = (lora_list, {"default": "None"})
-            inputs[f"strength{index}"] = (
+            inputs[f"LoRA{index}名称"] = (lora_list, {"default": "None"})
+            inputs[f"LoRA{index}强度"] = (
                 "FLOAT",
                 {"default": 1.0, "min": 0.0, "max": 5.0, "step": 0.01},
             )
@@ -71,7 +71,7 @@ class LoRAStackerBase:
     def IS_CHANGED(cls, **kwargs):
         import hashlib
         m = hashlib.sha256()
-        m.update(str(id(kwargs.get("model", None))).encode("utf-8"))
+        m.update(str(id(kwargs.get("模型", kwargs.get("model", None)))).encode("utf-8"))
         for key in sorted(kwargs.keys()):
             val = kwargs.get(key)
             if isinstance(val, (str, int, float, bool)):
@@ -89,38 +89,28 @@ class GGLoRAFileStacker4V2(LoRAStackerBase):
     RETURN_TYPES = ("MODEL",)
     RETURN_NAMES = ("模型",)
     FUNCTION = "stack"
-    CATEGORY = "GuliNodes/LoRA工具"
+    CATEGORY = "GuliNodes/模型"
 
     def stack(
         self,
-        model: object,
-        lora1_name: str = "None",
-        lora2_name: str = "None",
-        lora3_name: str = "None",
-        lora4_name: str = "None",
-        strength1: float = 1.0,
-        strength2: float = 1.0,
-        strength3: float = 1.0,
-        strength4: float = 1.0,
+        模型: object,
+        **kwargs,
     ) -> tuple:
-        if model is None:
+        if 模型 is None:
             return (None,)
 
         lora_data = []
-        for lora_name, strength in [
-            (lora1_name, strength1),
-            (lora2_name, strength2),
-            (lora3_name, strength3),
-            (lora4_name, strength4),
-        ]:
+        for index in range(1, 5):
+            lora_name = kwargs.get(f"LoRA{index}名称", "None")
+            strength = kwargs.get(f"LoRA{index}强度", 1.0)
             lora = self.load_lora_file(lora_name, strength)
             if lora is not None:
                 lora_data.append((lora, strength))
 
         if not lora_data:
-            return (model,)
+            return (模型,)
 
-        return (self.apply_lora_stack(model, lora_data),)
+        return (self.apply_lora_stack(模型, lora_data),)
 
 
 class GGLoRACustomLoader(LoRAStackerBase):
@@ -134,15 +124,15 @@ class GGLoRACustomLoader(LoRAStackerBase):
 
         optional = {}
         for index in range(1, cls.MAX_LORAS + 1):
-            optional[f"lora{index}_name"] = (lora_list, {"default": "None"})
-            optional[f"strength{index}"] = (
+            optional[f"LoRA{index}名称"] = (lora_list, {"default": "None"})
+            optional[f"LoRA{index}强度"] = (
                 "FLOAT",
                 {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01},
             )
 
         return {
             "required": {
-                "model": ("MODEL",),
+                "模型": ("MODEL",),
                 "LoRA数量": ("INT", {"default": 0, "min": 0, "max": cls.MAX_LORAS, "step": 1}),
             },
             "optional": optional,
@@ -151,26 +141,26 @@ class GGLoRACustomLoader(LoRAStackerBase):
     RETURN_TYPES = ("MODEL",)
     RETURN_NAMES = ("模型",)
     FUNCTION = "load_loras"
-    CATEGORY = "GuliNodes/LoRA工具"
+    CATEGORY = "GuliNodes/模型"
 
-    def load_loras(self, model: object, LoRA数量: int = 0, **kwargs) -> tuple:
-        if model is None:
+    def load_loras(self, 模型: object, LoRA数量: int = 0, **kwargs) -> tuple:
+        if 模型 is None:
             return (None,)
 
         lora_count = max(0, min(int(LoRA数量), self.MAX_LORAS))
         lora_data = []
 
         for index in range(1, lora_count + 1):
-            lora_name = kwargs.get(f"lora{index}_name", "None")
-            strength = float(kwargs.get(f"strength{index}", 1.0))
+            lora_name = kwargs.get(f"LoRA{index}名称", "None")
+            strength = float(kwargs.get(f"LoRA{index}强度", 1.0))
             lora = self.load_lora_file(lora_name, strength)
             if lora is not None:
                 lora_data.append((lora, strength))
 
         if not lora_data:
-            return (model,)
+            return (模型,)
 
-        return (self.apply_lora_stack(model, lora_data),)
+        return (self.apply_lora_stack(模型, lora_data),)
 
 
 class GGLoRAFileStacker8V2(LoRAStackerBase):
@@ -183,24 +173,24 @@ class GGLoRAFileStacker8V2(LoRAStackerBase):
     RETURN_TYPES = ("MODEL",)
     RETURN_NAMES = ("模型",)
     FUNCTION = "stack"
-    CATEGORY = "GuliNodes/LoRA工具"
+    CATEGORY = "GuliNodes/模型"
 
-    def stack(self, model: object, **kwargs) -> tuple:
-        if model is None:
+    def stack(self, 模型: object, **kwargs) -> tuple:
+        if 模型 is None:
             return (None,)
 
         lora_data = []
         for index in range(1, 9):
-            lora_name = kwargs.get(f"lora{index}_name", "None")
-            strength = kwargs.get(f"strength{index}", 1.0)
+            lora_name = kwargs.get(f"LoRA{index}名称", "None")
+            strength = kwargs.get(f"LoRA{index}强度", 1.0)
             lora = self.load_lora_file(lora_name, strength)
             if lora is not None:
                 lora_data.append((lora, strength))
 
         if not lora_data:
-            return (model,)
+            return (模型,)
 
-        return (self.apply_lora_stack(model, lora_data),)
+        return (self.apply_lora_stack(模型, lora_data),)
 
 
 NODE_CLASS_MAPPINGS = {

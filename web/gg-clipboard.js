@@ -1,9 +1,12 @@
 import { app } from "../../scripts/app.js";
+import { ggIcon } from "./gg-ui-icons.js";
 
 const SETTINGS_ID = "GuliNodes";
 const STORAGE_KEY = "ggFloatToolbarSettings";
+const SKIP_WIDGET_NAMES = new Set(["压缩模式", "压缩模式选择"]);
+const SKIP_WIDGET_CLASSES = ["gg-compress-mode-host"];
 
-const SKIP_WIDGET_TYPES = new Set(["button", "toggle", "combo", "number", "slider"]);
+const SKIP_WIDGET_TYPES = new Set(["button", "toggle", "combo", "number", "slider", "ggHiddenCompressMode", "gg_compress_mode"]);
 
 const _timers = new Set();
 let _initialized = false;
@@ -21,8 +24,8 @@ function loadSettings() {
 
 function getDefaultSettings() {
     return {
-        background: "#282828",
-        opacity: 0.95
+        background: "#ffffff",
+        opacity: 0.92
     };
 }
 
@@ -77,13 +80,27 @@ function writeClipboard(text) {
 
 function isFloatingEnabled() {
     try {
-        return app.ui.settings.getSettingValue(`${SETTINGS_ID}.enableFloatButtons`, true);
+        const value = app.extensionManager?.setting?.get?.(`${SETTINGS_ID}.enableFloatButtons`);
+        if (value !== undefined) return value !== false;
+    } catch (error) {
+        console.warn("[GGClipboard] Unable to read extension setting:", error);
+    }
+
+    try {
+        return app.ui?.settings?.getSettingValue?.(`${SETTINGS_ID}.enableFloatButtons`, true) !== false;
     } catch { return true; }
 }
 
 function isToolbarEnabled() {
     try {
-        return app.ui.settings.getSettingValue(`${SETTINGS_ID}.enableToolbar`, true);
+        const value = app.extensionManager?.setting?.get?.(`${SETTINGS_ID}.enableToolbar`);
+        if (value !== undefined) return value !== false;
+    } catch (error) {
+        console.warn("[GGClipboard] Unable to read toolbar setting:", error);
+    }
+
+    try {
+        return app.ui?.settings?.getSettingValue?.(`${SETTINGS_ID}.enableToolbar`, true) !== false;
     } catch { return true; }
 }
 
@@ -166,11 +183,11 @@ function getWidgetValue(widget) {
     return String(widget.value ?? "");
 }
 
-const ICON_COPY = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
-const ICON_PASTE = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>`;
-const ICON_CLEAR = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#555555" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-const ICON_CHECK = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#4ade80" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
-const ICON_ERROR = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+const ICON_COPY = ggIcon("copy", 16);
+const ICON_PASTE = ggIcon("paste", 16);
+const ICON_CLEAR = ggIcon("clear", 16);
+const ICON_CHECK = ggIcon("check", 16, "gg-ui-icon-success");
+const ICON_ERROR = ggIcon("error", 16, "gg-ui-icon-error");
 
 let _currentContextMenu = null;
 
@@ -185,17 +202,17 @@ function createContextMenu(e) {
         position: "fixed",
         top: `${e.clientY}px`,
         left: `${e.clientX}px`,
-        background: "rgba(30, 30, 30, 0.98)",
-        border: "1px solid rgba(80, 80, 80, 0.6)",
-        borderRadius: "10px",
+        background: "var(--comfy-menu-bg, rgba(255, 255, 255, 0.96))",
+        border: "1px solid var(--border-color, rgba(148, 163, 184, 0.3))",
+        borderRadius: "12px",
         padding: "8px 0",
         minWidth: "220px",
         zIndex: "100000",
-        boxShadow: "0 10px 40px rgba(0, 0, 0, 0.5)",
+        boxShadow: "0 18px 40px rgba(15, 23, 42, 0.16)",
         backdropFilter: "blur(12px)",
         fontFamily: "system-ui, -apple-system, sans-serif",
         fontSize: "13px",
-        color: "#e0e0e0",
+        color: "var(--fg-color, #1f2937)",
     });
 
     const closeMenu = () => {
@@ -220,10 +237,10 @@ function createContextMenu(e) {
         padding: "8px 14px 12px",
         fontWeight: "600",
         fontSize: "12px",
-        color: "#888",
-        borderBottom: "1px solid rgba(80, 80, 80, 0.4)",
+        color: "var(--gg-ui-muted)",
+        borderBottom: "1px solid rgba(148, 163, 184, 0.22)",
         marginBottom: "4px",
-        letterSpacing: "0.3px",
+        letterSpacing: "0",
     });
     menu.appendChild(title);
 
@@ -277,7 +294,7 @@ function createContextMenu(e) {
 
     const opacityValue = document.createElement("span");
     opacityValue.textContent = `${Math.round(_currentSettings.opacity * 100)}%`;
-    opacityValue.style.color = "#888";
+    opacityValue.style.color = "var(--gg-ui-muted)";
     opacityValue.style.minWidth = "35px";
     opacityValue.style.textAlign = "right";
     opacityItem.appendChild(opacityValue);
@@ -292,7 +309,7 @@ function createContextMenu(e) {
         width: "90px",
         height: "4px",
         borderRadius: "2px",
-        background: "#555",
+        background: "rgba(148, 163, 184, 0.35)",
         outline: "none",
         cursor: "pointer",
         "-webkit-appearance": "none",
@@ -322,20 +339,26 @@ function makeBtn(icon, tooltip, onClick) {
     const btn = document.createElement("button");
     btn.innerHTML = icon;
     btn.title = tooltip;
+    btn.type = "button";
     Object.assign(btn.style, {
-        width: "28px",
-        height: "28px",
-        border: "none",
-        borderRadius: "6px",
-        backgroundColor: "transparent",
+        width: "24px",
+        height: "24px",
+        minWidth: "24px",
+        border: "1px solid rgba(148, 163, 184, 0.18)",
+        borderRadius: "7px",
+        backgroundColor: "rgba(255, 255, 255, 0.62)",
+        color: "var(--gg-ui-ink)",
         cursor: "pointer",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        transition: "all 0.15s ease",
+        transition: "transform 0.16s ease, color 0.16s ease, background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease",
         outline: "none",
-        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
-        padding: "2px",
+        boxShadow: "none",
+        padding: "1px",
+        lineHeight: "0",
+        boxSizing: "border-box",
+        touchAction: "manipulation",
     });
     btn.addEventListener("click", (e) => {
         e.preventDefault();
@@ -345,13 +368,17 @@ function makeBtn(icon, tooltip, onClick) {
         onClick?.();
     });
     btn.addEventListener("mouseenter", () => {
-        btn.style.backgroundColor = "rgba(100, 100, 100, 0.5)";
-        btn.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.4)";
+        btn.style.backgroundColor = "var(--gg-ui-accent-soft)";
+        btn.style.color = "var(--gg-ui-accent)";
+        btn.style.borderColor = "var(--gg-ui-accent-border)";
+        btn.style.boxShadow = "0 6px 14px rgba(59, 130, 246, 0.12)";
         btn.style.transform = "translateY(-1px)";
     });
     btn.addEventListener("mouseleave", () => {
-        btn.style.backgroundColor = "transparent";
-        btn.style.boxShadow = "0 1px 3px rgba(0, 0, 0, 0.3)";
+        btn.style.backgroundColor = "rgba(255, 255, 255, 0.62)";
+        btn.style.color = "var(--gg-ui-ink)";
+        btn.style.borderColor = "rgba(148, 163, 184, 0.18)";
+        btn.style.boxShadow = "none";
         btn.style.transform = "translateY(0)";
     });
     return btn;
@@ -371,6 +398,9 @@ function updateAllToolbars() {
     const bgColor = getToolbarBackground();
     toolbars.forEach((tb) => {
         tb.style.background = bgColor;
+        tb.style.borderColor = _currentSettings.opacity < 0.35
+            ? "rgba(148, 163, 184, 0.32)"
+            : "rgba(148, 163, 184, 0.18)";
     });
 }
 
@@ -385,19 +415,21 @@ function attachToolbarToWidget(targetEl, widget) {
     container.className = "gg-float-toolbar";
     Object.assign(container.style, {
         position: "absolute",
-        top: "6px",
-        right: "6px",
+        left: "5px",
+        bottom: "5px",
         display: "flex",
-        gap: "4px",
+        gap: "3px",
         opacity: "0",
-        transition: "opacity 0.2s ease, transform 0.15s ease",
+        transition: "opacity 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease",
         zIndex: "100",
         pointerEvents: "none",
         background: getToolbarBackground(),
-        padding: "4px",
-        borderRadius: "8px",
-        boxShadow: "0 4px 16px rgba(0, 0, 0, 0.4)",
-        backdropFilter: "blur(8px)",
+        padding: "3px",
+        border: "1px solid rgba(148, 163, 184, 0.18)",
+        borderRadius: "9px",
+        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
+        backdropFilter: "blur(12px)",
+        willChange: "opacity, transform",
     });
 
     const copyBtn = makeBtn(ICON_COPY, "复制", async () => {
@@ -446,12 +478,14 @@ function attachToolbarToWidget(targetEl, widget) {
     const onEnter = () => {
         container.style.opacity = "1";
         container.style.pointerEvents = "auto";
-        container.style.transform = "translateY(-2px)";
+        container.style.transform = "translateY(-3px)";
+        container.style.boxShadow = "0 10px 22px rgba(15, 23, 42, 0.16)";
     };
     const onLeave = () => {
         container.style.opacity = "0";
         container.style.pointerEvents = "none";
         container.style.transform = "translateY(0)";
+        container.style.boxShadow = "0 8px 18px rgba(15, 23, 42, 0.12)";
     };
     targetEl.addEventListener("mouseenter", onEnter);
     targetEl.addEventListener("mouseleave", onLeave);
@@ -488,11 +522,15 @@ function attachToolbarToWidget(targetEl, widget) {
 
 function isTextWidget(w) {
     if (!w) return false;
+    if (SKIP_WIDGET_NAMES.has(w.name)) return false;
     if (SKIP_WIDGET_TYPES.has(w.type)) return false;
     if (w.options?.forceInput) return false;
 
     const element = w.element || w.inputEl;
     const tagName = element?.tagName;
+    if (element && SKIP_WIDGET_CLASSES.some((className) => element.classList?.contains(className) || element.querySelector?.(`.${className}`))) {
+        return false;
+    }
 
     if (w.type === "customtext" || w.type === "text" || w.type === "string" || w.type === "textarea") return true;
     if (tagName === "TEXTAREA" || tagName === "INPUT") return true;
@@ -557,6 +595,7 @@ function scanDomTextControls() {
                 if (ctrl._ggFloatAttached) continue;
                 if (!ctrl.isConnected) continue;
                 if (ctrl.closest(".gg-float-toolbar")) continue;
+                if (ctrl.closest(".gg-compress-mode-host")) continue;
 
                 const parent = ctrl.parentElement;
                 if (parent && !parent._ggFloatAttached) {
@@ -631,6 +670,11 @@ function removeAllFloatToolbars() {
 }
 
 window.__ggApplyToolbar = function(enabled) {
+    if (window.__ggToolbarApplyEnabled) {
+        window.__ggToolbarApplyEnabled(enabled);
+        return;
+    }
+
     const panel = document.getElementById("gg-nodes-panel");
     const miniIcon = document.getElementById("gg-nodes-mini");
     if (!panel) return;

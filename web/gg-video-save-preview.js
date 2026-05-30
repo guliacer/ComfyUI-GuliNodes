@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 
-const SAVE_NODES = new Set(["GGVideoSave", "SaveVideoGG"]);
-const COMPRESS_NODES = new Set(["GGVideoCompress", "CompressVideoGG"]);
+const SAVE_NODES = new Set(["GGVideoSave"]);
+const COMPRESS_NODES = new Set(["GGVideoCompress"]);
 const PREVIEW_WIDGET_NAME = "gg_video_preview";
 const MIN_NODE_WIDTH = 360;
 const MIN_PREVIEW_WIDTH = 300;

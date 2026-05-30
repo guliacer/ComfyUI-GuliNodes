@@ -22,7 +22,7 @@ class GGWebAIReverseImage:
 
     RETURN_TYPES = ()
     FUNCTION = "open_web"
-    CATEGORY = "GuliNodes/AI工具"
+    CATEGORY = "GuliNodes/AI"
     OUTPUT_NODE = True
     DESCRIPTION = "在节点内打开 AI 平台网页版。"
 

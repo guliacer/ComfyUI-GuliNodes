@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "comfyui-gulinodes"
-version = "1.0.8"
-description = "GuliNodes - 工具栏 + 图像尺寸工具 + 图像工具 + 图像对比 + LoRA工具 + 编组控制 + 文本工具 + 种子工具 + 模型加载 + 图像反推"
+version = "1.0.10"
+description = "GuliNodes - 工具栏 + 图像处理 + 潜空间尺寸 + 模型/LoRA + 工作流 + 文本 + 采样 + 视频"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -30,14 +30,7 @@ classifiers = [
   "Topic :: Multimedia :: Graphics",
   "Topic :: Scientific/Engineering :: Artificial Intelligence"
 ]
-dependencies = [
-  "torch",
-  "numpy",
-  "pillow",
-  "opencv-python",
-  "mediapipe",
-  "llama-cpp-python"
-]
+dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/guliacer/ComfyUI-GuliNodes"
@@ -57,7 +50,7 @@ Icon = ""
 
 [tool.gulinodes]
 name = "ComfyUI-GuliNodes"
-node_count = 12
+node_count = 50
 python_package = "guli_nodes"
 web_directory = "web"
-summary = "Custom nodes for image tools, text processing, group control, LoRA helpers, model loading, and image prompt analysis."
+summary = "Custom nodes for image tools, video compression, text processing, group control, LoRA helpers, model loading, workflow helpers, and Z-Image sampling."

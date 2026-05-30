@@ -64,7 +64,7 @@ class GG图像反推:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("文本",)
     FUNCTION = "run"
-    CATEGORY = "GuliNodes/图像分析"
+    CATEGORY = "GuliNodes/AI"
 
     def run(
         self,

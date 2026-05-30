@@ -1,5 +1,8 @@
+from collections import OrderedDict
 import gc
+import hashlib
 import os
+import threading
 
 import comfy.model_management as mm
 import comfy.sd
@@ -8,6 +11,7 @@ import torch
 
 
 UNET_EXTENSIONS = {".safetensors", ".ckpt", ".pt", ".pth", ".bin"}
+UNET_SEARCH_FOLDERS = ("diffusion_models", "unet")
 
 ANY_INPUT = "*"
 ANY_OUTPUT = "*"
@@ -17,10 +21,18 @@ CLEAR_MODELS_NAME = "\u6e05\u9664\u6a21\u578b"
 MEMORY_CLEANUP_NODE_ID = "GGMemoryCleanup"
 MEMORY_CLEANUP_DISPLAY_NAME = "GG \u5185\u5b58\u6e05\u7406"
 
+LATENT_INPUT = "Latent"
+VAE_NAME = "VAE\u540d\u79f0"
+IMAGE_OUTPUT = "\u56fe\u50cf"
+EMPTY_VAE_MESSAGE = "\uff08\u8bf7\u628aVAE\u6a21\u578b\u653e\u5230 models/vae\uff09"
+VAE_DECODE_NODE_ID = "GGVAE\u89e3\u7801"
+VAE_DECODE_DISPLAY_NAME = "GG VAE\u89e3\u7801"
+VAE_CACHE_LIMIT = 2
+
 MODEL_FILE = "\u6a21\u578b\u6587\u4ef6"
 DTYPE_NAME = "\u6570\u636e\u7c7b\u578b"
 MODEL_OUTPUT = "\u6a21\u578b"
-CATEGORY = "GuliNodes/\u6a21\u578b\u52a0\u8f7d"
+CATEGORY = "GuliNodes/模型"
 DEFAULT_DTYPE = "\u9ed8\u8ba4"
 EMPTY_UNET_MESSAGE = "\uff08\u8bf7\u628aUNET\u6a21\u578b\u653e\u5230 models/unet\uff09"
 UNET_NODE_ID = "GGUNET\u6a21\u578b"
@@ -46,19 +58,16 @@ DTYPE_OPTIONS = {
 
 
 def _list_unet_files() -> list[str]:
-    try:
-        files = [
-            filename
-            for filename in folder_paths.get_filename_list("diffusion_models")
-            if os.path.splitext(filename)[1].lower() in UNET_EXTENSIONS
-        ]
-    except Exception:
-        search_dirs = [
-            os.path.join(folder_paths.models_dir, "unet"),
-            os.path.join(folder_paths.models_dir, "diffusion_models"),
-        ]
-        files = []
-        for directory in search_dirs:
+    files = []
+    for folder_name in UNET_SEARCH_FOLDERS:
+        try:
+            files.extend(
+                filename
+                for filename in folder_paths.get_filename_list(folder_name)
+                if os.path.splitext(filename)[1].lower() in UNET_EXTENSIONS
+            )
+        except Exception:
+            directory = os.path.join(folder_paths.models_dir, folder_name)
             os.makedirs(directory, exist_ok=True)
             files.extend(
                 filename
@@ -95,6 +104,127 @@ def _list_gguf_files() -> list[str]:
         )
     files = sorted(set(files), key=str.lower)
     return files or ["\uff08\u8bf7\u628aGGUF\u6a21\u578b\u653e\u5230 models/unet \u3001models/diffusion_models \u6216 ComfyUI-GGUF \u914d\u7f6e\u76ee\u5f55\uff09"]
+
+
+def _resolve_model_file(folder_names: tuple[str, ...], model_file: str) -> str:
+    for folder_name in folder_names:
+        try:
+            model_path = folder_paths.get_full_path(folder_name, model_file)
+        except Exception:
+            model_path = None
+        if model_path and os.path.exists(model_path):
+            return model_path
+
+    for folder_name in folder_names:
+        fallback_path = os.path.join(folder_paths.models_dir, folder_name, model_file)
+        if os.path.exists(fallback_path):
+            return fallback_path
+
+    return ""
+
+
+def _model_file_fingerprint(model_path: str) -> str:
+    if not model_path or not os.path.exists(model_path):
+        return ""
+    try:
+        stat = os.stat(model_path)
+    except OSError:
+        return model_path
+    return f"{model_path}:{stat.st_size}:{stat.st_mtime_ns}"
+
+
+def _get_native_vae_loader_class():
+    try:
+        from nodes import VAELoader
+
+        return VAELoader
+    except Exception:
+        return None
+
+
+def _get_native_vae_decode_class():
+    try:
+        from nodes import VAEDecode
+
+        return VAEDecode
+    except Exception:
+        return None
+
+
+def _list_vae_files() -> list[str]:
+    loader_class = _get_native_vae_loader_class()
+    if loader_class is not None:
+        try:
+            files = loader_class.vae_list(loader_class)
+            if files:
+                return files
+        except Exception:
+            pass
+
+    try:
+        files = folder_paths.get_filename_list("vae")
+    except Exception:
+        files = []
+    if "pixel_space" not in files:
+        files.append("pixel_space")
+    return files or [EMPTY_VAE_MESSAGE]
+
+
+def _vae_file_fingerprint(vae_name: str) -> str:
+    if not vae_name or vae_name == EMPTY_VAE_MESSAGE:
+        return ""
+    if vae_name == "pixel_space":
+        return "pixel_space"
+
+    loader_class = _get_native_vae_loader_class()
+    image_taes = getattr(loader_class, "image_taes", ["taesd", "taesdxl", "taesd3", "taef1", "taef2"])
+    video_taes = getattr(loader_class, "video_taes", ["taehv", "lighttaew2_2", "lighttaew2_1", "lighttaehy1_5", "taeltx_2"])
+
+    if vae_name in image_taes:
+        try:
+            approx_vaes = folder_paths.get_filename_list("vae_approx")
+            encoder = next((name for name in approx_vaes if name.startswith(f"{vae_name}_encoder.")), "")
+            decoder = next((name for name in approx_vaes if name.startswith(f"{vae_name}_decoder.")), "")
+        except Exception:
+            encoder = decoder = ""
+        fingerprints = []
+        for filename in (encoder, decoder):
+            if not filename:
+                continue
+            try:
+                path = folder_paths.get_full_path_or_raise("vae_approx", filename)
+            except Exception:
+                path = _resolve_model_file(("vae_approx",), filename)
+            fingerprints.append(_model_file_fingerprint(path))
+        return "|".join(fingerprints) or vae_name
+
+    folder_name = "vae_approx" if os.path.splitext(vae_name)[0] in video_taes else "vae"
+    try:
+        path = folder_paths.get_full_path_or_raise(folder_name, vae_name)
+    except Exception:
+        path = _resolve_model_file((folder_name,), vae_name)
+    return _model_file_fingerprint(path)
+
+
+def _load_vae_with_native_loader(vae_name: str):
+    loader_class = _get_native_vae_loader_class()
+    if loader_class is None:
+        raise RuntimeError("\u672a\u80fd\u8bfb\u53d6 ComfyUI \u539f\u751f\u52a0\u8f7dVAE\u8282\u70b9\u3002")
+    return loader_class().load_vae(vae_name)[0]
+
+
+def _decode_vae_with_native_node(vae, samples):
+    decode_class = _get_native_vae_decode_class()
+    if decode_class is not None:
+        return decode_class().decode(vae, samples)
+
+    latent = samples["samples"]
+    if latent.is_nested:
+        latent = latent.unbind()[0]
+    images = vae.decode(latent)
+    if len(images.shape) == 5:
+        images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
+    return (images,)
 
 
 def _get_gguf_loader_class():
@@ -150,14 +280,7 @@ class GGUNETLoader:
         if not model_file:
             raise RuntimeError("\u8bf7\u9009\u62e9UNET\u6a21\u578b\u6587\u4ef6\u3002")
 
-        try:
-            model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_file)
-        except Exception:
-            fallback_paths = [
-                os.path.join(folder_paths.models_dir, "unet", model_file),
-                os.path.join(folder_paths.models_dir, "diffusion_models", model_file),
-            ]
-            model_path = next((path for path in fallback_paths if os.path.exists(path)), "")
+        model_path = _resolve_model_file(UNET_SEARCH_FOLDERS, model_file)
         if not model_path or not os.path.exists(model_path):
             raise FileNotFoundError(f"\u6a21\u578b\u6587\u4ef6\u4e0d\u5b58\u5728: {model_file}")
         if os.path.getsize(model_path) == 0:
@@ -184,8 +307,11 @@ class GGUNETLoader:
     @classmethod
     def IS_CHANGED(cls, **kwargs):
         import hashlib
+        model_file = kwargs.get(MODEL_FILE, "")
+        model_path = _resolve_model_file(UNET_SEARCH_FOLDERS, model_file)
         m = hashlib.sha256()
-        m.update(str(kwargs.get(MODEL_FILE, "")).encode("utf-8"))
+        m.update(str(model_file).encode("utf-8"))
+        m.update(_model_file_fingerprint(model_path).encode("utf-8"))
         m.update(str(kwargs.get(DTYPE_NAME, DEFAULT_DTYPE)).encode("utf-8"))
         m.update(str(kwargs.get(SAGE_ATTENTION_NAME, True)).encode("utf-8"))
         m.update(str(kwargs.get(FLASH_ATTENTION_NAME, True)).encode("utf-8"))
@@ -222,39 +348,99 @@ class GGGGUFModelLoader:
         if loader_class is None:
             raise RuntimeError("\u672a\u68c0\u6d4b\u5230 ComfyUI-GGUF \u63d2\u4ef6\uff0c\u65e0\u6cd5\u52a0\u8f7d GGUF UNET\u3002\u8bf7\u5148\u5b89\u88c5\u6216\u542f\u7528 ComfyUI-GGUF\u3002")
 
-        model_path = ""
-        try:
-            model_path = folder_paths.get_full_path("unet_gguf", model_file) or ""
-        except Exception:
-            model_path = ""
-
-        if not model_path:
-            fallback_paths = [
-                os.path.join(folder_paths.models_dir, "unet", model_file),
-                os.path.join(folder_paths.models_dir, "diffusion_models", model_file),
-            ]
-            model_path = next((path for path in fallback_paths if os.path.exists(path)), "")
+        model_path = _resolve_model_file(("unet_gguf", *UNET_SEARCH_FOLDERS), model_file)
 
         if not model_path:
             raise FileNotFoundError(f"\u6a21\u578b\u6587\u4ef6\u4e0d\u5b58\u5728: {model_file}")
 
-        return loader_class().load_unet(
+        loaded = loader_class().load_unet(
             model_file,
             kwargs.get(DEQUANT_DTYPE_NAME, "default"),
             kwargs.get(PATCH_DTYPE_NAME, "default"),
             kwargs.get(PATCH_ON_DEVICE_NAME, False),
         )
+        if isinstance(loaded, tuple) and loaded:
+            GGUNETLoader._apply_attention_options(
+                loaded[0],
+                kwargs.get(SAGE_ATTENTION_NAME, True),
+                kwargs.get(FLASH_ATTENTION_NAME, True),
+            )
+        return loaded
 
     @classmethod
     def IS_CHANGED(cls, **kwargs):
         import hashlib
+        model_file = kwargs.get(GGUF_MODEL_FILE, "")
+        model_path = _resolve_model_file(("unet_gguf", *UNET_SEARCH_FOLDERS), model_file)
         m = hashlib.sha256()
-        m.update(str(kwargs.get(GGUF_MODEL_FILE, "")).encode("utf-8"))
+        m.update(str(model_file).encode("utf-8"))
+        m.update(_model_file_fingerprint(model_path).encode("utf-8"))
         m.update(str(kwargs.get(DEQUANT_DTYPE_NAME, "default")).encode("utf-8"))
         m.update(str(kwargs.get(PATCH_DTYPE_NAME, "default")).encode("utf-8"))
         m.update(str(kwargs.get(PATCH_ON_DEVICE_NAME, False)).encode("utf-8"))
         m.update(str(kwargs.get(SAGE_ATTENTION_NAME, True)).encode("utf-8"))
         m.update(str(kwargs.get(FLASH_ATTENTION_NAME, True)).encode("utf-8"))
+        return m.hexdigest()
+
+
+class GGVaeDecode:
+    _vae_cache = OrderedDict()
+    _cache_lock = threading.RLock()
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                LATENT_INPUT: ("LATENT", {"tooltip": "\u9700\u8981\u89e3\u7801\u4e3a\u56fe\u50cf\u7684 Latent\u3002"}),
+                VAE_NAME: (_list_vae_files(), {"tooltip": "\u9009\u62e9\u8981\u52a0\u8f7d\u5e76\u7528\u4e8e\u89e3\u7801\u7684 VAE\u3002"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = (IMAGE_OUTPUT,)
+    FUNCTION = "decode"
+    CATEGORY = "GuliNodes/潜空间"
+    DESCRIPTION = "\u878d\u5408\u52a0\u8f7dVAE\u4e0eVAE\u89e3\u7801\u7684\u4e00\u4f53\u8282\u70b9\uff0cVAE \u6309\u6587\u4ef6\u6307\u7eb9\u7f13\u5b58\uff0cLatent \u53d8\u5316\u65f6\u4e0d\u91cd\u590d\u52a0\u8f7d VAE\u3002"
+
+    @classmethod
+    def _cache_key(cls, vae_name: str) -> tuple[str, str]:
+        return (vae_name, _vae_file_fingerprint(vae_name))
+
+    @classmethod
+    def _get_vae(cls, vae_name: str):
+        if not vae_name or vae_name == EMPTY_VAE_MESSAGE:
+            raise RuntimeError("\u672a\u627e\u5230\u53ef\u7528\u7684 VAE \u6a21\u578b\u3002\u8bf7\u628a\u6a21\u578b\u653e\u5230 ComfyUI/models/vae/ \u540e\u91cd\u542f\u3002")
+
+        key = cls._cache_key(vae_name)
+        with cls._cache_lock:
+            cached_vae = cls._vae_cache.get(key)
+            if cached_vae is not None:
+                cls._vae_cache.move_to_end(key)
+                return cached_vae
+
+        vae = _load_vae_with_native_loader(vae_name)
+
+        with cls._cache_lock:
+            cls._vae_cache[key] = vae
+            cls._vae_cache.move_to_end(key)
+            while len(cls._vae_cache) > VAE_CACHE_LIMIT:
+                cls._vae_cache.popitem(last=False)
+        return vae
+
+    def decode(self, **kwargs) -> tuple:
+        samples = kwargs.get(LATENT_INPUT)
+        vae_name = kwargs.get(VAE_NAME, "")
+        if samples is None:
+            raise RuntimeError("Latent \u8f93\u5165\u65e0\u6548\uff1a\u672a\u68c0\u6d4b\u5230\u9700\u8981\u89e3\u7801\u7684 Latent\u3002")
+        vae = self._get_vae(vae_name)
+        return _decode_vae_with_native_node(vae, samples)
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        vae_name = kwargs.get(VAE_NAME, "")
+        m = hashlib.sha256()
+        m.update(str(vae_name).encode("utf-8"))
+        m.update(_vae_file_fingerprint(vae_name).encode("utf-8"))
         return m.hexdigest()
 
 
@@ -272,7 +458,7 @@ class GGMemoryCleanup:
     RETURN_TYPES = (ANY_OUTPUT,)
     RETURN_NAMES = (ANY_NAME,)
     FUNCTION = "cleanup"
-    CATEGORY = "GuliNodes/\u6a21\u578b\u52a0\u8f7d"
+    CATEGORY = "GuliNodes/模型"
 
     def cleanup(self, **kwargs) -> tuple:
         value = kwargs.get(ANY_NAME)
@@ -310,12 +496,14 @@ class GGMemoryCleanup:
 NODE_CLASS_MAPPINGS = {
     UNET_NODE_ID: GGUNETLoader,
     GGUF_NODE_ID: GGGGUFModelLoader,
+    VAE_DECODE_NODE_ID: GGVaeDecode,
     MEMORY_CLEANUP_NODE_ID: GGMemoryCleanup,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     UNET_NODE_ID: UNET_DISPLAY_NAME,
     GGUF_NODE_ID: GGUF_DISPLAY_NAME,
+    VAE_DECODE_NODE_ID: VAE_DECODE_DISPLAY_NAME,
     MEMORY_CLEANUP_NODE_ID: MEMORY_CLEANUP_DISPLAY_NAME,
 }
 

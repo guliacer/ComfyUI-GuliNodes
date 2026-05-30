@@ -97,6 +97,8 @@ ENCODER_PROFILES = {
 _ENCODER_OPTIONS_CACHE = None
 _ROUTES_REGISTERED = False
 FFMPEG_PROGRESS_TOTAL = 1000
+VIDEO_SEARCH_MAX_DEPTH = 4
+VIDEO_SEARCH_MAX_ENTRIES = 20000
 
 
 def _resolve_ffmpeg_binary(binary_name: str) -> str | None:
@@ -134,7 +136,7 @@ def _normalize_user_video_path(value: str) -> str:
 
 
 def _sanitize_stem(name: str) -> str:
-    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_", ".", "/", "%", ":") else "_" for ch in (name or "video"))
+    cleaned = "".join(ch if ch.isalnum() or ch in ("-", "_", ".", "/", "\\") else "_" for ch in (name or "video"))
     return cleaned.strip("._") or "video"
 
 
@@ -144,14 +146,40 @@ def _resolve_prefix(prefix: str) -> str:
     return prefix.replace("%date:yyyy_MM_dd%", datetime.now().strftime("%Y_%m_%d"))
 
 
+def _iter_files_bounded(root: Path, max_depth: int = VIDEO_SEARCH_MAX_DEPTH, max_entries: int = VIDEO_SEARCH_MAX_ENTRIES):
+    stack = [(root, 0)]
+    visited = 0
+    while stack and visited < max_entries:
+        directory, depth = stack.pop()
+        try:
+            with os.scandir(directory) as entries:
+                for entry in entries:
+                    visited += 1
+                    if visited > max_entries:
+                        break
+                    try:
+                        if entry.is_file(follow_symlinks=False):
+                            yield Path(entry.path)
+                        elif depth < max_depth and entry.is_dir(follow_symlinks=False):
+                            stack.append((Path(entry.path), depth + 1))
+                    except OSError:
+                        continue
+        except OSError:
+            continue
+
+
 def _search_file_by_name(file_name: str, search_roots: list[Path]) -> str:
     target_name = Path(file_name).name.lower()
+    relative_name = _normalize_user_video_path(file_name)
     for root in search_roots:
         if not root.exists() or not root.is_dir():
             continue
+        direct_candidate = root / relative_name
+        if direct_candidate.is_file():
+            return str(direct_candidate.resolve())
         try:
-            for candidate in root.rglob("*"):
-                if candidate.is_file() and candidate.name.lower() == target_name:
+            for candidate in _iter_files_bounded(root):
+                if candidate.name.lower() == target_name:
                     return str(candidate.resolve())
         except Exception:
             continue
@@ -176,10 +204,6 @@ def _build_search_roots_from_directory(directory: str) -> list[Path]:
     directory_path = Path(directory_norm).expanduser()
     if directory_path.exists():
         roots.append(directory_path)
-    if directory_path.anchor:
-        anchor_path = Path(directory_path.anchor)
-        if anchor_path.exists() and anchor_path not in roots:
-            roots.append(anchor_path)
     return roots
 
 
@@ -209,7 +233,6 @@ def _resolve_video_file_reference(file_name: str) -> str:
         Path.home() / "Desktop",
         Path.home() / "Downloads",
     ]
-    roots.extend(_get_windows_drive_roots())
     return _search_file_by_name(file_name, roots)
 
 
@@ -327,15 +350,25 @@ def _build_temp_output_path(source_path: str, output_format: str) -> str:
 
 
 def _build_saved_output_path(video_path: str, filename_prefix: str) -> str:
-    output_root = Path(folder_paths.get_output_directory())
+    output_root = Path(folder_paths.get_output_directory()).resolve()
     source = Path(video_path)
     prefix = _sanitize_stem(_resolve_prefix(filename_prefix))
-    prefix_path = Path(prefix)
+    prefix_path = Path(prefix).expanduser()
+    if prefix_path.is_absolute():
+        prefix_path = Path(prefix_path.name)
+    clean_parts = [part for part in prefix_path.parts if part not in ("", ".", "..") and not Path(part).is_absolute()]
+    prefix_path = Path(*clean_parts) if clean_parts else Path(source.stem)
     parent = output_root / prefix_path.parent
+    parent = parent.resolve()
+    if not (parent == output_root or output_root in parent.parents):
+        raise ValueError(f"保存路径必须位于 ComfyUI 输出目录内: {parent}")
     parent.mkdir(parents=True, exist_ok=True)
     stem = prefix_path.name or source.stem
     filename = f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{source.suffix.lower() or '.mp4'}"
-    return str((parent / filename).resolve())
+    output_path = (parent / filename).resolve()
+    if not (output_path.parent == output_root or output_root in output_path.parent.parents):
+        raise ValueError(f"保存路径必须位于 ComfyUI 输出目录内: {output_path}")
+    return str(output_path)
 
 
 def _pick_audio_codec(output_format: str) -> str:
@@ -622,7 +655,7 @@ class GGVideoLoad(ComfyNodeABC):
     RETURN_TYPES = (VIDEO_RETURN_TYPE, "PATH")
     RETURN_NAMES = (CN_VIDEO, CN_PATH)
     FUNCTION = "load_video"
-    CATEGORY = "GuliNodes/\u89c6\u9891\u5de5\u5177"
+    CATEGORY = "GuliNodes/视频"
 
     def load_video(self, 视频文件):
         try:
@@ -685,7 +718,7 @@ class GGVideoCompress:
     RETURN_TYPES = (VIDEO_RETURN_TYPE,)
     RETURN_NAMES = (CN_VIDEO,)
     FUNCTION = "compress_video"
-    CATEGORY = "GuliNodes/\u89c6\u9891\u5de5\u5177"
+    CATEGORY = "GuliNodes/视频"
 
     def compress_video(self, **kwargs):
         video_object = kwargs.get(CN_VIDEO_OBJECT)
@@ -760,7 +793,7 @@ class GGVideoSave:
 
     RETURN_TYPES = ()
     FUNCTION = "save_video"
-    CATEGORY = "GuliNodes/\u89c6\u9891\u5de5\u5177"
+    CATEGORY = "GuliNodes/视频"
     OUTPUT_NODE = True
 
     def save_video(self, **kwargs):
@@ -817,19 +850,13 @@ class GGVideoSave:
 
 NODE_CLASS_MAPPINGS = {
     "GGVideoLoad": GGVideoLoad,
-    "LoadVideoGG": GGVideoLoad,
     "GGVideoCompress": GGVideoCompress,
-    "CompressVideoGG": GGVideoCompress,
     "GGVideoSave": GGVideoSave,
-    "SaveVideoGG": GGVideoSave,
 }
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGVideoLoad": "GG \u89c6\u9891\u52a0\u8f7d",
-    "LoadVideoGG": "\u52a0\u8f7d\u89c6\u9891",
     "GGVideoCompress": "GG \u89c6\u9891\u538b\u7f29",
-    "CompressVideoGG": "\u538b\u7f29\u89c6\u9891",
     "GGVideoSave": "GG \u89c6\u9891\u4fdd\u5b58",
-    "SaveVideoGG": "\u4fdd\u5b58\u89c6\u9891",
 }

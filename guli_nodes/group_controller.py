@@ -6,7 +6,7 @@ class GGGroupControllerM:
     RETURN_TYPES = ()
     FUNCTION = "run"
     OUTPUT_NODE = True
-    CATEGORY = "GuliNodes/编组控制"
+    CATEGORY = "GuliNodes/工作流"
     DESCRIPTION = "批量控制工作流中所有编组。全部跳过/全部启用，点击编组名可跳转。"
 
     def run(self) -> dict:
@@ -21,7 +21,7 @@ class GGGroupControllerS:
     RETURN_TYPES = ()
     FUNCTION = "run"
     OUTPUT_NODE = True
-    CATEGORY = "GuliNodes/编组控制"
+    CATEGORY = "GuliNodes/工作流"
     DESCRIPTION = "精确控制单个编组。点击下拉框选择目标编组，开关控制跳过/启用。"
 
     def run(self) -> dict:

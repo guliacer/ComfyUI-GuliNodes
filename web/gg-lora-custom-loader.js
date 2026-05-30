@@ -13,8 +13,8 @@ function getWidget(node, name) {
 
 function getPair(node, index) {
     return {
-        name: getWidget(node, `lora${index}_name`),
-        strength: getWidget(node, `strength${index}`),
+        name: getWidget(node, `LoRA${index}名称`) ?? getWidget(node, `lora${index}_name`),
+        strength: getWidget(node, `LoRA${index}强度`) ?? getWidget(node, `strength${index}`),
     };
 }
 
@@ -42,8 +42,8 @@ function toggleWidget(node, widget, show = false, suffix = "") {
 }
 
 function refreshNode(node) {
-    const height = node.computeSize()[1];
-    node.setSize([node.size[0], height]);
+    const [width, height] = node.computeSize();
+    node.setSize([Math.max(node.size[0], width), height]);
     node.setDirtyCanvas(true, true);
     node.graph?.setDirtyCanvas?.(true, true);
     app.graph?.setDirtyCanvas?.(true, true);

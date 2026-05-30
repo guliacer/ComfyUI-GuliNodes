@@ -5,12 +5,18 @@ from PIL.PngImagePlugin import PngInfo
 import numpy as np
 from nodes import PreviewImage, SaveImage
 from comfy.cli_args import args
+import comfy.utils
 import folder_paths
 import json
 import os
 import tempfile
 from datetime import datetime
 from typing import Any
+
+try:
+    from comfy_api.latest import io
+except Exception:
+    io = None
 
 try:
     import cv2
@@ -952,7 +958,7 @@ class GGRGBAtoRGB:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "convert"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def convert(self, 图像: torch.Tensor, 背景颜色: str = "白色", 背景R: float = 1.0, 背景G: float = 1.0, 背景B: float = 1.0) -> tuple:
         if 图像 is None:
@@ -1002,7 +1008,7 @@ class GGImageResize:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "resize"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def resize(self, 图像: torch.Tensor, 模式: str = "按比例", 缩放比例: float = 1.0,
                边长: int = 512, 插值方法: str = "bilinear") -> tuple:
@@ -1065,7 +1071,7 @@ class GGImageCrop:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "crop"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def crop(self, 图像: torch.Tensor, 模式: str = "中心裁剪",
               宽度: int = 512, 高度: int = 512, X坐标: int = 0, Y坐标: int = 0,
@@ -1143,7 +1149,7 @@ class GGImageTransform:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "transform"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def transform(self, 图像: torch.Tensor, 变换类型: str = "水平翻转") -> tuple:
         if 图像 is None:
@@ -1182,7 +1188,7 @@ class GGImageAdjust:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "adjust"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def adjust(self, 图像: torch.Tensor, 亮度: float = 1.0,
                对比度: float = 1.0, 饱和度: float = 1.0, 锐化: float = 1.0, 虚化: float = 0.0) -> tuple:
@@ -1227,7 +1233,7 @@ class GGFaceSkinSmoothing:
     RETURN_TYPES = ("IMAGE", "MASK")
     RETURN_NAMES = ("图像", "磨皮遮罩")
     FUNCTION = "smooth"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def smooth(self, 图像: torch.Tensor, 平滑: int = 8, 阈值: int = -10, 不透明度: int = 85, 脸部扩展: float = 1.2) -> tuple:
         image = _to_rgb_image(图像)
@@ -1302,7 +1308,7 @@ class GGFaceSmartBeauty:
     RETURN_TYPES = ("IMAGE", "MASK")
     RETURN_NAMES = ("图像", "人脸遮罩")
     FUNCTION = "beautify"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def beautify(self, **kwargs) -> tuple:
         image = _to_rgb_image(kwargs.get("图像"))
@@ -1909,7 +1915,7 @@ class GGImageStyleReference:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "apply_style"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def apply_style(self, 目标图像: torch.Tensor, 参考图像: torch.Tensor, 风格强度: float = 1.0,
                     色彩强度: float = 1.0, 纹理强度: float = 0.35, 保留结构: float = 0.35) -> tuple:
@@ -1958,7 +1964,7 @@ class GGPreviewImage(PreviewImage):
         }
 
     FUNCTION = "preview"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def preview(self, 图像, prompt=None, extra_pnginfo=None):
         return self.save_images(图像, filename_prefix="GG.preview", prompt=prompt, extra_pnginfo=extra_pnginfo)
@@ -2067,7 +2073,7 @@ class GGSaveImage(SaveImage):
         }
 
     FUNCTION = "save"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
     OUTPUT_NODE = True
 
     def save(self, 图像, 文件名前缀="%date:yyyy_MM_dd%/图像", 格式="自动", prompt=None, extra_pnginfo=None):
@@ -2244,8 +2250,102 @@ def _save_target_size_by_quality(
     if best_data is None:
         save_once(output_path, 1)
         return
+
     with open(output_path, "wb") as handle:
         handle.write(best_data)
+
+
+class GGImageCompressSave(GGSaveImage):
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "图像": ("IMAGE",),
+                "文件名前缀": ("STRING", {"default": "%date:yyyy_MM_dd%/图像"}),
+                "格式": (["JPEG", "PNG", "WEBP", "自动"], {"default": "JPEG"}),
+                "压缩模式": (["civilblur", "Caesium", "meowtec"], {"default": "civilblur"}),
+                "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
+                "目标大小KB": ("INT", {"default": 0, "min": 0, "max": 1048576, "step": 16}),
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO",
+            },
+        }
+
+    FUNCTION = "save"
+    CATEGORY = "GuliNodes/图像"
+    OUTPUT_NODE = True
+
+    def save(
+        self,
+        图像,
+        文件名前缀="%date:yyyy_MM_dd%/图像",
+        格式="JPEG",
+        压缩模式="civilblur",
+        质量=85,
+        目标大小KB=0,
+        prompt=None,
+        extra_pnginfo=None,
+    ):
+        resolved_prefix = _resolve_output_prefix(文件名前缀) + self.prefix_append
+        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+            resolved_prefix,
+            self.output_dir,
+            图像[0].shape[1],
+            图像[0].shape[0],
+        )
+
+        compressor = GGImageCompress()
+        method = compressor._normalize_method(压缩模式)
+        quality = max(1, min(int(质量), 100))
+        target_size_kb = max(0, int(目标大小KB))
+        requested_format = _normalize_gg_format(格式, default="AUTO", allow_auto=True)
+        results = []
+
+        for batch_number, image in enumerate(图像):
+            format_name = self._select_compressed_format(
+                图像,
+                image,
+                requested_format,
+                method,
+                target_size_kb,
+            )
+            pil_image = _prepare_pil_for_format(_tensor_image_to_pil(image), format_name)
+            filename_with_batch_num = filename.replace("%batch_num%", str(batch_number))
+            file = f"{filename_with_batch_num}_{counter:05}_.{self._extension(format_name)}"
+            output_path = os.path.join(full_output_folder, file)
+            compressor._save_by_method(
+                pil_image,
+                output_path,
+                format_name,
+                quality,
+                target_size_kb,
+                method,
+            )
+            results.append({
+                "filename": file,
+                "subfolder": subfolder,
+                "type": self.type,
+            })
+            counter += 1
+
+        return {"ui": {"images": results}}
+
+    def _select_compressed_format(
+        self,
+        images: torch.Tensor,
+        image: torch.Tensor,
+        requested_format: str,
+        method: str,
+        target_size_kb: int,
+    ) -> str:
+        if requested_format != "AUTO":
+            return requested_format
+        recommended_format = _get_gg_recommended_format(images)
+        if recommended_format is not None:
+            return recommended_format
+        return GGImageCompress._preferred_format(method, target_size_kb)
 
 
 class GGImageCompress:
@@ -2263,7 +2363,7 @@ class GGImageCompress:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "compress"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
     OUTPUT_NODE = False
 
     def compress(self, 图像, 压缩方式="civilblur", 质量=85, 目标大小KB=0):
@@ -2486,7 +2586,7 @@ class GGImageComparer4(ImageComparerBase):
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("对比结果",)
     FUNCTION = "compare"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def compare(self, 图像_A: torch.Tensor = None, 图像_B: torch.Tensor = None, 图像_C: torch.Tensor = None, 图像_D: torch.Tensor = None,
                 标签_A: str = "图像 A", 标签_B: str = "图像 B", 标签_C: str = "图像 C", 标签_D: str = "图像 D",
@@ -2513,21 +2613,125 @@ class GGImageComparer2(PreviewImage):
         }
 
     FUNCTION = "compare"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def compare(self, 图像_A: torch.Tensor, 图像_B: torch.Tensor,
                 filename_prefix="GG.compare.",
                 prompt=None, extra_pnginfo=None) -> dict:
         result = {"ui": {"a_images": [], "b_images": []}}
         if 图像_A is not None and len(图像_A) > 0:
-            result["ui"]["a_images"] = self.save_images(
-                图像_A, f"{filename_prefix}a_", prompt, extra_pnginfo
-            )["ui"]["images"]
+            result["ui"]["a_images"] = self._save_compare_images(
+                图像_A, f"{filename_prefix}a_", "JPEG", prompt, extra_pnginfo
+            )
         if 图像_B is not None and len(图像_B) > 0:
-            result["ui"]["b_images"] = self.save_images(
-                图像_B, f"{filename_prefix}b_", prompt, extra_pnginfo
-            )["ui"]["images"]
+            result["ui"]["b_images"] = self._save_compare_images(
+                图像_B, f"{filename_prefix}b_", "JPEG", prompt, extra_pnginfo
+            )
         return result
+
+    def _save_compare_images(
+        self,
+        images: torch.Tensor,
+        filename_prefix: str,
+        format_value="JPEG",
+        prompt=None,
+        extra_pnginfo=None,
+    ) -> list[dict[str, str]]:
+        resolved_prefix = _resolve_output_prefix(filename_prefix) + self.prefix_append
+        full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
+            resolved_prefix,
+            self.output_dir,
+            images[0].shape[1],
+            images[0].shape[0],
+        )
+
+        requested_format = _normalize_gg_format(format_value, default="JPEG", allow_auto=True)
+        quality = max(1, min(_get_gg_int_hint(images, _GG_COMPRESSION_QUALITY_ATTR, 95), 100))
+        target_size_kb = max(0, _get_gg_int_hint(images, _GG_TARGET_SIZE_ATTR, 0))
+        results = []
+
+        for batch_number, image in enumerate(images):
+            format_name = self._select_compare_format(images, image, requested_format)
+            pil_image = _tensor_image_to_pil(image)
+            filename_with_batch_num = filename.replace("%batch_num%", str(batch_number))
+            file = f"{filename_with_batch_num}_{counter:05}_.{GGSaveImage._extension(format_name)}"
+            output_path = os.path.join(full_output_folder, file)
+            self._save_compare_image(
+                pil_image,
+                output_path,
+                format_name,
+                quality,
+                target_size_kb,
+                prompt,
+                extra_pnginfo,
+            )
+            results.append({
+                "filename": file,
+                "subfolder": subfolder,
+                "type": self.type,
+            })
+            counter += 1
+
+        return results
+
+    @staticmethod
+    def _select_compare_format(images: torch.Tensor, image: torch.Tensor, requested_format: str) -> str:
+        if requested_format != "AUTO":
+            return requested_format
+        recommended_format = _get_gg_recommended_format(images)
+        if recommended_format is not None:
+            return recommended_format
+        return GGSaveImage._choose_auto_format(image)
+
+    def _save_compare_image(
+        self,
+        pil_image: Image.Image,
+        output_path: str,
+        format_name: str,
+        quality: int,
+        target_size_kb: int = 0,
+        prompt=None,
+        extra_pnginfo=None,
+    ) -> None:
+        if target_size_kb > 0 and format_name in ("JPEG", "WEBP"):
+            target_bytes = max(1, int(target_size_kb)) * 1024
+            _save_target_size_by_quality(
+                output_path,
+                format_name,
+                target_bytes,
+                quality,
+                lambda path, current_quality: self._save_compare_image(
+                    pil_image,
+                    path,
+                    format_name,
+                    current_quality,
+                    0,
+                    prompt,
+                    extra_pnginfo,
+                ),
+                iterations=8,
+            )
+            return
+
+        save_image = _prepare_pil_for_format(pil_image, format_name)
+        if format_name == "PNG":
+            save_image.save(
+                output_path,
+                format="PNG",
+                pnginfo=GGSaveImage._png_metadata(prompt, extra_pnginfo),
+                compress_level=self.compress_level,
+            )
+        elif format_name == "WEBP":
+            save_image.save(output_path, format="WEBP", quality=quality, method=6, optimize=True)
+        else:
+            save_image.save(
+                output_path,
+                format="JPEG",
+                quality=quality,
+                optimize=True,
+                progressive=True,
+                subsampling=0 if quality >= 90 else "4:2:0",
+            )
 
 
 class GGImageComparer8(ImageComparerBase):
@@ -2542,7 +2746,7 @@ class GGImageComparer8(ImageComparerBase):
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("对比结果",)
     FUNCTION = "compare"
-    CATEGORY = "GuliNodes/图像工具"
+    CATEGORY = "GuliNodes/图像"
 
     def compare(self, **kwargs) -> tuple:
         images = [kwargs.get(f"图像_{chr(65 + i)}") for i in range(8)]
@@ -2557,21 +2761,398 @@ class GGImageComparer8(ImageComparerBase):
         return (concatenate_images_horizontally(images, labels, font_size, border, label_height, spacing),)
 
 
+_缩放方法选项 = ["nearest-exact", "bilinear", "lanczos", "area", "bicubic"]
+
+class GG图像缩放:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "Latent": ("LATENT",),
+                "VAE": ("VAE",),
+                "缩放方法": (_缩放方法选项[:], {"default": "lanczos"}),
+                "缩放倍率": ("FLOAT", {"default": 1.5, "min": 0.1, "max": 10000.0, "step": 0.05}),
+                "分块VAE": ("BOOLEAN", {"default": False}),
+            },
+            "optional": {
+                "放大模型": ("UPSCALE_MODEL",),
+            },
+        }
+
+    RETURN_TYPES = ("LATENT", "IMAGE")
+    RETURN_NAMES = ("Latent", "预览图像")
+    FUNCTION = "execute"
+    CATEGORY = "GuliNodes/潜空间"
+
+    def execute(self, Latent, VAE, 缩放方法="lanczos", 缩放倍率=1.5, 分块VAE=False, 放大模型=None):
+        倍率 = max(0.1, float(缩放倍率))
+        原始图像 = VAE.decode(Latent["samples"])
+        if len(原始图像.shape) == 5:
+            原始图像 = 原始图像.reshape(-1, 原始图像.shape[-3], 原始图像.shape[-2], 原始图像.shape[-1])
+
+        if 放大模型 is not None:
+            from nodes import NODE_CLASS_MAPPINGS as _NCM
+            _upscale_cls = _NCM.get("ImageUpscaleWithModel")
+            if _upscale_cls is not None:
+                _upscaler = _upscale_cls()
+                当前宽度 = 原始图像.shape[3]
+                目标宽度 = int(当前宽度 * 倍率)
+                while 原始图像.shape[3] < 目标宽度:
+                    if hasattr(_upscaler, "execute"):
+                        原始图像 = _upscaler.execute(放大模型, 原始图像)[0]
+                    else:
+                        原始图像 = _upscaler.upscale(放大模型, 原始图像)[0]
+                    if 原始图像.shape[3] == 当前宽度:
+                        break
+                    当前宽度 = 原始图像.shape[3]
+
+        原始高度 = 原始图像.shape[2]
+        原始宽度 = 原始图像.shape[3]
+        目标高度 = max(1, round(原始高度 * 倍率))
+        目标宽度 = max(1, round(原始宽度 * 倍率))
+
+        缩放后 = 原始图像.movedim(-1, 1)
+        缩放后 = comfy.utils.common_upscale(缩放后, 目标宽度, 目标高度, 缩放方法, "disabled")
+        缩放后 = 缩放后.movedim(1, -1)
+
+        新Latent = VAE.encode(缩放后)
+        return ({"samples": 新Latent}, 缩放后)
+import re
+import random
+import logging as _logging
+
+_通配符日志 = _logging.getLogger("GG通配符")
+
+def _是否为数字字符串(s):
+    try:
+        float(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+def _获取通配符字典():
+    通配符目录 = os.path.join(folder_paths.base_path, "wildcards")
+    结果 = {}
+    if not os.path.exists(通配符目录):
+        return 结果
+    for 根目录, 子目录列表, 文件列表 in os.walk(通配符目录):
+        for 文件名 in 文件列表:
+            if 文件名.endswith('.txt'):
+                相对路径 = os.path.relpath(os.path.join(根目录, 文件名), 通配符目录)
+                键值 = 相对路径[:-4].replace(os.sep, '/').lower()
+                try:
+                    with open(os.path.join(根目录, 文件名), 'r', encoding='utf-8') as f:
+                        内容 = [line.strip() for line in f.readlines() if line.strip()]
+                    结果[键值] = 内容
+                except Exception as e:
+                    _通配符日志.warning(f"读取通配符文件失败 {相对路径}: {e}")
+    return 结果
+
+def _获取通配符值(关键词):
+    字典 = _获取通配符字典()
+    return 字典.get(关键词.lower())
+
+def _处理通配符核心(文本, 种子):
+    if not 文本:
+        return ""
+    文本 = re.sub(r'^\s*//.*$', '', 文本, flags=re.MULTILINE)
+    random.seed(种子)
+    import numpy as np
+    随机生成器 = np.random.default_rng(种子)
+
+    def 替换选项组(字符串):
+        def 替换单个匹配(match):
+            选项原始 = match.group(1).split('|')
+            多选模式 = 选项原始[0].split('$$')
+            选择范围 = None
+            分隔符 = ' '
+            范围正则完整 = r'(\d+)(-(\d+))?'
+            范围正则短 = r'-(\d+)'
+            通配符正则 = r"__([\w.\-+/*\\]+?)__"
+
+            if len(多选模式) > 1:
+                匹配结果 = re.match(范围正则完整, 选项原始[0])
+                if 匹配结果 is None:
+                    匹配结果 = re.match(范围正则短, 选项原始[0])
+                    a值 = '1'
+                    b值 = 匹配结果.group(1).strip()
+                else:
+                    a值 = 匹配结果.group(1).strip()
+                    b值 = 匹配结果.group(3)
+                    if b值 is not None:
+                        b值 = b值.strip()
+                    else:
+                        b值 = a值
+                if 匹配结果 is not None:
+                    if b值 is not None and _是否为数字字符串(a值) and _是否为数字字符串(b值):
+                        选择范围 = int(a值), int(b值)
+                    elif _是否为数字字符串(a值):
+                        x值 = int(a值)
+                        选择范围 = (x值, x值)
+
+                def 展开通配符或返回(选项列表, 模式串, wc正则):
+                    匹配项 = re.findall(wc正则, 模式串)
+                    if len(选项列表) == 1 and 匹配项:
+                        值 = _获取通配符值(模式串)
+                        return 值 if 值 is not None else 选项列表
+                    else:
+                        选项列表[0] = 模式串
+                        return 选项列表
+
+                if 选择范围 is not None and len(多选模式) == 2:
+                    选项原始 = 展开通配符或返回(选项原始, 多选模式[1], 通配符正则)
+                elif 选择范围 is not None and len(多选模式) == 3:
+                    分隔符 = 多选模式[1]
+                    选项原始 = 展开通配符或返回(选项原始, 多选模式[2], 通配符正则)
+
+            调整概率 = []
+            总概率 = 0.0
+            for 选项 in 选项原始:
+                部分 = 选项.split('::', 1) if isinstance(选项, str) else f"{选项}".split('::', 1)
+                if len(部分) == 2 and _是否为数字字符串(部分[0].strip()):
+                    权重值 = float(部分[0].strip())
+                else:
+                    权重值 = 1.0
+                调整概率.append(权重值)
+                总概率 += 权重值
+
+            归一化概率 = [p / 总概率 for p in 调整概率]
+
+            if 选择范围 is None:
+                选择数量 = 1
+            else:
+                最大值 = min(选择范围[1] + 1, len(选项原始) + 1) if 选择范围[1] > 0 else len(选项原始) + 1
+                低值 = min(选择范围[0], 最大值)
+                高值 = max(选择范围[0], 最大值)
+                if 最大值 <= 0 or 高值 <= 低值:
+                    选择数量 = 0
+                elif 高值 == 低值:
+                    选择数量 = 高值
+                else:
+                    选择数量 = int(随机生成器.integers(low=低值, high=高值, size=1)[0])
+
+            if 选择数量 > len(选项原始) or 总概率 <= 1:
+                随机生成器.shuffle(选项原始)
+                选中项 = 选项原始
+            else:
+                选中项 = 随机生成器.choice(选项原始, p=归一化概率, size=选择数量, replace=False)
+
+            选中项清理 = [re.sub(r'^\s*[0-9.]+::', '', str(x), count=1) for x in 选中项]
+            return 分隔符.join(选中项清理)
+
+        模式正则 = r'(?<!\\)\{((?:[^{}]|(?<=\\)[{}])*?)(?<!\\)\}'
+        结果, 是否替换 = re.subn(模式正则, 替换单个匹配, 字符串)
+
+        def 展开双下划线通配符(字符串):
+            def 替换wc(m):
+                关键词 = m.group(1).lower()
+                值 = _获取通配符值(关键词)
+                if 值 is not None and len(值) > 0:
+                    return 随机生成器.choice(值)
+                return m.group(0)
+            return re.sub(r"__([\w.\-+/*\\]+?)__", 替换wc, 字符串)
+
+        结果 = 展开双下划线通配符(结果)
+        return 结果
+
+        return 替换选项组(文本)
+
+    return 替换选项组(文本)
+
+
+class GG文本优化:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "处理文本": ("STRING", {"default": "", "multiline": True}),
+                "填充文本": ("STRING", {"default": "", "multiline": True}),
+                "处理模式": (["填充", "固定", "复现"], {"default": "填充"}),
+                "随机种子": ("INT", {"default": 0, "min": 0, "max": 2**64 - 1}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("处理结果",)
+    FUNCTION = "execute"
+    CATEGORY = "GuliNodes/文本"
+
+    def execute(self, 处理文本="", 填充文本="", 处理模式="填充", 随机种子=0):
+        if 处理模式 == "固定":
+            结果文本 = _处理通配符核心(填充文本, 随机种子)
+        elif 处理模式 == "复现":
+            结果文本 = _处理通配符核心(填充文本, 随机种子)
+        else:
+            结果文本 = _处理通配符核心(处理文本, 随机种子)
+        return (结果文本,)
+
+
+class GG图像尺寸读取:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "图像": ("IMAGE",),
+            },
+        }
+
+    RETURN_TYPES = ("INT", "INT")
+    RETURN_NAMES = ("宽度", "高度")
+    FUNCTION = "execute"
+    CATEGORY = "GuliNodes/图像"
+
+    def execute(self, 图像):
+        _, 高度, 宽度, _ = 图像.shape
+        return (宽度, 高度)
+
+
+if io is not None:
+
+    class GG图像缩放_V3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GG图像缩放",
+                display_name="GG 图像缩放",
+                category="GuliNodes/潜空间",
+                description=(
+                    "在像素空间中对 Latent 进行高质量缩放。"
+                    "先将潜空间解码为像素图像，按指定倍率和算法缩放后，再编码回潜空间。"
+                    "支持可选的放大模型增强和分块 VAE 编解码以节省显存。"
+                ),
+                inputs=[
+                    io.Latent.Input("Latent"),
+                    io.Vae.Input("VAE"),
+                    io.Combo.Input("缩放方法", options=_缩放方法选项, default="lanczos"),
+                    io.Float.Input("缩放倍率", default=1.5, min=0.1, max=10000.0, step=0.05),
+                    io.Boolean.Input("分块VAE", default=False),
+                    io.UpscaleModel.Input("放大模型", optional=True),
+                ],
+                outputs=[
+                    io.Latent.Output(display_name="Latent"),
+                    io.Image.Output(display_name="预览图像"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, Latent, VAE, 缩放方法="lanczos", 缩放倍率=1.5, 分块VAE=False, 放大模型=None):
+            倍率 = max(0.1, float(缩放倍率))
+            原始图像 = VAE.decode(Latent["samples"])
+            if len(原始图像.shape) == 5:
+                原始图像 = 原始图像.reshape(-1, 原始图像.shape[-3], 原始图像.shape[-2], 原始图像.shape[-1])
+
+            if 放大模型 is not None:
+                from nodes import NODE_CLASS_MAPPINGS as _NCM
+                _upscale_cls = _NCM.get("ImageUpscaleWithModel")
+                if _upscale_cls is not None:
+                    _upscaler = _upscale_cls()
+                    当前宽度 = 原始图像.shape[3]
+                    目标宽度 = int(当前宽度 * 倍率)
+                    while 原始图像.shape[3] < 目标宽度:
+                        if hasattr(_upscaler, "execute"):
+                            原始图像 = _upscaler.execute(放大模型, 原始图像)[0]
+                        else:
+                            原始图像 = _upscaler.upscale(放大模型, 原始图像)[0]
+                        if 原始图像.shape[3] == 当前宽度:
+                            break
+                        当前宽度 = 原始图像.shape[3]
+
+            原始高度 = 原始图像.shape[2]
+            原始宽度 = 原始图像.shape[3]
+            目标高度 = max(1, round(原始高度 * 倍率))
+            目标宽度 = max(1, round(原始宽度 * 倍率))
+
+            缩放后 = 原始图像.movedim(-1, 1)
+            缩放后 = comfy.utils.common_upscale(缩放后, 目标宽度, 目标高度, 缩放方法, "disabled")
+            缩放后 = 缩放后.movedim(1, -1)
+
+            新Latent = VAE.encode(缩放后)
+            return io.NodeOutput({"samples": 新Latent}, extra_outputs=[缩放后])
+
+    GG图像缩放 = GG图像缩放_V3
+
+    class GG文本优化_V3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GG文本优化",
+                display_name="GG 文本优化",
+                category="GuliNodes/文本",
+                description=(
+                    "处理包含通配符语法的文本提示词。"
+                    "支持语法: {选项1|选项2} 随机选择、"
+                    "__通配符名__ 从wildcards目录加载、"
+                    "{2$$选项1|选项2|选项3} 多选、"
+                    "::权重:: 加权概率。"
+                    "基于 Impact Wildcard Processor 的完整功能重写。"
+                ),
+                inputs=[
+                    io.String.Input("处理文本", default="", multiline=True),
+                    io.String.Input("填充文本", default="", multiline=True),
+                    io.Combo.Input("处理模式", options=["填充", "固定", "复现"], default="填充"),
+                    io.Int.Input("随机种子", default=0, min=0, max=2**64 - 1),
+                ],
+                outputs=[
+                    io.String.Output(display_name="处理结果"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, 处理文本, 填充文本, 处理模式, 随机种子=0):
+            if isinstance(处理模式, dict):
+                模式 = 处理模式.get("处理模式", 处理模式.get("value", "填充"))
+            else:
+                模式 = str(处理模式 or "填充")
+            if 模式 == "固定":
+                结果文本 = _处理通配符核心(填充文本, 随机种子)
+            elif 模式 == "复现":
+                结果文本 = _处理通配符核心(填充文本, 随机种子)
+            else:
+                结果文本 = _处理通配符核心(处理文本, 随机种子)
+            return io.NodeOutput(结果文本)
+
+    GG文本优化 = GG文本优化_V3
+
+    class GG图像尺寸读取_V3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GG图像尺寸读取",
+                display_name="GG 图像尺寸读取",
+                category="GuliNodes/图像",
+                inputs=[
+                    io.Image.Input("图像"),
+                ],
+                outputs=[
+                    io.Int.Output("宽度"),
+                    io.Int.Output("高度"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, 图像):
+            _, 高度, 宽度, _ = 图像.shape
+            return io.NodeOutput(宽度, 高度)
+
+    GG图像尺寸读取 = GG图像尺寸读取_V3
+
+
 NODE_CLASS_MAPPINGS = {
     "GGRGBAtoRGB": GGRGBAtoRGB,
     "GGImageResize": GGImageResize,
     "GGImageCrop": GGImageCrop,
     "GGImageTransform": GGImageTransform,
     "GGImageAdjust": GGImageAdjust,
-    "GGFaceSkinSmoothing": GGFaceSkinSmoothing,
-    "GGFaceSmartBeauty": GGFaceSmartBeauty,
-    "GGImageStyleReference": GGImageStyleReference,
     "GGPreviewImage": GGPreviewImage,
     "GGSaveImage": GGSaveImage,
+    "GGImageCompressSave": GGImageCompressSave,
     "GGImageCompress": GGImageCompress,
     "GGImageComparer2": GGImageComparer2,
     "GGImageComparer4": GGImageComparer4,
     "GGImageComparer8": GGImageComparer8,
+    "GG图像缩放": GG图像缩放,
+    "GG文本优化": GG文本优化,
+    "GG图像尺寸读取": GG图像尺寸读取,
 }
 
 
@@ -2581,13 +3162,14 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GGImageCrop": "GG 图像裁剪",
     "GGImageTransform": "GG 图像变换",
     "GGImageAdjust": "GG 图像调整",
-    "GGFaceSkinSmoothing": "GG 人脸磨皮",
-    "GGFaceSmartBeauty": "GG 智能人脸美化",
-    "GGImageStyleReference": "GG 图像风格参考",
     "GGPreviewImage": "GG 图像预览",
     "GGSaveImage": "GG 图像保存",
+    "GGImageCompressSave": "GG 图像压缩保存",
     "GGImageCompress": "GG 图像压缩",
     "GGImageComparer2": "GG 图像对比 2张",
     "GGImageComparer4": "GG 图像对比 4张",
     "GGImageComparer8": "GG 图像对比 8张",
+    "GG图像缩放": "GG 图像缩放",
+    "GG文本优化": "GG 文本优化",
+    "GG图像尺寸读取": "GG 图像尺寸读取",
 }

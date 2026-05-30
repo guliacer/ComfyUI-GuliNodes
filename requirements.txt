@@ -1,6 +1,1 @@
-# Image enhancement / face processing
-opencv-python
-mediapipe
-
-# Image prompt / multimodal inference
-llama-cpp-python
+# Main GuliNodes has no extra Python dependencies beyond ComfyUI's bundled environment.

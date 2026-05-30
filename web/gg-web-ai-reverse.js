@@ -29,6 +29,69 @@ function getWidgetValue(node, name, fallback = "") {
     return String(widget?.value ?? widget?.element?.value ?? fallback);
 }
 
+function getGraphLink(graph, linkId) {
+    if (linkId == null) return null;
+    const candidates = [linkId];
+    const numericId = Number(linkId);
+    if (Number.isFinite(numericId)) candidates.push(numericId);
+    for (const id of candidates) {
+        const link = graph?.getLink?.(id);
+        if (link) return link;
+    }
+    for (const store of [graph?.links, graph?._links]) {
+        if (!store) continue;
+        for (const id of candidates) {
+            const link = typeof store.get === "function" ? store.get(id) : store[id];
+            if (link) return link;
+        }
+    }
+    return null;
+}
+
+function deleteGraphLink(graph, linkId) {
+    const candidates = [linkId];
+    const numericId = Number(linkId);
+    if (Number.isFinite(numericId)) candidates.push(numericId);
+    for (const store of [graph?.links, graph?._links]) {
+        if (!store) continue;
+        for (const id of candidates) {
+            if (typeof store.delete === "function" && store.delete(id)) return;
+            if (Object.prototype.hasOwnProperty.call(store, id)) {
+                delete store[id];
+                return;
+            }
+        }
+    }
+}
+
+function getGraphNode(graph, nodeId) {
+    if (nodeId == null) return null;
+    return graph?.getNodeById?.(nodeId)
+        ?? (graph?.nodes ?? graph?._nodes ?? []).find((node) => String(node.id) === String(nodeId));
+}
+
+function removeGraphLink(graph, link) {
+    if (link == null || !graph) return;
+    const linkInfo = getGraphLink(graph, link);
+    const storedId = linkInfo?.id ?? link;
+    if (typeof graph.removeLink === "function") {
+        graph.removeLink(storedId);
+        return;
+    }
+
+    const origin = getGraphNode(graph, linkInfo?.origin_id);
+    const target = getGraphNode(graph, linkInfo?.target_id);
+    const outputLinks = origin?.outputs?.[linkInfo?.origin_slot]?.links;
+    if (Array.isArray(outputLinks)) {
+        const index = outputLinks.findIndex((id) => String(id) === String(storedId));
+        if (index >= 0) outputLinks.splice(index, 1);
+    }
+    const input = target?.inputs?.[linkInfo?.target_slot];
+    if (String(input?.link) === String(storedId)) input.link = null;
+
+    deleteGraphLink(graph, storedId);
+}
+
 function getPanelHeight(node) {
     return clampNumber(
         getWidgetValue(node, "节点高度", DEFAULT_PANEL_HEIGHT),
@@ -63,11 +126,7 @@ function clearNodeSlots(node) {
     const outputLinks = (node.outputs || []).flatMap((output) => output?.links || []).filter((link) => link != null);
 
     for (const link of [...inputLinks, ...outputLinks]) {
-        if (typeof graph?.removeLink === "function") {
-            graph.removeLink(link);
-        } else if (graph?.links) {
-            delete graph.links[link];
-        }
+        removeGraphLink(graph, link);
     }
 
     node.inputs = [];

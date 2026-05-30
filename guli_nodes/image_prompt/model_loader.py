@@ -381,7 +381,7 @@ class GG反推模型:
     RETURN_TYPES = ("GGLLAMA",)
     RETURN_NAMES = ("模型",)
     FUNCTION = "load"
-    CATEGORY = "GuliNodes/图像分析"
+    CATEGORY = "GuliNodes/AI"
 
     def load(self, 模型类型, 主模型, 视觉投影mmproj, 启用思考, 上下文长度, GPU层数, KV缓存K类型, KV缓存V类型):
         if 主模型.startswith("（请把模型放到"):
