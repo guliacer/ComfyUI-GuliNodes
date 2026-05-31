@@ -2817,174 +2817,6 @@ class GG图像缩放:
 
         新Latent = VAE.encode(缩放后)
         return ({"samples": 新Latent}, 缩放后)
-import re
-import random
-import logging as _logging
-
-_通配符日志 = _logging.getLogger("GG通配符")
-
-def _是否为数字字符串(s):
-    try:
-        float(s)
-        return True
-    except (ValueError, TypeError):
-        return False
-
-def _获取通配符字典():
-    通配符目录 = os.path.join(folder_paths.base_path, "wildcards")
-    结果 = {}
-    if not os.path.exists(通配符目录):
-        return 结果
-    for 根目录, 子目录列表, 文件列表 in os.walk(通配符目录):
-        for 文件名 in 文件列表:
-            if 文件名.endswith('.txt'):
-                相对路径 = os.path.relpath(os.path.join(根目录, 文件名), 通配符目录)
-                键值 = 相对路径[:-4].replace(os.sep, '/').lower()
-                try:
-                    with open(os.path.join(根目录, 文件名), 'r', encoding='utf-8') as f:
-                        内容 = [line.strip() for line in f.readlines() if line.strip()]
-                    结果[键值] = 内容
-                except Exception as e:
-                    _通配符日志.warning(f"读取通配符文件失败 {相对路径}: {e}")
-    return 结果
-
-def _获取通配符值(关键词):
-    字典 = _获取通配符字典()
-    return 字典.get(关键词.lower())
-
-def _处理通配符核心(文本, 种子):
-    if not 文本:
-        return ""
-    文本 = re.sub(r'^\s*//.*$', '', 文本, flags=re.MULTILINE)
-    random.seed(种子)
-    import numpy as np
-    随机生成器 = np.random.default_rng(种子)
-
-    def 替换选项组(字符串):
-        def 替换单个匹配(match):
-            选项原始 = match.group(1).split('|')
-            多选模式 = 选项原始[0].split('$$')
-            选择范围 = None
-            分隔符 = ' '
-            范围正则完整 = r'(\d+)(-(\d+))?'
-            范围正则短 = r'-(\d+)'
-            通配符正则 = r"__([\w.\-+/*\\]+?)__"
-
-            if len(多选模式) > 1:
-                匹配结果 = re.match(范围正则完整, 选项原始[0])
-                if 匹配结果 is None:
-                    匹配结果 = re.match(范围正则短, 选项原始[0])
-                    a值 = '1'
-                    b值 = 匹配结果.group(1).strip()
-                else:
-                    a值 = 匹配结果.group(1).strip()
-                    b值 = 匹配结果.group(3)
-                    if b值 is not None:
-                        b值 = b值.strip()
-                    else:
-                        b值 = a值
-                if 匹配结果 is not None:
-                    if b值 is not None and _是否为数字字符串(a值) and _是否为数字字符串(b值):
-                        选择范围 = int(a值), int(b值)
-                    elif _是否为数字字符串(a值):
-                        x值 = int(a值)
-                        选择范围 = (x值, x值)
-
-                def 展开通配符或返回(选项列表, 模式串, wc正则):
-                    匹配项 = re.findall(wc正则, 模式串)
-                    if len(选项列表) == 1 and 匹配项:
-                        值 = _获取通配符值(模式串)
-                        return 值 if 值 is not None else 选项列表
-                    else:
-                        选项列表[0] = 模式串
-                        return 选项列表
-
-                if 选择范围 is not None and len(多选模式) == 2:
-                    选项原始 = 展开通配符或返回(选项原始, 多选模式[1], 通配符正则)
-                elif 选择范围 is not None and len(多选模式) == 3:
-                    分隔符 = 多选模式[1]
-                    选项原始 = 展开通配符或返回(选项原始, 多选模式[2], 通配符正则)
-
-            调整概率 = []
-            总概率 = 0.0
-            for 选项 in 选项原始:
-                部分 = 选项.split('::', 1) if isinstance(选项, str) else f"{选项}".split('::', 1)
-                if len(部分) == 2 and _是否为数字字符串(部分[0].strip()):
-                    权重值 = float(部分[0].strip())
-                else:
-                    权重值 = 1.0
-                调整概率.append(权重值)
-                总概率 += 权重值
-
-            归一化概率 = [p / 总概率 for p in 调整概率]
-
-            if 选择范围 is None:
-                选择数量 = 1
-            else:
-                最大值 = min(选择范围[1] + 1, len(选项原始) + 1) if 选择范围[1] > 0 else len(选项原始) + 1
-                低值 = min(选择范围[0], 最大值)
-                高值 = max(选择范围[0], 最大值)
-                if 最大值 <= 0 or 高值 <= 低值:
-                    选择数量 = 0
-                elif 高值 == 低值:
-                    选择数量 = 高值
-                else:
-                    选择数量 = int(随机生成器.integers(low=低值, high=高值, size=1)[0])
-
-            if 选择数量 > len(选项原始) or 总概率 <= 1:
-                随机生成器.shuffle(选项原始)
-                选中项 = 选项原始
-            else:
-                选中项 = 随机生成器.choice(选项原始, p=归一化概率, size=选择数量, replace=False)
-
-            选中项清理 = [re.sub(r'^\s*[0-9.]+::', '', str(x), count=1) for x in 选中项]
-            return 分隔符.join(选中项清理)
-
-        模式正则 = r'(?<!\\)\{((?:[^{}]|(?<=\\)[{}])*?)(?<!\\)\}'
-        结果, 是否替换 = re.subn(模式正则, 替换单个匹配, 字符串)
-
-        def 展开双下划线通配符(字符串):
-            def 替换wc(m):
-                关键词 = m.group(1).lower()
-                值 = _获取通配符值(关键词)
-                if 值 is not None and len(值) > 0:
-                    return 随机生成器.choice(值)
-                return m.group(0)
-            return re.sub(r"__([\w.\-+/*\\]+?)__", 替换wc, 字符串)
-
-        结果 = 展开双下划线通配符(结果)
-        return 结果
-
-        return 替换选项组(文本)
-
-    return 替换选项组(文本)
-
-
-class GG文本优化:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "处理文本": ("STRING", {"default": "", "multiline": True}),
-                "填充文本": ("STRING", {"default": "", "multiline": True}),
-                "处理模式": (["填充", "固定", "复现"], {"default": "填充"}),
-                "随机种子": ("INT", {"default": 0, "min": 0, "max": 2**64 - 1}),
-            },
-        }
-
-    RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("处理结果",)
-    FUNCTION = "execute"
-    CATEGORY = "GuliNodes/文本"
-
-    def execute(self, 处理文本="", 填充文本="", 处理模式="填充", 随机种子=0):
-        if 处理模式 == "固定":
-            结果文本 = _处理通配符核心(填充文本, 随机种子)
-        elif 处理模式 == "复现":
-            结果文本 = _处理通配符核心(填充文本, 随机种子)
-        else:
-            结果文本 = _处理通配符核心(处理文本, 随机种子)
-        return (结果文本,)
 
 
 class GG图像尺寸读取:
@@ -3071,48 +2903,6 @@ if io is not None:
 
     GG图像缩放 = GG图像缩放_V3
 
-    class GG文本优化_V3(io.ComfyNode):
-        @classmethod
-        def define_schema(cls):
-            return io.Schema(
-                node_id="GG文本优化",
-                display_name="GG 文本优化",
-                category="GuliNodes/文本",
-                description=(
-                    "处理包含通配符语法的文本提示词。"
-                    "支持语法: {选项1|选项2} 随机选择、"
-                    "__通配符名__ 从wildcards目录加载、"
-                    "{2$$选项1|选项2|选项3} 多选、"
-                    "::权重:: 加权概率。"
-                    "基于 Impact Wildcard Processor 的完整功能重写。"
-                ),
-                inputs=[
-                    io.String.Input("处理文本", default="", multiline=True),
-                    io.String.Input("填充文本", default="", multiline=True),
-                    io.Combo.Input("处理模式", options=["填充", "固定", "复现"], default="填充"),
-                    io.Int.Input("随机种子", default=0, min=0, max=2**64 - 1),
-                ],
-                outputs=[
-                    io.String.Output(display_name="处理结果"),
-                ],
-            )
-
-        @classmethod
-        def execute(cls, 处理文本, 填充文本, 处理模式, 随机种子=0):
-            if isinstance(处理模式, dict):
-                模式 = 处理模式.get("处理模式", 处理模式.get("value", "填充"))
-            else:
-                模式 = str(处理模式 or "填充")
-            if 模式 == "固定":
-                结果文本 = _处理通配符核心(填充文本, 随机种子)
-            elif 模式 == "复现":
-                结果文本 = _处理通配符核心(填充文本, 随机种子)
-            else:
-                结果文本 = _处理通配符核心(处理文本, 随机种子)
-            return io.NodeOutput(结果文本)
-
-    GG文本优化 = GG文本优化_V3
-
     class GG图像尺寸读取_V3(io.ComfyNode):
         @classmethod
         def define_schema(cls):
@@ -3151,7 +2941,6 @@ NODE_CLASS_MAPPINGS = {
     "GGImageComparer4": GGImageComparer4,
     "GGImageComparer8": GGImageComparer8,
     "GG图像缩放": GG图像缩放,
-    "GG文本优化": GG文本优化,
     "GG图像尺寸读取": GG图像尺寸读取,
 }
 
@@ -3170,6 +2959,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GGImageComparer4": "GG 图像对比 4张",
     "GGImageComparer8": "GG 图像对比 8张",
     "GG图像缩放": "GG 图像缩放",
-    "GG文本优化": "GG 文本优化",
     "GG图像尺寸读取": "GG 图像尺寸读取",
 }

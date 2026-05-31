@@ -50,7 +50,7 @@ Icon = ""
 
 [tool.gulinodes]
 name = "ComfyUI-GuliNodes"
-node_count = 50
+node_count = 49
 python_package = "guli_nodes"
 web_directory = "web"
 summary = "Custom nodes for image tools, video compression, text processing, group control, LoRA helpers, model loading, workflow helpers, and Z-Image sampling."
