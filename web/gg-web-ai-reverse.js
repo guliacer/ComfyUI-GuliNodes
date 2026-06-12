@@ -1,6 +1,17 @@
 import { app } from "../../scripts/app.js";
 
-const NODE_CLASS = "GGWebAIReverseImage";
+const IMAGE_NODE_CLASS = "GGWebAIReverseImage";
+const TEXT_NODE_CLASS = "GGWebAIReverseText";
+const NODE_CLASSES = new Set([IMAGE_NODE_CLASS]);
+const DEPRECATED_TEXT_INPUTS = new Set([
+    "TXT输入",
+    "规则输入",
+    "API密钥",
+    "API端点",
+    "API模型名称",
+]);
+const API_CONFIG_INPUT_NAME = "API配置";
+const TEXT_OUTPUT_NAME = "提取总结";
 const DOM_WIDGET_NAME = "gg_web_ai_reverse";
 const MIN_NODE_WIDTH = 520;
 const MIN_PANEL_HEIGHT = 360;
@@ -27,6 +38,18 @@ function getWidget(node, name) {
 function getWidgetValue(node, name, fallback = "") {
     const widget = getWidget(node, name);
     return String(widget?.value ?? widget?.element?.value ?? fallback);
+}
+
+function isWebAIReverseNode(node) {
+    return NODE_CLASSES.has(node?.comfyClass);
+}
+
+function shouldClearNodeSlots(node) {
+    return node?.comfyClass === IMAGE_NODE_CLASS;
+}
+
+function isTextReverseNode(node) {
+    return node?.comfyClass === TEXT_NODE_CLASS;
 }
 
 function getGraphLink(graph, linkId) {
@@ -120,7 +143,7 @@ function getPlatformUrl(node) {
 }
 
 function clearNodeSlots(node) {
-    if (!node) return;
+    if (!shouldClearNodeSlots(node)) return;
     const graph = node.graph || app.graph;
     const inputLinks = (node.inputs || []).map((input) => input?.link).filter((link) => link != null);
     const outputLinks = (node.outputs || []).flatMap((output) => output?.links || []).filter((link) => link != null);
@@ -133,6 +156,81 @@ function clearNodeSlots(node) {
     node.outputs = [];
     node.setDirtyCanvas?.(true, true);
     app.graph.setDirtyCanvas(true, true);
+}
+
+function removeInputAt(node, index) {
+    const input = node.inputs?.[index];
+    if (!input) return;
+    if (input.link != null) removeGraphLink(node.graph || app.graph, input.link);
+    if (typeof node.removeInput === "function") {
+        node.removeInput(index);
+    } else {
+        node.inputs?.splice(index, 1);
+    }
+}
+
+function removeOutputAt(node, index) {
+    const output = node.outputs?.[index];
+    if (!output) return;
+    for (const link of output.links || []) {
+        removeGraphLink(node.graph || app.graph, link);
+    }
+    if (typeof node.removeOutput === "function") {
+        node.removeOutput(index);
+    } else {
+        node.outputs?.splice(index, 1);
+    }
+}
+
+function hasInput(node, name) {
+    return (node.inputs || []).some((input) => input?.name === name);
+}
+
+function ensureInput(node, name, type = "STRING") {
+    if (hasInput(node, name)) return false;
+    node.addInput?.(name, type);
+    return true;
+}
+
+function cleanupTextReverseSlots(node) {
+    if (!isTextReverseNode(node)) return;
+    let changed = false;
+
+    for (let index = (node.inputs?.length || 0) - 1; index >= 0; index--) {
+        const name = node.inputs?.[index]?.name;
+        if (!DEPRECATED_TEXT_INPUTS.has(name)) continue;
+        removeInputAt(node, index);
+        changed = true;
+    }
+
+    if (ensureInput(node, API_CONFIG_INPUT_NAME, "STRING")) {
+        changed = true;
+    }
+
+    const outputs = node.outputs || [];
+    let keepIndex = outputs.findIndex((output) => output?.name === TEXT_OUTPUT_NAME);
+    if (keepIndex < 0 && outputs.length) {
+        keepIndex = 0;
+        outputs[0].name = TEXT_OUTPUT_NAME;
+        outputs[0].label = TEXT_OUTPUT_NAME;
+    }
+
+    for (let index = (node.outputs?.length || 0) - 1; index >= 0; index--) {
+        if (index === keepIndex) continue;
+        removeOutputAt(node, index);
+        changed = true;
+    }
+
+    if (node.outputs?.[0]) {
+        node.outputs[0].name = TEXT_OUTPUT_NAME;
+        node.outputs[0].label = TEXT_OUTPUT_NAME;
+        node.outputs[0].type = "STRING";
+    }
+
+    if (changed) {
+        node.setDirtyCanvas?.(true, true);
+        app.graph.setDirtyCanvas(true, true);
+    }
 }
 
 function updateUrlBar(panel, url) {
@@ -388,13 +486,15 @@ function installNodeHooks(node) {
 app.registerExtension({
     name: "ComfyUI.GGNodes.WebAIReverse",
     async nodeCreated(node) {
-        if (node.comfyClass === NODE_CLASS) {
+        cleanupTextReverseSlots(node);
+        if (isWebAIReverseNode(node)) {
             clearNodeSlots(node);
             ensureWebAIWidget(node);
         }
     },
     async loadedGraphNode(node) {
-        if (node.comfyClass === NODE_CLASS) {
+        cleanupTextReverseSlots(node);
+        if (isWebAIReverseNode(node)) {
             clearNodeSlots(node);
             ensureWebAIWidget(node);
         }

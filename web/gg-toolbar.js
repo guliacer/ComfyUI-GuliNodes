@@ -1302,20 +1302,28 @@ app.registerExtension({
                 const overlay = this._ggColorOverlay;
                 if (!overlay) return;
 
-                const width = this.size?.[0] || 0;
-                const height = this.size?.[1] || 0;
                 const titleHeight = window.LiteGraph?.NODE_TITLE_HEIGHT || 30;
                 const isCollapsed = !!(this.flags?.collapsed || this.collapsed);
-                if (!width || !height) return;
+                const width = (isCollapsed ? (this._collapsed_width || this.width || window.LiteGraph?.NODE_COLLAPSED_WIDTH) : this.size?.[0]) || 0;
+                const height = this.size?.[1] || 0;
+                if (!width) return;
 
                 ctx.save();
-                if (overlay.bodyColor && !isCollapsed) {
+                if (overlay.bodyColor && height && !isCollapsed) {
                     ctx.globalAlpha = overlay.bodyAlpha ?? 0.32;
                     ctx.fillStyle = overlay.bodyColor;
                     roundRectPath(ctx, 0, 0, width, height, 8);
                     ctx.fill();
                 }
-                if (overlay.titleColor && !isCollapsed) {
+                if (isCollapsed) {
+                    const collapsedTitleColor = overlay.titleColor || overlay.bodyColor;
+                    if (collapsedTitleColor) {
+                        ctx.globalAlpha = 0.42;
+                        ctx.fillStyle = collapsedTitleColor;
+                        roundRectPath(ctx, 0, -titleHeight, width, titleHeight, 8);
+                        ctx.fill();
+                    }
+                } else if (overlay.titleColor) {
                     ctx.globalAlpha = 0.42;
                     ctx.fillStyle = overlay.titleColor;
                     roundRectPath(ctx, 0, -titleHeight, width, titleHeight, 8);

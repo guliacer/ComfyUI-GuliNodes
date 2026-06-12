@@ -2,6 +2,9 @@ import { app } from "../../scripts/app.js";
 
 const SAVE_NODES = new Set(["GGVideoSave"]);
 const COMPRESS_NODES = new Set(["GGVideoCompress"]);
+const PATH_LOAD_NODES = new Set(["GGVideoLoadByPath"]);
+const VIDEO_PATH_WIDGET_NAME = "\u89c6\u9891\u8def\u5f84";
+const SELECT_ROUTE = "/guli/video/select";
 const PREVIEW_WIDGET_NAME = "gg_video_preview";
 const MIN_NODE_WIDTH = 360;
 const MIN_PREVIEW_WIDTH = 300;
@@ -32,6 +35,45 @@ function setWidgetValue(widget, value) {
         widget.element.dispatchEvent(new Event("change", { bubbles: true }));
     }
     widget.callback?.(value);
+}
+
+async function selectVideoPath() {
+    const response = await fetch(SELECT_ROUTE, { method: "POST" });
+    if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message || `HTTP ${response.status}`);
+    }
+    return await response.json();
+}
+
+function installPathPicker(node) {
+    if (node.ggVideoPathPickerInstalled) return;
+    node.ggVideoPathPickerInstalled = true;
+
+    const button = node.addWidget("button", "\u9009\u62e9\u89c6\u9891\u6587\u4ef6", "\u9009\u62e9", async () => {
+        const pathWidget = getWidget(node, VIDEO_PATH_WIDGET_NAME);
+        if (!pathWidget) return;
+
+        button.disabled = true;
+        const previousLabel = button.value;
+        button.value = "\u9009\u62e9\u4e2d...";
+        try {
+            const result = await selectVideoPath();
+            const selectedPath = String(result?.path || "");
+            if (!selectedPath) return;
+            setWidgetValue(pathWidget, selectedPath);
+            node.setDirtyCanvas?.(true, true);
+            app.graph.setDirtyCanvas(true, true);
+        } catch (error) {
+            console.error("[GGVideoLoadByPath] Select failed:", error);
+            alert(error?.message || "\u89c6\u9891\u6587\u4ef6\u9009\u62e9\u5931\u8d25\u3002");
+        } finally {
+            button.value = previousLabel;
+            button.disabled = false;
+        }
+    });
+    node.setDirtyCanvas?.(true, true);
+    app.graph.setDirtyCanvas(true, true);
 }
 
 function normalizeLegacyEncoderWidget(node) {
@@ -309,10 +351,18 @@ app.registerExtension({
         if (SAVE_NODES.has(node.comfyClass)) {
             installSavePreview(node);
         }
+
+        if (PATH_LOAD_NODES.has(node.comfyClass)) {
+            installPathPicker(node);
+        }
     },
     async loadedGraphNode(node) {
         if (SAVE_NODES.has(node.comfyClass)) {
             installSavePreview(node);
+        }
+
+        if (PATH_LOAD_NODES.has(node.comfyClass)) {
+            installPathPicker(node);
         }
     },
 });

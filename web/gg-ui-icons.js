@@ -109,6 +109,8 @@ export function ensureGGIconStyles() {
         #gg-toolbar-settings .tool-btn,
         .gg-float-toolbar button,
         .gg-key-input-toggle,
+        .gg-key-input-mask,
+        .gg-key-input-test,
         .gg-ui-top-button {
             color: var(--gg-ui-ink);
         }
@@ -116,6 +118,8 @@ export function ensureGGIconStyles() {
         #gg-toolbar-settings .tool-btn:hover,
         .gg-float-toolbar button:hover,
         .gg-key-input-toggle:hover,
+        .gg-key-input-mask:hover,
+        .gg-key-input-test:hover,
         .gg-ui-top-button:hover {
             color: var(--gg-ui-accent) !important;
             background: var(--gg-ui-accent-soft) !important;

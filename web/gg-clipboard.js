@@ -183,6 +183,23 @@ function getWidgetValue(widget) {
     return String(widget.value ?? "");
 }
 
+function firstOutputValue(output, key) {
+    const value = output?.[key];
+    return Array.isArray(value) ? value[0] : value;
+}
+
+function textFromExecutedMessage(message) {
+    const value = firstOutputValue(message, "文本")
+        ?? firstOutputValue(message, "text")
+        ?? firstOutputValue(message?.ui, "文本")
+        ?? firstOutputValue(message?.ui, "text")
+        ?? firstOutputValue(message?.message, "文本")
+        ?? firstOutputValue(message?.message, "text")
+        ?? firstOutputValue(message?.message?.ui, "文本")
+        ?? firstOutputValue(message?.message?.ui, "text");
+    return value == null ? null : String(value);
+}
+
 const ICON_COPY = ggIcon("copy", 16);
 const ICON_PASTE = ggIcon("paste", 16);
 const ICON_CLEAR = ggIcon("clear", 16);
@@ -743,9 +760,8 @@ function initExtension() {
             nodeType.prototype.onExecuted = function (message) {
                 onExecuted?.apply(this, arguments);
 
-                const text = Array.isArray(message?.text)
-                    ? message.text.join("\n")
-                    : String(message?.text ?? "");
+                const text = textFromExecutedMessage(message);
+                if (text == null) return;
 
                 setTextWidgetValue(getTextWidget(this), text);
                 app.graph.setDirtyCanvas(true, true);

@@ -1,14 +1,19 @@
+import asyncio
 import os
 import re
 import shutil
 import subprocess
 import time
+import uuid
+import wave
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
 import comfy.utils
 import folder_paths
+import numpy as np
+from PIL import Image
 
 try:
     from aiohttp import web
@@ -37,11 +42,20 @@ except Exception:
 VIDEO_TYPE = "VIDEO"
 VIDEO_RETURN_TYPE = IO.VIDEO if IO is not None else VIDEO_TYPE
 UPLOAD_VIDEO_EXTENSIONS = {"mp4", "flv", "mov", "avi", "f4v"}
+PATH_VIDEO_EXTENSIONS = UPLOAD_VIDEO_EXTENSIONS | {"mkv", "webm", "m4v", "mpg", "mpeg", "ts", "m2ts", "wmv"}
 PRESET_OPTIONS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]
 
 CN_VIDEO = "\u89c6\u9891"
+CN_IMAGE = "\u56fe\u50cf"
+CN_AUDIO = "\u97f3\u9891"
+CN_VAE = "VAE"
 CN_PATH = "\u8def\u5f84"
+CN_VIDEO_PATH = "\u89c6\u9891\u8def\u5f84"
+CN_VERIFY_READABLE = "\u6267\u884c\u524d\u9a8c\u8bc1\u53ef\u8bfb"
 CN_VIDEO_OBJECT = "\u89c6\u9891\u5bf9\u8c61"
+CN_VIDEO_FORMAT = "\u89c6\u9891\u683c\u5f0f"
+CN_PIXEL_FORMAT = "\u50cf\u7d20\u683c\u5f0f"
+CN_TRIM_AUDIO = "\u4fee\u526a\u97f3\u9891"
 CN_ENCODER = "\u7f16\u7801\u5668"
 CN_MODE = "\u538b\u7f29\u6a21\u5f0f"
 CN_CRF = "CRF"
@@ -59,6 +73,9 @@ MODE_SMART = "\u667a\u80fd\u538b\u7f29"
 MODE_SIZE = "\u4f53\u79ef\u4f18\u5148"
 MODE_COMPAT = "\u517c\u5bb9\u4f18\u5148"
 FORMAT_FOLLOW = "\u8ddf\u968f\u8f93\u5165"
+BRIDGE_VIDEO_FORMATS = ["mp4", "mov", "mkv"]
+BRIDGE_PIXEL_FORMATS = ["yuv420p", "yuv444p", "yuv420p10le"]
+BRIDGE_DEFAULT_FPS = 24
 
 CPU_ENCODER_OPTIONS = [
     "x264_32-8bit.exe",
@@ -236,6 +253,105 @@ def _resolve_video_file_reference(file_name: str) -> str:
     return _search_file_by_name(file_name, roots)
 
 
+def _validate_video_extension(path: str, allowed_extensions: set[str] = PATH_VIDEO_EXTENSIONS) -> None:
+    suffix = Path(str(path or "")).suffix.lower().lstrip(".")
+    if suffix not in allowed_extensions:
+        raise ValueError(f"\u4e0d\u652f\u6301\u7684\u89c6\u9891\u683c\u5f0f: {suffix or path}")
+
+
+def _load_video_from_resolved_path(video_path: str, verify_readable: bool = True):
+    if not video_path or not os.path.isfile(video_path):
+        raise FileNotFoundError(f"\u627e\u4e0d\u5230\u89c6\u9891\u6587\u4ef6: {video_path}")
+
+    _validate_video_extension(video_path)
+    video_path = str(Path(video_path).resolve())
+
+    if verify_readable:
+        ok, probe_error = _probe_video_readable(video_path)
+        if not ok:
+            raise RuntimeError(f"\u89c6\u9891\u6587\u4ef6\u65e0\u6cd5\u6b63\u5e38\u8bfb\u53d6: {video_path}\n{probe_error}")
+
+    return _build_video_output(video_path, Path(video_path).suffix.lstrip("."), "", video_path), video_path
+
+
+def _select_video_file_dialog() -> str:
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        initial_dir = folder_paths.get_input_directory()
+        if not initial_dir or not os.path.isdir(initial_dir):
+            initial_dir = str(Path.home())
+
+        class OPENFILENAMEW(ctypes.Structure):
+            _fields_ = [
+                ("lStructSize", wintypes.DWORD),
+                ("hwndOwner", wintypes.HWND),
+                ("hInstance", wintypes.HINSTANCE),
+                ("lpstrFilter", wintypes.LPCWSTR),
+                ("lpstrCustomFilter", wintypes.LPWSTR),
+                ("nMaxCustFilter", wintypes.DWORD),
+                ("nFilterIndex", wintypes.DWORD),
+                ("lpstrFile", wintypes.LPWSTR),
+                ("nMaxFile", wintypes.DWORD),
+                ("lpstrFileTitle", wintypes.LPWSTR),
+                ("nMaxFileTitle", wintypes.DWORD),
+                ("lpstrInitialDir", wintypes.LPCWSTR),
+                ("lpstrTitle", wintypes.LPCWSTR),
+                ("Flags", wintypes.DWORD),
+                ("nFileOffset", wintypes.WORD),
+                ("nFileExtension", wintypes.WORD),
+                ("lpstrDefExt", wintypes.LPCWSTR),
+                ("lCustData", wintypes.LPARAM),
+                ("lpfnHook", wintypes.LPVOID),
+                ("lpTemplateName", wintypes.LPCWSTR),
+                ("pvReserved", wintypes.LPVOID),
+                ("dwReserved", wintypes.DWORD),
+                ("FlagsEx", wintypes.DWORD),
+            ]
+
+        buffer_size = 65536
+        file_buffer = ctypes.create_unicode_buffer(buffer_size)
+        extensions = sorted(PATH_VIDEO_EXTENSIONS)
+        patterns = ";".join(f"*.{ext}" for ext in extensions)
+        file_filter = f"\u89c6\u9891\u6587\u4ef6 ({patterns})\0{patterns}\0\u6240\u6709\u6587\u4ef6 (*.*)\0*.*\0\0"
+        ofn = OPENFILENAMEW(
+            lStructSize=ctypes.sizeof(OPENFILENAMEW),
+            hwndOwner=None,
+            hInstance=None,
+            lpstrFilter=file_filter,
+            lpstrCustomFilter=None,
+            nMaxCustFilter=0,
+            nFilterIndex=1,
+            lpstrFile=ctypes.cast(file_buffer, wintypes.LPWSTR),
+            nMaxFile=buffer_size,
+            lpstrFileTitle=None,
+            nMaxFileTitle=0,
+            lpstrInitialDir=str(Path(initial_dir).resolve()),
+            lpstrTitle="\u9009\u62e9\u89c6\u9891\u6587\u4ef6",
+            Flags=0x00080000 | 0x00001000 | 0x00000800 | 0x00000004,
+            nFileOffset=0,
+            nFileExtension=0,
+            lpstrDefExt=None,
+            lCustData=0,
+            lpfnHook=None,
+            lpTemplateName=None,
+            pvReserved=None,
+            dwReserved=0,
+            FlagsEx=0,
+        )
+
+        if ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+            return str(Path(file_buffer.value).resolve())
+
+        error_code = ctypes.windll.comdlg32.CommDlgExtendedError()
+        if error_code == 0:
+            return ""
+        raise RuntimeError(f"\u7cfb\u7edf\u6587\u4ef6\u9009\u62e9\u5668\u9519\u8bef: 0x{error_code:04X}")
+    except Exception as exc:
+        raise RuntimeError(f"\u65e0\u6cd5\u6253\u5f00\u7cfb\u7edf\u6587\u4ef6\u9009\u62e9\u5668: {exc}") from exc
+
+
 def _extract_native_video_path(video) -> str:
     if video is None:
         return ""
@@ -347,6 +463,126 @@ def _build_temp_output_path(source_path: str, output_format: str) -> str:
     source = Path(source_path)
     filename = f"{source.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{output_format.lower()}"
     return str((temp_root / filename).resolve())
+
+
+def _build_bridge_work_dir() -> Path:
+    work_dir = Path(folder_paths.get_temp_directory()) / "GuliVideos" / f"bridge_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    return work_dir
+
+
+def _tensor_to_rgb_image(image) -> Image.Image:
+    array = image.detach().cpu().numpy()
+    array = np.clip(array * 255.0, 0, 255).astype(np.uint8)
+    if array.ndim == 2:
+        return Image.fromarray(array, mode="L").convert("RGB")
+    channels = array.shape[-1] if array.ndim == 3 else 1
+    if channels == 1:
+        return Image.fromarray(array[..., 0], mode="L").convert("RGB")
+    if channels == 2:
+        return Image.fromarray(array[..., :2], mode="LA").convert("RGB")
+    if channels == 3:
+        return Image.fromarray(array[..., :3], mode="RGB")
+    return Image.fromarray(array[..., :4], mode="RGBA").convert("RGB")
+
+
+def _write_image_sequence(images, frames_dir: Path) -> int:
+    if images is None or not hasattr(images, "shape") or len(images.shape) < 3:
+        raise ValueError("\u8bf7\u8fde\u63a5\u4e0a\u6e38 IMAGE \u56fe\u50cf\u6279\u6b21\u3002")
+    frame_count = int(images.shape[0])
+    if frame_count <= 0:
+        raise ValueError("\u56fe\u50cf\u6279\u6b21\u4e2d\u6ca1\u6709\u53ef\u7528\u5e27\u3002")
+
+    frames_dir.mkdir(parents=True, exist_ok=True)
+    for index in range(frame_count):
+        frame_path = frames_dir / f"frame_{index:06d}.png"
+        _tensor_to_rgb_image(images[index]).save(frame_path, "PNG")
+    return frame_count
+
+
+def _audio_to_wave_array(audio, trim_seconds: float | None = None) -> tuple[np.ndarray, int]:
+    if not isinstance(audio, dict) or "waveform" not in audio or "sample_rate" not in audio:
+        raise ValueError("\u8bf7\u8fde\u63a5\u4e0a\u6e38 AUDIO \u97f3\u9891\u3002")
+
+    waveform = audio["waveform"]
+    sample_rate = int(audio["sample_rate"])
+    if sample_rate <= 0:
+        raise ValueError(f"\u97f3\u9891\u91c7\u6837\u7387\u65e0\u6548: {sample_rate}")
+
+    array = waveform.detach().cpu().numpy()
+    if array.ndim == 3:
+        array = array[0]
+    elif array.ndim == 1:
+        array = array[None, :]
+    if array.ndim != 2:
+        raise ValueError(f"\u4e0d\u652f\u6301\u7684\u97f3\u9891\u5f20\u91cf\u7ef4\u5ea6: {array.shape}")
+
+    if trim_seconds is not None and trim_seconds > 0:
+        max_samples = max(1, int(round(trim_seconds * sample_rate)))
+        array = array[:, :max_samples]
+
+    array = np.clip(array, -1.0, 1.0)
+    return np.ascontiguousarray((array.T * 32767.0).astype(np.int16)), sample_rate
+
+
+def _write_audio_wav(audio, output_path: Path, trim_seconds: float | None = None) -> str:
+    samples, sample_rate = _audio_to_wave_array(audio, trim_seconds)
+    channel_count = 1 if samples.ndim == 1 else int(samples.shape[1])
+    with wave.open(str(output_path), "wb") as wav_file:
+        wav_file.setnchannels(channel_count)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(samples.tobytes())
+    return str(output_path.resolve())
+
+
+def _pick_bridge_video_codec(video_format: str) -> str:
+    fmt = str(video_format or "mp4").lower()
+    return "libx264" if fmt in {"mp4", "mov", "mkv"} else "libx264"
+
+
+def _build_bridge_ffmpeg_command(
+    ffmpeg_path: str,
+    frames_dir: Path,
+    audio_path: str,
+    output_path: str,
+    video_format: str,
+    pixel_format: str,
+    crf: float,
+    fps: int,
+) -> list[str]:
+    command = [
+        ffmpeg_path,
+        "-y",
+        "-framerate",
+        str(max(1, int(fps))),
+        "-i",
+        str((frames_dir / "frame_%06d.png").resolve()),
+        "-i",
+        audio_path,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        _pick_bridge_video_codec(video_format),
+        "-preset",
+        "medium",
+        "-crf",
+        str(max(0.0, min(40.0, float(crf)))),
+        "-pix_fmt",
+        pixel_format,
+        "-vf",
+        "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+        "-c:a",
+        _pick_audio_codec(video_format),
+        "-b:a",
+        "192k",
+    ]
+    if str(video_format).lower() in {"mp4", "mov"}:
+        command.extend(["-movflags", "+faststart"])
+    command.append(output_path)
+    return command
 
 
 def _build_saved_output_path(video_path: str, filename_prefix: str) -> str:
@@ -629,6 +865,22 @@ def _register_video_preview_route() -> None:
 
         return web.FileResponse(path=video_path)
 
+    @PromptServer.instance.routes.post("/guli/video/select")
+    async def guli_select_video(request):
+        try:
+            video_path = await asyncio.to_thread(_select_video_file_dialog)
+        except Exception as exc:
+            raise web.HTTPInternalServerError(text=str(exc))
+
+        if not video_path:
+            return web.json_response({"path": ""})
+
+        suffix = Path(video_path).suffix.lower().lstrip(".")
+        if suffix not in PATH_VIDEO_EXTENSIONS:
+            raise web.HTTPBadRequest(text=f"\u4e0d\u652f\u6301\u7684\u89c6\u9891\u683c\u5f0f: {suffix or video_path}")
+
+        return web.json_response({"path": video_path})
+
     _ROUTES_REGISTERED = True
 
 
@@ -691,6 +943,142 @@ class GGVideoLoad(ComfyNodeABC):
     def VALIDATE_INPUTS(cls, 视频文件):
         suffix = Path(视频文件).suffix.lower().lstrip(".")
         return True if suffix in UPLOAD_VIDEO_EXTENSIONS else f"Invalid video file: {视频文件}"
+
+
+class GGVideoLoadByPath(ComfyNodeABC):
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                CN_VIDEO_PATH: (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "placeholder": "D:/videos/example.mp4",
+                    },
+                ),
+                CN_VERIFY_READABLE: ("BOOLEAN", {"default": True}),
+            }
+        }
+
+    RETURN_TYPES = (VIDEO_RETURN_TYPE, "PATH")
+    RETURN_NAMES = (CN_VIDEO, CN_PATH)
+    FUNCTION = "load_video_by_path"
+    CATEGORY = "GuliNodes/\u89c6\u9891"
+    DESCRIPTION = "\u901a\u8fc7\u672c\u673a\u6587\u4ef6\u8def\u5f84\u52a0\u8f7d\u89c6\u9891\uff0c\u4e0d\u7ecf\u8fc7\u6d4f\u89c8\u5668\u4e0a\u4f20\uff0c\u53ef\u907f\u5f00 ComfyUI \u4e0a\u4f20\u4f53\u79ef\u9650\u5236\u3002"
+
+    def load_video_by_path(self, **kwargs):
+        video_path_value = kwargs.get(CN_VIDEO_PATH, "")
+        verify_readable = bool(kwargs.get(CN_VERIFY_READABLE, True))
+        video_path = _resolve_video_file_reference(video_path_value)
+        if not video_path:
+            video_path = _normalize_user_video_path(video_path_value)
+        return _load_video_from_resolved_path(video_path, verify_readable)
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        video_path_value = kwargs.get(CN_VIDEO_PATH, "")
+        video_path = _resolve_video_file_reference(video_path_value) or _normalize_user_video_path(video_path_value)
+        if not video_path or not os.path.isfile(video_path):
+            return video_path_value
+        try:
+            stat = os.stat(video_path)
+        except OSError:
+            return video_path
+        return f"{video_path}:{stat.st_size}:{stat.st_mtime_ns}"
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, **kwargs):
+        video_path_value = kwargs.get(CN_VIDEO_PATH, "")
+        video_path = _resolve_video_file_reference(video_path_value) or _normalize_user_video_path(video_path_value)
+        if not video_path:
+            return "\u8bf7\u8f93\u5165\u89c6\u9891\u6587\u4ef6\u8def\u5f84\u3002"
+        suffix = Path(video_path).suffix.lower().lstrip(".")
+        if suffix not in PATH_VIDEO_EXTENSIONS:
+            return f"\u4e0d\u652f\u6301\u7684\u89c6\u9891\u683c\u5f0f: {suffix or video_path}"
+        return True if os.path.isfile(video_path) else f"\u627e\u4e0d\u5230\u89c6\u9891\u6587\u4ef6: {video_path}"
+
+
+class GGVideoBridgeFromImageAudio:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                CN_IMAGE: ("IMAGE",),
+                CN_AUDIO: ("AUDIO",),
+                CN_VAE: ("VAE",),
+                CN_VIDEO_FORMAT: (BRIDGE_VIDEO_FORMATS, {"default": "mp4"}),
+                CN_PIXEL_FORMAT: (BRIDGE_PIXEL_FORMATS, {"default": "yuv420p"}),
+                CN_CRF: ("FLOAT", {"default": 15.0, "min": 0.0, "max": 40.0, "step": 0.1}),
+                CN_FPS: ("INT", {"default": BRIDGE_DEFAULT_FPS, "min": 1, "max": 240, "step": 1}),
+                CN_TRIM_AUDIO: ("BOOLEAN", {"default": False}),
+            },
+            "hidden": {
+                "unique_id": "UNIQUE_ID",
+            },
+        }
+
+    RETURN_TYPES = (VIDEO_RETURN_TYPE,)
+    RETURN_NAMES = (CN_VIDEO,)
+    FUNCTION = "make_video"
+    CATEGORY = "GuliNodes/\u89c6\u9891"
+    DESCRIPTION = "\u5c06\u4e0a\u6e38 IMAGE \u5e27\u6279\u6b21\u4e0e AUDIO \u5408\u6210\u4e3a VIDEO\uff0c\u4fbf\u4e8e\u63a5\u5165 GG \u89c6\u9891\u538b\u7f29\u8282\u70b9\u3002VAE \u8f93\u5165\u7528\u4e8e\u517c\u5bb9\u89c6\u9891\u5de5\u4f5c\u6d41\u8fde\u63a5\u3002"
+
+    def make_video(self, **kwargs):
+        images = kwargs.get(CN_IMAGE)
+        audio = kwargs.get(CN_AUDIO)
+        _vae = kwargs.get(CN_VAE)
+        video_format = str(kwargs.get(CN_VIDEO_FORMAT, "mp4")).lower()
+        pixel_format = str(kwargs.get(CN_PIXEL_FORMAT, "yuv420p"))
+        crf = float(kwargs.get(CN_CRF, 15.0))
+        fps = max(1, int(kwargs.get(CN_FPS, BRIDGE_DEFAULT_FPS)))
+        trim_audio = bool(kwargs.get(CN_TRIM_AUDIO, False))
+        unique_id = kwargs.get("unique_id")
+
+        if video_format not in BRIDGE_VIDEO_FORMATS:
+            raise ValueError(f"\u4e0d\u652f\u6301\u7684\u89c6\u9891\u683c\u5f0f: {video_format}")
+        if pixel_format not in BRIDGE_PIXEL_FORMATS:
+            raise ValueError(f"\u4e0d\u652f\u6301\u7684\u50cf\u7d20\u683c\u5f0f: {pixel_format}")
+
+        ffmpeg_path = _resolve_ffmpeg_binary("ffmpeg")
+        if not ffmpeg_path:
+            raise RuntimeError("\u672a\u627e\u5230 ffmpeg\u3002")
+
+        work_dir = _build_bridge_work_dir()
+        frames_dir = work_dir / "frames"
+        frame_count = _write_image_sequence(images, frames_dir)
+        video_duration = frame_count / fps
+        audio_path = _write_audio_wav(audio, work_dir / "audio.wav", video_duration if trim_audio else None)
+        output_path = str((work_dir / f"video.{video_format}").resolve())
+
+        command = _build_bridge_ffmpeg_command(
+            ffmpeg_path=ffmpeg_path,
+            frames_dir=frames_dir,
+            audio_path=audio_path,
+            output_path=output_path,
+            video_format=video_format,
+            pixel_format=pixel_format,
+            crf=crf,
+            fps=fps,
+        )
+        result = _run_ffmpeg_command_with_progress(command, audio_path, str(unique_id) if unique_id else None)
+
+        try:
+            shutil.rmtree(frames_dir, ignore_errors=True)
+            Path(audio_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        if result.returncode != 0 or not os.path.exists(output_path):
+            stderr = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(f"\u89c6\u9891\u5408\u6210\u5931\u8d25\u3002\n\u9519\u8bef: {stderr[-1500:]}")
+
+        return (_build_video_output(output_path, video_format, _pick_bridge_video_codec(video_format), output_path),)
+
+    @classmethod
+    def IS_CHANGED(cls, **kwargs):
+        return float("nan")
 
 
 class GGVideoCompress:
@@ -850,6 +1238,8 @@ class GGVideoSave:
 
 NODE_CLASS_MAPPINGS = {
     "GGVideoLoad": GGVideoLoad,
+    "GGVideoLoadByPath": GGVideoLoadByPath,
+    "GGVideoBridgeFromImageAudio": GGVideoBridgeFromImageAudio,
     "GGVideoCompress": GGVideoCompress,
     "GGVideoSave": GGVideoSave,
 }
@@ -857,6 +1247,8 @@ NODE_CLASS_MAPPINGS = {
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGVideoLoad": "GG \u89c6\u9891\u52a0\u8f7d",
+    "GGVideoLoadByPath": "GG \u89c6\u9891\u8def\u5f84\u52a0\u8f7d",
+    "GGVideoBridgeFromImageAudio": "GG \u89c6\u9891\u5408\u6210",
     "GGVideoCompress": "GG \u89c6\u9891\u538b\u7f29",
     "GGVideoSave": "GG \u89c6\u9891\u4fdd\u5b58",
 }

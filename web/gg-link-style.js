@@ -14,11 +14,28 @@ const SETTINGS = {
   opacity: `${PREFIX}.opacity`,
   colorMode: `${PREFIX}.colorMode`,
   customColor: `${PREFIX}.customColor`,
+  menuBackgroundColor: `${PREFIX}.menuBackgroundColor`,
+  menuBackgroundOpacity: `${PREFIX}.menuBackgroundOpacity`,
   dashStyle: `${PREFIX}.dashStyle`,
   textureDataUrl: `${PREFIX}.textureDataUrl`,
   glow: `${PREFIX}.glow`,
   speed: `${PREFIX}.speed`,
 };
+
+const QUICK_PANEL_BG_DEFAULT = "#eef1ec";
+const QUICK_PANEL_BG_OPACITY_DEFAULT = 0.94;
+const QUICK_PANEL_BG_PRESETS = [
+  { name: "雾灰绿", color: "#eef1ec" },
+  { name: "鼠尾草", color: "#e3ebe3" },
+  { name: "浅雾蓝", color: "#e7edf2" },
+  { name: "云杉蓝", color: "#dfe8ec" },
+  { name: "淡薰衣草", color: "#ebe7f1" },
+  { name: "灰粉", color: "#f1e4e2" },
+  { name: "杏米", color: "#f1eadc" },
+  { name: "雾黄", color: "#eee8d2" },
+  { name: "陶土粉", color: "#eadbd4" },
+  { name: "石板青", color: "#dde7e3" },
+];
 
 const DISPLAY_ALL = "全部";
 const DISPLAY_SELECTED = "选中节点";
@@ -119,6 +136,53 @@ function normalizeColor(value) {
   const text = String(value || "").trim();
   if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(text)) return text;
   return "#72d6ff";
+}
+
+function normalizePanelColor(value) {
+  const text = String(value || "").trim();
+  if (/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(text)) return text;
+  return QUICK_PANEL_BG_DEFAULT;
+}
+
+function hexToRgb(hex) {
+  const normalized = normalizePanelColor(hex).replace("#", "");
+  const full = normalized.length === 3 ? normalized.split("").map((char) => char + char).join("") : normalized;
+  const value = parseInt(full, 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+function hexToRgba(hex, alpha = 1) {
+  const [r, g, b] = hexToRgb(hex);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function panelBackgroundColor() {
+  return normalizePanelColor(setting(SETTINGS.menuBackgroundColor, QUICK_PANEL_BG_DEFAULT));
+}
+
+function panelBackgroundOpacity() {
+  return numberSetting(SETTINGS.menuBackgroundOpacity, QUICK_PANEL_BG_OPACITY_DEFAULT, 0.35, 1);
+}
+
+function applyQuickPanelBackground(panel = quickPanel, nextColor = null, nextOpacity = null) {
+  if (!panel) return;
+  const color = normalizePanelColor(nextColor || panel.dataset.backgroundColor || panelBackgroundColor());
+  const opacity = Math.max(0.35, Math.min(1, Number(nextOpacity ?? panelBackgroundOpacity())));
+  panel.style.setProperty("--gg-link-panel-bg", hexToRgba(color, opacity));
+  panel.style.setProperty("--gg-link-panel-bg-strong", hexToRgba(color, Math.min(1, opacity + 0.04)));
+  panel.style.setProperty("--gg-link-panel-bg-soft", hexToRgba(color, Math.max(0.2, opacity * 0.62)));
+  panel.style.setProperty("--gg-link-panel-border", hexToRgba(color, 0.72));
+  panel.dataset.backgroundColor = color;
+  panel.dataset.backgroundOpacity = String(opacity);
+  panel.querySelectorAll(".gg-link-style-bg-swatch").forEach((button) => {
+    button.classList.toggle("active", button.dataset.color?.toLowerCase() === color.toLowerCase());
+  });
+  const colorInput = panel.querySelector(".gg-link-style-bg-input");
+  if (colorInput) colorInput.value = color;
+  const opacityInput = panel.querySelector(".gg-link-style-bg-opacity-input");
+  if (opacityInput) opacityInput.value = String(Math.round(opacity * 100));
+  const opacityValue = panel.querySelector(".gg-link-style-bg-opacity-value");
+  if (opacityValue) opacityValue.textContent = `${Math.round(opacity * 100)}%`;
 }
 
 function markDirty() {
@@ -1206,6 +1270,73 @@ function createColorRow() {
   return row;
 }
 
+function createPanelBackgroundRow() {
+  const row = document.createElement("div");
+  row.className = "gg-link-style-row gg-link-style-bg-row";
+
+  const label = document.createElement("span");
+  label.className = "gg-link-style-label";
+  label.textContent = "\u80cc\u666f";
+
+  const presets = document.createElement("div");
+  presets.className = "gg-link-style-bg-presets";
+
+  const currentColor = panelBackgroundColor();
+  for (const preset of QUICK_PANEL_BG_PRESETS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "gg-link-style-bg-swatch";
+    button.dataset.color = preset.color;
+    button.title = preset.name;
+    button.setAttribute("aria-label", preset.name);
+    button.style.background = preset.color;
+    button.classList.toggle("active", preset.color.toLowerCase() === currentColor.toLowerCase());
+    button.addEventListener("click", () => {
+      setSettingValue(SETTINGS.menuBackgroundColor, preset.color);
+      applyQuickPanelBackground(row.closest("#gg-link-style-panel"), preset.color);
+    });
+    presets.appendChild(button);
+  }
+
+  const color = document.createElement("input");
+  color.type = "color";
+  color.className = "gg-link-style-bg-input";
+  color.value = currentColor;
+  color.title = "\u81ea\u5b9a\u4e49\u80cc\u666f\u8272";
+  color.setAttribute("aria-label", "\u81ea\u5b9a\u4e49\u80cc\u666f\u8272");
+  color.addEventListener("input", () => {
+    setSettingValue(SETTINGS.menuBackgroundColor, color.value);
+    applyQuickPanelBackground(row.closest("#gg-link-style-panel"), color.value);
+  });
+
+  row.append(label, presets, color);
+  return row;
+}
+
+function createPanelBackgroundOpacityRow() {
+  const opacity = panelBackgroundOpacity();
+  const input = document.createElement("input");
+  input.type = "range";
+  input.className = "gg-link-style-bg-opacity-input";
+  input.min = "35";
+  input.max = "100";
+  input.step = "1";
+  input.value = String(Math.round(opacity * 100));
+
+  const valueEl = document.createElement("span");
+  valueEl.className = "gg-link-style-value gg-link-style-bg-opacity-value";
+  valueEl.textContent = `${Math.round(opacity * 100)}%`;
+
+  input.addEventListener("input", () => {
+    const nextOpacity = Number(input.value) / 100;
+    valueEl.textContent = `${input.value}%`;
+    setSettingValue(SETTINGS.menuBackgroundOpacity, nextOpacity);
+    applyQuickPanelBackground(input.closest("#gg-link-style-panel"), null, nextOpacity);
+  });
+
+  return createControlRow("\u4e0d\u900f\u660e\u5ea6", input, valueEl);
+}
+
 function buildQuickPanel() {
   const panel = document.createElement("div");
   panel.id = "gg-link-style-panel";
@@ -1239,6 +1370,8 @@ function buildQuickPanel() {
 
   panel.append(
     head,
+    createPanelBackgroundRow(),
+    createPanelBackgroundOpacityRow(),
     createToggle("启用", SETTINGS.enabled, false),
     createSelect("范围", SETTINGS.displayMode, [DISPLAY_ALL, DISPLAY_SELECTED, DISPLAY_HOVER], DISPLAY_ALL),
     createSelect("路径", SETTINGS.pathStyle, [PATH_CURVE, PATH_DIRECT, PATH_ORTHOGONAL, PATH_CIRCUIT], PATH_CURVE),
@@ -1250,6 +1383,8 @@ function buildQuickPanel() {
     createRange("速度", SETTINGS.speed, 1.5, 0.2, 6, 0.2, (value) => value.toFixed(1)),
     createToggle("发光", SETTINGS.glow, false),
   );
+
+  applyQuickPanelBackground(panel);
 
   return panel;
 }
@@ -1454,7 +1589,7 @@ function installLinkStyleTopControlsStyles() {
       padding: 10px;
       border: 1px solid color-mix(in srgb, var(--gg-ui-border) 88%, var(--gg-ui-ink));
       border-radius: var(--gg-ui-radius-lg);
-      background: var(--gg-ui-surface);
+      background: linear-gradient(180deg, var(--gg-link-panel-bg-strong, var(--gg-ui-surface)) 0%, var(--gg-link-panel-bg, var(--gg-ui-surface)) 100%);
       color: var(--gg-ui-ink);
       box-shadow: var(--gg-ui-shadow);
       backdrop-filter: blur(12px);
@@ -1484,13 +1619,13 @@ function installLinkStyleTopControlsStyles() {
       margin: 6px 0;
       border: 1px solid color-mix(in srgb, var(--gg-ui-border) 82%, transparent);
       border-radius: var(--gg-ui-radius);
-      background: color-mix(in srgb, var(--gg-ui-surface-soft) 74%, transparent);
+      background: color-mix(in srgb, var(--gg-link-panel-bg-soft, var(--gg-ui-surface-soft)) 74%, transparent);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 1px 1px rgba(15, 23, 42, 0.04);
       transition: background-color 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
     }
     #gg-link-style-panel .gg-link-style-row:hover {
       border-color: color-mix(in srgb, var(--gg-ui-accent-border) 72%, var(--gg-ui-border));
-      background: color-mix(in srgb, var(--gg-ui-accent) 7%, var(--gg-ui-surface-soft));
+      background: color-mix(in srgb, var(--gg-ui-accent) 7%, var(--gg-link-panel-bg-soft, var(--gg-ui-surface-soft)));
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36), 0 2px 6px rgba(15, 23, 42, 0.08);
     }
     #gg-link-style-panel .gg-link-style-row:last-of-type {
@@ -1530,6 +1665,33 @@ function installLinkStyleTopControlsStyles() {
       border: 1px solid color-mix(in srgb, var(--gg-ui-border) 88%, var(--gg-ui-ink));
       border-radius: var(--gg-ui-radius);
       background: transparent;
+    }
+    #gg-link-style-panel .gg-link-style-bg-row {
+      grid-template-columns: 64px minmax(0, 1fr) 34px !important;
+    }
+    #gg-link-style-panel .gg-link-style-bg-presets {
+      display: grid;
+      grid-template-columns: repeat(5, 20px);
+      grid-auto-rows: 20px;
+      gap: 5px;
+      align-items: center;
+    }
+    #gg-link-style-panel .gg-link-style-bg-swatch {
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border: 1px solid rgba(71, 85, 105, 0.2);
+      border-radius: 6px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.54), 0 1px 2px rgba(15, 23, 42, 0.08);
+      cursor: pointer;
+      box-sizing: border-box;
+      transition: transform 0.14s ease, border-color 0.14s ease, box-shadow 0.14s ease;
+    }
+    #gg-link-style-panel .gg-link-style-bg-swatch:hover,
+    #gg-link-style-panel .gg-link-style-bg-swatch.active {
+      border-color: var(--gg-ui-accent);
+      box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.64);
+      transform: translateY(-1px);
     }
     #gg-link-style-panel .gg-link-style-close {
       width: 28px;
@@ -1772,6 +1934,30 @@ app.registerExtension({
       defaultValue: "#72d6ff",
       tooltip: "颜色模式为统一颜色时生效，格式示例：#72d6ff。",
       onChange: onStyleSettingChanged,
+    },
+    {
+      id: SETTINGS.menuBackgroundColor,
+      category: ["GuliNodes", "\u8fde\u63a5\u7ebf"],
+      name: "\u5feb\u901f\u8bbe\u7f6e\u80cc\u666f\u8272",
+      type: "text",
+      defaultValue: QUICK_PANEL_BG_DEFAULT,
+      tooltip: "\u8fde\u63a5\u7ebf\u5feb\u901f\u8bbe\u7f6e\u83dc\u5355\u7684\u80cc\u666f\u8272\uff0c\u683c\u5f0f\u793a\u4f8b\uff1a#eef1ec\u3002",
+      onChange: () => {
+        applyQuickPanelBackground();
+        onStyleSettingChanged();
+      },
+    },
+    {
+      id: SETTINGS.menuBackgroundOpacity,
+      category: ["GuliNodes", "\u8fde\u63a5\u7ebf"],
+      name: "\u5feb\u901f\u8bbe\u7f6e\u80cc\u666f\u4e0d\u900f\u660e\u5ea6",
+      type: "slider",
+      defaultValue: QUICK_PANEL_BG_OPACITY_DEFAULT,
+      attrs: { min: 0.35, max: 1, step: 0.01 },
+      onChange: () => {
+        applyQuickPanelBackground();
+        onStyleSettingChanged();
+      },
     },
     {
       id: SETTINGS.dashStyle,

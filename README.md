@@ -1,193 +1,205 @@
-# ComfyUI-GuliNodes 🎨
+# ComfyUI-GuliNodes
+
 [![GitHub Stars](https://img.shields.io/github/stars/guliacer/ComfyUI-GuliNodes?style=flat-square&color=ffcb47)](https://github.com/guliacer/ComfyUI-GuliNodes)
 [![GitHub License](https://img.shields.io/github/license/guliacer/ComfyUI-GuliNodes?style=flat-square&color=97ca00)](https://github.com/guliacer/ComfyUI-GuliNodes/blob/main/LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/guliacer/ComfyUI-GuliNodes?style=flat-square&color=0078ff)](https://github.com/guliacer/ComfyUI-GuliNodes/releases)
 
-面向中文用户习惯的 **ComfyUI 效率增强插件**，把日常出图高频操作封装为轻量工具集，覆盖画布整理、图像处理、模型管理、采样、视频处理等全流程，让复杂工作流更易维护、出图更高效。
+ComfyUI-GuliNodes 是一组面向中文工作流的轻量效率节点和前端增强工具，覆盖画布整理、文本输入、图像处理、Latent 尺寸、模型/LoRA 管理、采样、视频处理、显存清理和网页 AI 辅助。
 
-> 📌 核心优势：零额外Python依赖、纯前端+节点轻量化设计、中文交互友好、低显存/低配设备适配
+当前主插件保持零额外 Python 依赖：不需要安装 `cv2`、`mediapipe`、`llama-cpp-python`、`color-matcher`、`kornia` 等额外包。部分功能会调用外部程序或可选插件，例如视频处理需要系统可调用 `ffmpeg`，GGUF 和 SeedVR2 聚合节点需要对应 ComfyUI 插件或模型环境。
 
-## 👀 预览效果
-| 画布整理 & 节点上色 | 文本快捷操作 & AI辅助 | 图像压缩 & 视频处理 |
-|--------------------|----------------------|--------------------|
-| ![画布整理预览](https://placeholder.pics/svg/400x250/EEEEEE/666666/画布整理：节点上色/对齐/排版) | ![AI辅助预览](https://placeholder.pics/svg/400x250/EEEEEE/666666/网页AI：图像反推/提示词优化) | ![图像压缩预览](https://placeholder.pics/svg/400x250/EEEEEE/666666/图像压缩：一键控体积/视频处理) |
+## 快速开始
 
-> 👉 替换为实际截图可大幅提升直观性，建议补充：工具栏操作、连线美化、显存清理按钮、图像对比节点等场景截图
-
-## 🚀 快速开始
-### 安装（30秒搞定）
 ```bash
-# 进入ComfyUI自定义节点目录
 cd ComfyUI/custom_nodes
-
-# 克隆仓库
 git clone https://github.com/guliacer/ComfyUI-GuliNodes.git
-
-# 安装依赖（当前无额外依赖，仅做兼容声明）
 cd ComfyUI-GuliNodes
 pip install -r requirements.txt
-
-# 重启ComfyUI即可生效
 ```
 
-### 首次使用
-1. 重启ComfyUI后，顶部栏会出现「显存清理」按钮（低显存用户必用）
-2. 画布空白处右键 → 找到「GG 系列节点」即可调用所有功能
-3. 插件设置可在 ComfyUI 设置页 →「GuliNodes」中调整（如工具栏、连线样式等）
+`requirements.txt` 当前只是兼容声明，主插件没有额外 Python 包依赖。安装后重启 ComfyUI，在右键菜单中查找 `GG` 或 `GuliNodes` 分类即可使用节点；前端工具会自动随插件加载。
 
-## ✨ 核心功能（按使用频率排序）
-### 1. 画布效率神器 · GG Toolbar 🛠️
-- 🎨 节点/编组上色：按功能区（采样/模型/后处理）区分颜色，大型工作流一眼看懂
-- 📏 批量排版：等宽/等高/对齐/居中/自动间距，告别手动拖节点
-- 🪄 一键优化：节点宽度自适应、标题节点美化、转接节点轻量化
+## 主要能力
 
-### 2. 显存拯救者 · 顶部清理按钮 🧹
-低显存/低配设备专属：无需重启ComfyUI，一键卸载闲置模型、清理CUDA缓存，解决「切换模型后显存占满」「出图提示OOM」问题。
+### 画布与前端工具
 
-### 3. 连线美化 · 数据流向可视化 🧵
-自定义连线的颜色、线宽、透明度、流动速度、发光效果，复杂跨区域连线不再混乱，调试工作流更高效。
+- 顶部工具栏：节点/分组上色、对齐、等宽等高、自动间距、批量整理。
+- 连线样式：颜色、宽度、透明度、发光和流动效果可调。
+- 标题和转接：提供标题节点、轻量转接节点、全局转接和 Set/Get 虚拟连接节点。
+- 文本与输入体验：文本复制展示、密钥输入、种子生成、数值输入、CLIP 文本编码一体化。
 
-### 4. 文本操作 · 提示词效率拉满 ✍️
-- 文本框悬浮按钮：复制/粘贴/清空一键操作，无需快捷键/右键菜单
-- CLIP编码简化：一体化加载+编码，减少节点链路长度
+### 图像与 Latent
 
-### 5. 图像/视频处理 · 一站式落地 🖼️🎬
-| 功能 | 场景 | 亮点 |
-|------|------|------|
-| 图像压缩保存 | 批量出图/网页分享 | 支持WEBP/JPEG/PNG，civilblur/Caesium等压缩模式，控体积更精准 |
-| 多图对比 | A/B测试/参数筛选 | 2/4/8图拼接+标签，节点内直接预览对比 |
-| 视频处理 | 视频超分/压缩 | 加载/压缩/保存一体化，支持节点内预览，适配ffmpeg |
-| 基础后处理 | 出图微调 | 亮度/对比度/锐化/蒙版绘制，无需额外插件 |
+- 基础图像处理：RGBA 转 RGB、尺寸调整、裁剪、翻转旋转、亮度/对比度/饱和度/锐化/虚化、色彩校正。
+- 风格参考：使用纯 PyTorch 统计迁移和纹理混合实现，不依赖 OpenCV。
+- 图像保存与压缩：预览、保存、压缩保存、独立压缩，支持 JPEG/PNG/WEBP。
+- 图像对比：2/4/8 图拼接预览，适合参数对比和 A/B 测试。
+- Latent 尺寸：比例预设、图像转 Latent、Latent 缩放、尺寸读取、VAE 编码/解码缓存。
+- 遮罩与锐化：遮罩绘制、CAS 锐化增强。
 
-### 6. Web AI辅助 · 边出图边反推 💬
-在节点内嵌入豆包/腾讯元宝/文心一言网页，复用网页登录态，边看图边做：
-- 图像描述/提示词反推
-- 风格分析/提示词改写
-- 无需切换浏览器，画布内一站式完成
+### 模型、LoRA、采样与视频
 
-### 7. 模型/LoRA管理 · 灵活轻量化 🧩
-- LoRA叠加：4/8/20槽位自定义加载，支持顺序叠加
-- 显存友好：UNET/GGUF模型加载适配低显存设备
-- DyPE补丁：FLUX/Qwen/Z-Image模型高分辨率生成
+- LoRA：4 槽、8 槽和 20 槽自定义 LoRA 顺序叠加。
+- 模型加载：普通 UNET 加载、GGUF UNET 桥接加载、VAE 缓存编码/解码。
+- 采样：Z-Image 采样器、集成尺寸计算的 GG 采样器、DyPE 动态位置补丁。
+- 显存清理：卸载 ComfyUI 模型、清理设备缓存、清理 GuliNodes VAE 缓存并输出报告。
+- 视频：视频加载、路径加载、图像音频合成视频、压缩、保存，以及 SeedVR2 视频放大聚合节点。
 
-## 📋 完整节点清单
-### 按功能分类（点击展开）
-<details>
-<summary>🖼️ 图像、尺寸与潜空间</summary>
+## 节点清单
 
-| 节点 | 核心作用 | 适用场景 |
-|------|----------|----------|
-| `GG 图像宽高` | 按比例/边长计算并对齐尺寸 | 出图前统一尺寸规范 |
-| `GG Latent/GG Latent2` | 生成空Latent，支持输出宽高值 | 快速起图/下游节点需尺寸参数 |
-| `GG 图像-Latent` | 参考图像生成Latent | 复用参考图尺寸 |
-| `GG 图像缩放` | 像素空间缩放后回编Latent | 高质量潜空间放大/缩小 |
-| `GG VAE解码` | 带缓存的VAE加载+解码 | 减少VAE重复加载，节省显存 |
-</details>
+当前版本实际注册 58 个节点。
 
-<details>
-<summary>📝 文本与输入</summary>
+### 图像、尺寸与 Latent
 
-| 节点 | 核心作用 | 适用场景 |
-|------|----------|----------|
-| `GG 文本` | 展示文本+前端复制按钮 | 输出提示词/日志/说明 |
-| `GG CLIP文本` | CLIP加载+编码一体化 | 简化文本编码链路 |
-| `GG 密钥输入` | 安全输入API Key/令牌 | 需密钥的工作流（如第三方API） |
-</details>
+| 节点 | 用途 |
+| --- | --- |
+| `GG 图像宽高` | 按比例、边长和方向计算宽高。 |
+| `GG Latent` | 按预设比例生成空 Latent。 |
+| `GG Latent2` | 增强版空 Latent，适合输出尺寸参数。 |
+| `GG 图像-Latent` | 根据图像尺寸生成匹配 Latent。 |
+| `GG 图像尺寸缩放` | 按模型预设或边长缩放图像尺寸。 |
+| `GG 图像缩放` | 像素空间缩放后回编码 Latent，并输出预览图。 |
+| `GG 图像尺寸读取` | 读取图像宽度和高度。 |
+| `GG VAE解码` | 加载并缓存 VAE 后解码 Latent。 |
+| `GG VAE编码` | 加载并缓存 VAE 后编码图像。 |
 
-<details>
-<summary>🧩 模型、LoRA与显存</summary>
+### 图像处理与输出
 
-| 节点 | 核心作用 | 适用场景 |
-|------|----------|----------|
-| `GG LoRA选择 4个/8个` | 顺序叠加LoRA | 常用LoRA组合快速调用 |
-| `GG LoRA自定义加载` | 20槽位动态加载 | 复杂LoRA混搭 |
-| `GG UNET/GGUF模型` | 轻量化模型加载 | 切换基础模型/GGUF格式适配 |
-| `GG 内存清理` | 卸载模型+清理缓存 | 释放显存/低显存设备 |
-</details>
+| 节点 | 用途 |
+| --- | --- |
+| `GG RGBA转RGB` | 将灰度、带 Alpha 或 RGBA 图像合成 RGB。 |
+| `GG 尺寸调整` | 按比例、固定尺寸或边长调整图像。 |
+| `GG 图像裁剪` | 中心、坐标、比例等裁剪。 |
+| `GG 图像变换` | 水平/垂直翻转和 90/180/270 度旋转。 |
+| `GG 图像调整` | 亮度、对比度、饱和度、锐化和虚化。 |
+| `GG 色彩校正` | 使用 torch 张量批量调整温度、色调、明度、对比度、饱和度和伽马。 |
+| `GG 风格参考` | 参考图像风格统计迁移和纹理混合。 |
+| `GG 绘制蒙版` | 将蒙版绘制到图像上，便于检查遮罩区域。 |
+| `GG 图像CAS锐化+` | CAS 锐化增强。 |
+| `GG 图像预览` | 预览图像。 |
+| `GG 图像保存` | 保存图像。 |
+| `GG 图像压缩保存` | 压缩并保存图像。 |
+| `GG 图像压缩` | 输出压缩后的图像。 |
+| `GG 图像对比 2张` | 双图对比预览。 |
+| `GG 图像对比 4张` | 四图对比预览。 |
+| `GG 图像对比 8张` | 八图对比预览。 |
 
-<details>
-<summary>🎬 视频处理</summary>
+### 文本、输入与工作流组织
 
-| 节点 | 核心作用 | 适用场景 |
-|------|----------|----------|
-| `GG 视频加载` | 多格式加载+节点内预览 | 视频输入（mp4/flv/mov等） |
-| `GG 视频压缩` | ffmpeg压缩+实时进度 | 控制视频体积 |
-| `GG SeedVR2视频放大器` | 聚合超分流程 | 视频放大/超分（需SeedVR2插件） |
-</details>
+| 节点 | 用途 |
+| --- | --- |
+| `GG 文本` | 显示文本并支持前端复制。 |
+| `GG TXT加载` | 像加载图像一样选择或上传 TXT/MD 文本文件，并输出文本内容。 |
+| `GG CLIP文本` | 加载 CLIP 并编码文本。 |
+| `GG CLIP文本编码器` | 文本编码辅助节点。 |
+| `GG 密钥输入` | 用于 API Key、令牌、API 端点和模型名称，可测试当前配置，并输出单个 `API配置`。 |
+| `GG 数值` | 输出数值参数。 |
+| `GG 浮点滑条` | 输出 0 到 1 的浮点滑条参数。 |
+| `GG 万能滑条` | 可自定义范围、步长、显示名称和浮点/整数输出的自绘滑条。 |
+| `GG 种子生成器` | 生成或固定随机种子。 |
+| `GG Set` | 声明画布内可复用连接值。 |
+| `GG Get` | 读取同名 Set 节点值。 |
+| `GG 标题` | 画布标题和分区标注。 |
+| `GG 转接` | 轻量转接节点。 |
+| `GG 全局转接` | 全局连接辅助。 |
+| `GG 单组控制` | 控制单个分组启用/跳过。 |
+| `GG 多组控制` | 批量控制多个分组。 |
+| `GG 网页AI图像反推` | 在节点中打开豆包、腾讯元宝、文心一言或自定义网页。 |
+| `GG 文本反推` | 调用大模型按规则提取小说内容并总结，支持文本或 TXT 输入。 |
 
-<details>
-<summary>🧰 工作流与画布组织</summary>
+### 模型、LoRA、采样与显存
 
-| 节点 | 核心作用 | 适用场景 |
-|------|----------|----------|
-| `GG Set/Get` | 画布内变量声明+读取 | 减少跨画布长连线 |
-| `GG 多组/单组控制` | 编组启用/跳过 | 大工作流分段调试 |
-| `GG 标题/转接` | 画布标注/连线整理 | 工作流可视化/分享 |
-</details>
+| 节点 | 用途 |
+| --- | --- |
+| `GG LoRA选择 4个` | 最多 4 个 LoRA 顺序叠加。 |
+| `GG LoRA选择 8个` | 最多 8 个 LoRA 顺序叠加。 |
+| `GG LoRA自定义加载` | 最多 20 槽 LoRA 自定义叠加。 |
+| `GG UNET模型` | 加载普通 UNET/diffusion 模型。 |
+| `GG GGUF模型` | 桥接 ComfyUI-GGUF 加载 GGUF UNET。 |
+| `GG 内存清理` | 卸载模型、清理缓存并输出报告。 |
+| `GG DyPE动态位置` | 为 FLUX、Qwen、Z-Image 应用动态位置补丁。 |
+| `GG Z-Image采样器` | Z-Image 专用采样。 |
+| `GG 采样器` | 集成尺寸计算和 Z-Image 采样的便捷采样器。 |
 
-## 📖 常用链路示例
-### 1. 极简出图链路
-```
-GG CLIP文本 → GG 采样器 → GG VAE解码 → GG 图像压缩保存
-```
-### 2. LoRA混搭出图
-```
-GG UNET模型 → GG LoRA选择 4个 → GG 采样器 → GG 图像对比 4张
-```
-### 3. 视频压缩流程
-```
-GG 视频加载 → GG 视频压缩 → GG 视频保存
-```
-> 💡 大视频建议放入`ComfyUI/input`目录加载，避免浏览器上传413错误
+### 视频
 
-## 📦 依赖与兼容
-| 功能 | 额外依赖 | 备注 |
-|------|----------|------|
-| 基础功能（画布/图像/文本） | 无 | 仅依赖ComfyUI原生环境 |
-| 视频处理 | ffmpeg（可选ffprobe） | 系统需能调用ffmpeg |
-| GGUF模型加载 | ComfyUI-GGUF插件 | 需自行安装插件+GGUF模型 |
-| SeedVR2视频放大 | ComfyUI-SeedVR2_VideoUpscaler | 需安装插件+对应模型 |
+| 节点 | 用途 |
+| --- | --- |
+| `GG 视频加载` | 从 input/temp/output 目录或文件路径加载视频并预览。 |
+| `GG 视频路径加载` | 通过本机真实文件路径加载视频，不经过浏览器上传，适合超过 ComfyUI 上传限制的大视频。 |
+| `GG 视频合成` | 将上游 IMAGE 批次与 AUDIO 合成为 VIDEO，支持视频格式、像素格式、CRF、输出帧率和音频修剪，便于接入 `GG 视频压缩`。 |
+| `GG 视频压缩` | 使用 ffmpeg 压缩视频并显示进度。 |
+| `GG 视频保存` | 保存或封装视频输出。 |
+| `GG SeedVR2视频放大器` | 聚合 SeedVR2 DiT、VAE 和视频放大流程。 |
 
-### 模型目录建议
+## 依赖与兼容
+
+| 功能 | 依赖 | 说明 |
+| --- | --- | --- |
+| 主插件节点 | 无额外 Python 包 | 仅依赖 ComfyUI 自带 Python 环境中的常规库。 |
+| 图像处理 | ComfyUI 环境内的 `torch`、`PIL`、`numpy` | 不需要 `cv2`、`mediapipe`、`kornia` 或 `color-matcher`。 |
+| 视频加载/压缩/保存 | `ffmpeg`，可选 `ffprobe` | 需要系统命令可调用，或把 ffmpeg 放到 PATH。 |
+| GGUF 模型加载 | ComfyUI-GGUF 插件 | 只有使用 `GG GGUF模型` 节点时需要。 |
+| SeedVR2 视频放大 | ComfyUI-SeedVR2_VideoUpscaler 插件 | 只有使用 `GG SeedVR2视频放大器` 节点时需要。 |
+
+推荐模型目录：
+
 | 资源类型 | 推荐目录 |
-|----------|----------|
-| UNET/GGUF UNET | `ComfyUI/models/unet/` |
+| --- | --- |
+| UNET / diffusion model | `ComfyUI/models/unet/` 或 `ComfyUI/models/diffusion_models/` |
+| GGUF UNET | `ComfyUI/models/unet/`、`ComfyUI/models/diffusion_models/` 或 ComfyUI-GGUF 配置目录 |
 | VAE | `ComfyUI/models/vae/` |
-| CLIP | `ComfyUI/models/text_encoders/` |
+| CLIP / text encoder | `ComfyUI/models/text_encoders/` |
 | LoRA | `ComfyUI/models/loras/` |
 
-## ❓ 常见问题
-### Q1: 文本框悬浮按钮不显示？
-A: 进入ComfyUI设置 → GuliNodes → 检查「文本框悬浮按钮」是否开启，重启ComfyUI生效。
+## 常见问题
 
-### Q2: 视频加载提示413错误？
-A: 413是浏览器上传文件过大导致，将视频放入`ComfyUI/input`目录后再加载即可。
+### 安装时还需要 `pip install -r requirements.txt` 吗？
 
-### Q3: 网页AI节点无法嵌入？
-A: 部分平台有跨域限制，可更换嵌入地址（如移动端适配地址）或在外部浏览器打开使用。
+可以执行，但当前文件不安装额外包，只用于兼容 ComfyUI Manager 或已有安装习惯。
 
-## 📄 更新日志
-### v1.0.10（最新）
-- ✨ 主插件与额外Python依赖解耦，零依赖安装
-- 🎨 强化前端能力：工具栏、连线样式、标题节点、Set/Get交互优化
-- 🧩 新增：DyPE动态位置、Z-Image采样、遮罩绘制、数值/密钥输入节点
-- 📊 累计注册50个实用节点
+### 视频加载或压缩失败怎么办？
+
+确认 `ffmpeg` 可以在系统 PATH 中直接运行。大视频可以使用 `GG 视频路径加载` 直接选择本机文件路径，避免浏览器上传大小限制；也可以放入 `ComfyUI/input` 后在节点里选择。
+
+### GGUF 节点提示未检测到 ComfyUI-GGUF？
+
+`GG GGUF模型` 只是桥接节点，不内置 GGUF 加载器。需要安装并启用 ComfyUI-GGUF，并把 `.gguf` 模型放到对应目录。
+
+### SeedVR2 节点提示无法加载插件？
+
+`GG SeedVR2视频放大器` 会调用 `ComfyUI-SeedVR2_VideoUpscaler` 的接口。需要先安装该插件和对应模型。
+
+### 网页 AI 节点无法嵌入？
+
+部分平台会限制 iframe 嵌入。可以尝试自定义移动端地址，或在外部浏览器打开平台网页使用。
+
+## 更新记录
+
+### v1.0.11
+
+- 新增 `GG 视频路径加载` 节点：通过本机路径直接加载视频，不经过浏览器上传，适合绕开 ComfyUI 上传体积限制。
+- 新增 `GG 视频合成` 节点：把上游 `IMAGE` 批次和 `AUDIO` 合成为 `VIDEO`，作为 `GG 视频压缩` 的前置桥接节点，方便接入没有视频输出的第三方工作流。
+- `GG 视频合成` 支持视频格式、像素格式、CRF、输出帧率和修剪音频参数；修剪音频会按当前输出帧率计算视频时长。
+- `GG 视频路径加载` 增加前端“选择视频文件”按钮，使用 Windows 原生文件选择器填写真实路径。
+- 修正新增视频节点分类，统一归入 `GuliNodes/视频`。
+
+### v1.0.10
+
+- 主插件与额外 Python 依赖解耦，保留零额外 Python 依赖安装体验。
+- 当前实际注册 56 个节点。
+- 新增 `GG 色彩校正` 节点，基于 ColorCorrect 功能用 torch 张量批量实现，无需额外 OpenCV 依赖。
+- 保留 GGUF、SeedVR2、DyPE、Z-Image、视频、前端工具栏、Set/Get、标题、转接、内存清理等节点。
+- 移除需要额外 Python 包的节点代码，例如 `color-matcher` / `kornia` 色彩匹配、`llama-cpp-python` 图像提示词和提示词优化相关节点。
+- 恢复零额外 Python 依赖的网页 AI 节点和风格参考节点。
 
 ### 历史版本
-- v1.0.9：参数中文化、文本框悬浮按钮、CLIP编码简化
-- v1.0.8：AI辅助能力整合、工具栏交互优化
-- v1.0.6：新增网页AI图像反推节点
-- v1.0.5：视频加载/压缩/保存节点上线
 
-## 🤝 贡献指南
-1. Fork本仓库
-2. 创建功能分支（`git checkout -b feature/xxx`）
-3. 提交修改（`git commit -m 'feat: 新增xxx功能'`）
-4. 推送分支（`git push origin feature/xxx`）
-5. 提交Pull Request
+- v1.0.9：参数中文化、文本框悬浮按钮、CLIP 编码简化。
+- v1.0.8：前端工具栏和交互能力优化。
+- v1.0.6：新增网页 AI 图像反推节点。
+- v1.0.5：视频加载、压缩、保存节点上线。
 
-## 📜 许可证
-本项目基于MIT许可证开源，详见[LICENSE](LICENSE)文件。
+## 许可证
 
----
-⭐️ 如果觉得插件有用，欢迎给仓库点星支持！如有问题/建议，可提交Issue或联系作者。
+本项目基于 MIT 许可证开源，详见 [LICENSE](LICENSE)。

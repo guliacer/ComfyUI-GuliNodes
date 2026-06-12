@@ -35,6 +35,47 @@ def _计算Latent尺寸(宽高比例: str, 边长: int, 边长类型: str, 画�
     return _对齐到八(width), _对齐到八(height)
 
 
+def _读取图像宽高(图像: torch.Tensor, 输入名称: str) -> tuple[int, int]:
+    if 图像 is None:
+        raise ValueError(f"{输入名称}输入为空，无法读取图像尺寸。")
+    if len(图像.shape) == 4:
+        高度, 宽度 = 图像.shape[1], 图像.shape[2]
+    elif len(图像.shape) == 3:
+        高度, 宽度 = 图像.shape[0], 图像.shape[1]
+    else:
+        raise ValueError(f"{输入名称}输入的图像维度无效: {tuple(图像.shape)}")
+
+    宽度 = int(宽度)
+    高度 = int(高度)
+    if 宽度 <= 0 or 高度 <= 0:
+        raise ValueError(f"{输入名称}输入的图像尺寸无效: {宽度}x{高度}")
+    return 宽度, 高度
+
+
+def _从图像比例计算Latent尺寸(图像: torch.Tensor, 边长: int, 边长类型: str) -> tuple[int, int]:
+    宽度, 高度 = _读取图像宽高(图像, "原比例")
+    if 边长类型 == "最长边":
+        if 宽度 >= 高度:
+            目标宽度 = 边长
+            目标高度 = int(边长 * 高度 / 宽度)
+        else:
+            目标宽度 = int(边长 * 宽度 / 高度)
+            目标高度 = 边长
+    else:
+        if 宽度 >= 高度:
+            目标宽度 = int(边长 * 宽度 / 高度)
+            目标高度 = 边长
+        else:
+            目标宽度 = 边长
+            目标高度 = int(边长 * 高度 / 宽度)
+    return _对齐到八(目标宽度), _对齐到八(目标高度)
+
+
+def _从图像尺寸计算Latent尺寸(图像: torch.Tensor) -> tuple[int, int]:
+    宽度, 高度 = _读取图像宽高(图像, "原尺寸")
+    return _对齐到八(宽度), _对齐到八(高度)
+
+
 def _创建空Latent(宽度: int, 高度: int, 批量大小: int) -> dict:
     latent_kwargs = {"device": comfy.model_management.intermediate_device()}
     if hasattr(comfy.model_management, "intermediate_dtype"):
@@ -196,6 +237,16 @@ class GG采样器:
                     "FLOAT",
                     {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01},
                 ),
+            },
+            "optional": {
+                "原比例": (
+                    "IMAGE",
+                    {"tooltip": "连接图像后使用该图像宽高比例，宽高比例参数不生效，边长和边长类型仍生效。"},
+                ),
+                "原尺寸": (
+                    "IMAGE",
+                    {"tooltip": "连接图像后使用该图像尺寸，宽高比例、边长和边长类型参数不会生效。"},
+                ),
             }
         }
 
@@ -220,8 +271,15 @@ class GG采样器:
         批量大小,
         画面方向,
         降噪强度=0.9,
+        原比例=None,
+        原尺寸=None,
     ):
-        宽度, 高度 = _计算Latent尺寸(宽高比例, 边长, 边长类型, 画面方向)
+        if 原尺寸 is not None:
+            宽度, 高度 = _从图像尺寸计算Latent尺寸(原尺寸)
+        elif 原比例 is not None:
+            宽度, 高度 = _从图像比例计算Latent尺寸(原比例, 边长, 边长类型)
+        else:
+            宽度, 高度 = _计算Latent尺寸(宽高比例, 边长, 边长类型, 画面方向)
         Latent图像 = _创建空Latent(宽度, 高度, 批量大小)
         out = _执行ZImage采样(
             模型,
