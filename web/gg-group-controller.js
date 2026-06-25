@@ -44,8 +44,13 @@ function truncateText(ctx, text, maxWidth) {
 }
 
 
+const DISABLED_MODE = 2;
 const BYPASS_MODE = 4;
 const ACTIVE_MODE = 0;
+
+function isSkippedMode(mode) {
+  return mode === DISABLED_MODE || mode === BYPASS_MODE;
+}
 
 function getActiveGraph() {
   return app.canvas?.getCurrentGraph?.() ?? app.graph;
@@ -104,7 +109,7 @@ function getGroupNodes(group) {
 function setGroupBypass(group, bypass) {
   const nodes = getGroupNodes(group);
   for (const node of nodes) {
-    node.mode = bypass ? BYPASS_MODE : ACTIVE_MODE;
+    node.mode = bypass ? DISABLED_MODE : ACTIVE_MODE;
   }
   (group.graph ?? app.graph)?.setDirtyCanvas?.(true, false);
 }
@@ -191,8 +196,8 @@ function drawMultiNode(node, ctx) {
 
   for (const group of groups) {
     const nodes    = getGroupNodes(group);
-    const bypassed = nodes.length > 0 && nodes.every((n) => n.mode === BYPASS_MODE);
-    const mixed    = !bypassed && nodes.some((n) => n.mode === BYPASS_MODE);
+    const bypassed = nodes.length > 0 && nodes.every((n) => isSkippedMode(n.mode));
+    const mixed    = !bypassed && nodes.some((n) => isSkippedMode(n.mode));
     node._hitRows.push({ group, y, bypassed, mixed });
     _drawGroupRow(ctx, group, y, bypassed, mixed, nodes.length, W);
     y += ROW_H + ROW_GAP;
@@ -350,8 +355,8 @@ function drawSingleNode(node, ctx) {
   }
 
   const groupNodes = group ? getGroupNodes(group) : [];
-  const bypassed   = groupNodes.length > 0 && groupNodes.every((n) => n.mode === BYPASS_MODE);
-  const mixed      = !bypassed && groupNodes.some((n) => n.mode === BYPASS_MODE);
+  const bypassed   = groupNodes.length > 0 && groupNodes.every((n) => isSkippedMode(n.mode));
+  const mixed      = !bypassed && groupNodes.some((n) => isSkippedMode(n.mode));
 
   let y = PAD_Y;
 
@@ -495,7 +500,7 @@ function handleMouseDownS(node, e, localPos) {
     if (group) {
       recomputeGroupNodes(group);
       const nodes    = getGroupNodes(group);
-      const bypassed = nodes.length > 0 && nodes.every((n) => n.mode === BYPASS_MODE);
+      const bypassed = nodes.length > 0 && nodes.every((n) => isSkippedMode(n.mode));
       setGroupBypass(group, !bypassed);
       node._lastRecomputeMs = 0;
     }

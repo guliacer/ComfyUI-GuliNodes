@@ -6,7 +6,13 @@
 
 ComfyUI-GuliNodes 是一组面向中文工作流的轻量效率节点和前端增强工具，覆盖画布整理、文本输入、图像处理、Latent 尺寸、模型/LoRA 管理、采样、视频处理、显存清理和网页 AI 辅助。
 
+<details>
+<summary>依赖说明</summary>
+
 当前主插件保持零额外 Python 依赖：不需要安装 `cv2`、`mediapipe`、`llama-cpp-python`、`color-matcher`、`kornia` 等额外包。部分功能会调用外部程序或可选插件，例如视频处理需要系统可调用 `ffmpeg`，GGUF 和 SeedVR2 聚合节点需要对应 ComfyUI 插件或模型环境。
+
+</details>
+
 
 ## 快速开始
 
@@ -26,6 +32,7 @@ pip install -r requirements.txt
 - 顶部工具栏：节点/分组上色、对齐、等宽等高、自动间距、批量整理。
 - 连线样式：颜色、宽度、透明度、发光和流动效果可调。
 - 标题和转接：提供标题节点、轻量转接节点、全局转接和 Set/Get 虚拟连接节点。
+- 组增强：选中节点可直接新建为组，组名可改，标题随画布缩放保持清晰，支持四角和四边缘拖拽缩放；可在标题栏快速显示/隐藏整组以跳过组内节点，也可将分组折叠为同名子工作流小节点；折叠小节点支持拖动和双击改名，通过右下角彩色圆点或顶部快捷开关按快照还原原始位置和尺寸。
 - 文本与输入体验：文本复制展示、密钥输入、种子生成、数值输入、CLIP 文本编码一体化。
 
 ### 图像与 Latent
@@ -132,6 +139,26 @@ pip install -r requirements.txt
 | `GG 视频保存` | 保存或封装视频输出。 |
 | `GG SeedVR2视频放大器` | 聚合 SeedVR2 DiT、VAE 和视频放大流程。 |
 
+## 致谢与借鉴说明
+
+本项目会尽量把借鉴、适配和桥接关系写清楚。除下表列出的项目外，其余节点主要是围绕 ComfyUI 原生节点 API、前端扩展 API 和日常中文工作流需求重新实现；如后续发现遗漏来源，会继续补充。
+
+| 涉及功能/节点 | 致谢对象 | 说明 |
+| --- | --- | --- |
+| 全部节点与前端工具 | ComfyUI、ComfyUI_frontend、LiteGraph | 本项目运行在 ComfyUI 自定义节点和前端扩展机制之上，画布、节点、连线、分组绘制等能力依赖这些基础 API。 |
+| `GG DyPE动态位置` | [wildminder/ComfyUI-DyPE](https://github.com/wildminder/ComfyUI-DyPE) | `guli_nodes/dype_patch.py` 已注明基于本地 ComfyUI-DyPE 实现适配，保留 Apache-2.0 来源说明，并封装为 GuliNodes 的中文参数节点。 |
+| `GG GGUF模型` | [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) | 本节点是桥接加载器，不内置 GGUF 加载实现；运行时检测并调用 ComfyUI-GGUF 中的 `UnetLoaderGGUFAdvanced` 或 `UnetLoaderGGUF`。 |
+| `GG SeedVR2视频放大器` | [numz/ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) | 本节点参考并聚合 SeedVR2 插件的 DiT、VAE、注册表和视频放大接口，简化常用参数，不复制其模型或核心推理实现。 |
+| `GG 色彩校正` | ColorCorrect 类色彩校正功能 | 参数设计和功能目标参考 ColorCorrect 的温度、色调、明度、对比度、饱和度、伽马调节思路；当前实现改写为 torch 张量批处理，不依赖额外 OpenCV/kornia 包。 |
+| `GG 绘制蒙版` | KJNodes 的 Draw Mask On Image 使用习惯 | 节点搜索别名保留 `DrawMaskOnImage`、`Draw Mask On Image`、`KJNodes`，方便用户迁移；实现为本项目的向量化 alpha blend。 |
+| `GG 图像对比 2张` | ComfyUI-KJNodes、[ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes) | 双图对比节点的交互形态和使用场景参考了 KJNodes 与 JosiaNodes 的相关实现；本项目按 GuliNodes 的预览、保存和前端交互方式重新整理。 |
+| 文本框悬浮按钮 | [ComfyUI-Prompt-Assistant](https://github.com/yawiii/ComfyUI-Prompt-Assistant) | 文本框悬浮复制、粘贴、清空按钮的交互灵感来源于 Prompt Assistant；本项目按 GuliNodes 的全局文本框识别、设置开关和前端按钮样式重新实现。 |
+| `GG Set`、`GG Get`、`GG 全局转接`、`GG 转接`、`GG 标题` | rgthree、Anything Everywhere、Set/Get、Reroute 等社区常见工作流形态 | 这些节点借鉴了社区里“虚拟连接、全局转接、轻量转接、画布标注”的交互思路，但前后端逻辑按 GuliNodes 的中文体验和序列化方式重写。 |
+| `GG 单组控制`、`GG 多组控制`、分组前端增强 | [Josia-doit/ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes)、ComfyUI 原生 Group 与社区分组管理/样式插件 | 单组/多组控制相关节点参考 JosiaNodes 的分组控制思路，并按 GuliNodes 的中文参数和工作流习惯重新整理；标题栏显示/隐藏按钮沿用本项目单组/多组控制的组内节点识别机制，使用 `mode=2/0` 控制执行禁用/启用，并兼容旧的 `mode=4` 跳过状态。子工作流折叠为本项目前端交互增强，会保存组内节点位置和尺寸快照，仅影响分组内节点的画布显示与命中，并提供可拖动/改名的画布折叠小节点和右下角圆点恢复入口。 |
+| `GG 图像CAS锐化+` | Contrast Adaptive Sharpening（CAS）算法思路 | 使用 CAS 风格的对比度自适应锐化思路，以 PyTorch 张量实现为 ComfyUI 图像节点。 |
+| `GG 视频加载`、`GG 视频路径加载`、`GG 视频合成`、`GG 视频压缩`、`GG 视频保存` | ffmpeg/ffprobe 与 ComfyUI 视频工作流生态 | 视频封装、压缩和探测依赖 ffmpeg/ffprobe；节点形态面向 ComfyUI 常见 IMAGE/AUDIO/VIDEO 串联工作流重新封装。 |
+| `web/gg-group-styler.js` | ComfyUI-Group-Styler 的“前端扩展 + LiteGraph Group 绘制”路线 | 新增分组样式增强参考了该类前端实现路线，但没有复制其源码；当前文件在本项目内独立包装 `drawGroups`，带设置开关和原生绘制回退，并扩展标题栏按钮、顶部快捷开关、子工作流折叠动画、隐藏节点过滤与右下角圆点恢复指示器。 |
+
 ## 依赖与兼容
 
 | 功能 | 依赖 | 说明 |
@@ -178,6 +205,10 @@ pip install -r requirements.txt
 
 ### v1.0.11
 
+- 分组样式增强：修复四边四角拖拽缩放的事件捕获顺序，并兼容新版 LiteGraph 分组矩形写回。
+- 分组样式增强：新增标题栏缩放折叠按钮和顶部快捷开关，折叠时会保存分组框与组内节点的位置/尺寸快照，将分组显示为官方风格的同名子工作流小节点，恢复时精确写回原始布局，并过滤隐藏节点绘制、命中、文本和连线显示。
+- 分组样式增强：折叠小节点单击不再恢复；支持拖动当前折叠位置且不改变原始快照位置，双击可自定义显示名称。
+- 分组样式增强：新增画布右下角子工作流圆点指示器，多个折叠分组会自动排列并分配随机颜色；悬停显示名称，点击可恢复对应分组。
 - 新增 `GG 视频路径加载` 节点：通过本机路径直接加载视频，不经过浏览器上传，适合绕开 ComfyUI 上传体积限制。
 - 新增 `GG 视频合成` 节点：把上游 `IMAGE` 批次和 `AUDIO` 合成为 `VIDEO`，作为 `GG 视频压缩` 的前置桥接节点，方便接入没有视频输出的第三方工作流。
 - `GG 视频合成` 支持视频格式、像素格式、CRF、输出帧率和修剪音频参数；修剪音频会按当前输出帧率计算视频时长。

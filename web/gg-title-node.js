@@ -155,6 +155,8 @@ let fontLoadPromise = null;
 let toolbarPositionFrame = 0;
 let activeParameterPanelNode = null;
 let toolbarStyleState = loadToolbarStyleState();
+let pendingTitlePlacement = null;
+let lastTitlePlacementArmAt = 0;
 
 function getLiteGraph() {
   return globalThis.LiteGraph ?? {};
@@ -1703,6 +1705,7 @@ function queueToolbarPosition(node, canvas) {
 
 function showToolbar(node, canvas) {
   if (!isTitleNode(node)) return;
+  if (isPendingTitlePlacementNode(node)) return;
   configureNode(node);
   activeTitleNode = node;
   activeCanvas = canvas ?? activeCanvas ?? app.canvas;
@@ -1832,6 +1835,7 @@ function installTitleBehavior(nodeType) {
   nodeType.prototype.onNodeCreated = function (...args) {
     const result = originalOnNodeCreated?.apply(this, args);
     configureNode(this);
+    armTitlePlacement(this);
     return result;
   };
 
@@ -1964,6 +1968,271 @@ function isDoubleClick() {
   return now - Number(canvas?.last_mouseclick ?? 0) < 300;
 }
 
+function nowMs() {
+  return typeof performance !== "undefined" && typeof performance.now === "function"
+    ? performance.now()
+    : Date.now();
+}
+
+function currentCanvas() {
+  return globalThis.LGraphCanvas?.active_canvas ?? app.canvas ?? activeCanvas ?? null;
+}
+
+function currentGraph(canvas = currentCanvas()) {
+  return canvas?.getCurrentGraph?.() ?? canvas?.graph ?? app.graph ?? null;
+}
+
+function graphNodes(graph) {
+  return graph?._nodes ?? graph?.nodes ?? [];
+}
+
+function graphHasNode(graph, node) {
+  return graphNodes(graph).includes(node);
+}
+
+function nodeIdentity(node) {
+  return node?.id ?? node;
+}
+
+function titleNodeIdSet(graph) {
+  return new Set(graphNodes(graph).filter((node) => isTitleNode(node)).map(nodeIdentity));
+}
+
+function clearPendingTitlePlacement() {
+  pendingTitlePlacement = null;
+}
+
+function hasActiveTitlePlacement() {
+  if (!pendingTitlePlacement) return false;
+  if (nowMs() > pendingTitlePlacement.expiresAt) {
+    clearPendingTitlePlacement();
+    return false;
+  }
+  return true;
+}
+
+function resolvePendingTitleNode(canvas = currentCanvas()) {
+  if (!pendingTitlePlacement) return null;
+  if (isTitleNode(pendingTitlePlacement.node)) return pendingTitlePlacement.node;
+
+  const graph = pendingTitlePlacement.graph ?? currentGraph(canvas);
+  const known = pendingTitlePlacement.titleIds ?? new Set();
+  const nodes = graphNodes(graph).filter((node) => isTitleNode(node));
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const node = nodes[index];
+    if (!known.has(nodeIdentity(node))) {
+      pendingTitlePlacement.node = node;
+      return node;
+    }
+  }
+
+  const transient = pendingCanvasTitleNode(canvas);
+  if (transient) pendingTitlePlacement.node = transient;
+  return transient;
+}
+
+function isPendingTitlePlacementNode(node) {
+  if (!hasActiveTitlePlacement() || !isTitleNode(node)) return false;
+  return resolvePendingTitleNode() === node;
+}
+
+function armTitlePlacement(node = null) {
+  const canvas = currentCanvas();
+  const graph = currentGraph(canvas);
+  const now = nowMs();
+  hideToolbar();
+  lastTitlePlacementArmAt = now;
+  pendingTitlePlacement = {
+    graph,
+    node: isTitleNode(node) ? node : null,
+    titleIds: titleNodeIdSet(graph),
+    expiresAt: now + 15000,
+  };
+}
+
+function titleSelectionTextMatches(value) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  if (!text || text.length > 140) return false;
+  return text === NODE_TITLE || text === NODE_NAME || text.includes(NODE_NAME) || /(^|\s)GG\s*标题(\s|$)/.test(text);
+}
+
+function isLikelyTitleMenuElement(element) {
+  if (!(element instanceof HTMLElement)) return false;
+  if (element.id === TOOLBAR_ID || element.closest?.(`#${TOOLBAR_ID}`)) return false;
+  if (element.closest?.(".gg-title-dom-node, .gg-title-dom-label")) return false;
+
+  const tag = element.tagName.toLowerCase();
+  if (["body", "html", "canvas", "input", "textarea", "select"].includes(tag)) return false;
+
+  const role = String(element.getAttribute("role") ?? "").toLowerCase();
+  const className = String(element.className ?? "").toLowerCase();
+  if (className.includes("lg-node")) return false;
+  if (["button", "a", "li"].includes(tag)) return true;
+  if (role.includes("menuitem") || role.includes("option") || role.includes("treeitem") || role === "button") return true;
+  return /(option|result|item|entry|node-search|node-item|p-menuitem|p-tree-node|p-autocomplete-option)/.test(className);
+}
+
+function eventTargetsTitleSelection(event) {
+  const path = event.composedPath?.() ?? [event.target];
+  for (const target of path) {
+    if (!isLikelyTitleMenuElement(target)) continue;
+
+    const dataset = target.dataset ?? {};
+    const values = [
+      dataset.nodeName,
+      dataset.nodeType,
+      dataset.type,
+      dataset.value,
+      target.getAttribute("data-node-name"),
+      target.getAttribute("data-node-type"),
+      target.getAttribute("data-type"),
+      target.getAttribute("title"),
+      target.getAttribute("aria-label"),
+      target.textContent,
+    ];
+    if (values.some(titleSelectionTextMatches)) return true;
+  }
+  return false;
+}
+
+function isIgnoredTitlePlacementTarget(event) {
+  const path = event.composedPath?.() ?? [event.target];
+  for (const target of path) {
+    if (!(target instanceof HTMLElement)) continue;
+    if (target.id === TOOLBAR_ID || target.closest?.(`#${TOOLBAR_ID}`)) return true;
+    const tag = target.tagName.toLowerCase();
+    if (["button", "input", "textarea", "select", "option", "a"].includes(tag)) return true;
+    const role = String(target.getAttribute("role") ?? "").toLowerCase();
+    if (role === "button" || role === "menuitem") return true;
+  }
+  return false;
+}
+
+function isEventInsideCanvas(canvas, event) {
+  const rect = canvas?.canvas?.getBoundingClientRect?.();
+  if (!rect || !Number.isFinite(event?.clientX) || !Number.isFinite(event?.clientY)) return false;
+  return event.clientX >= rect.left
+    && event.clientX <= rect.right
+    && event.clientY >= rect.top
+    && event.clientY <= rect.bottom;
+}
+
+function eventToGraphPosition(canvas, event) {
+  if (Number.isFinite(event?.canvasX) && Number.isFinite(event?.canvasY)) {
+    return [event.canvasX, event.canvasY];
+  }
+
+  const element = canvas?.canvas;
+  const rect = element?.getBoundingClientRect?.();
+  if (!element || !rect) return [...(canvas?.graph_mouse ?? [0, 0])];
+
+  const offset = [Number(event.clientX) - rect.left, Number(event.clientY) - rect.top];
+  const ds = canvas?.ds;
+  if (typeof ds?.convertOffsetToCanvas === "function") {
+    try {
+      const converted = ds.convertOffsetToCanvas(offset);
+      if (Array.isArray(converted) && converted.every(Number.isFinite)) return converted;
+    } catch {
+      // Fall back to the basic DragAndScale calculation.
+    }
+  }
+
+  const scale = Math.max(0.01, Number(ds?.scale) || 1);
+  const pan = Array.isArray(ds?.offset) ? ds.offset : [0, 0];
+  return [(offset[0] - (Number(pan[0]) || 0)) / scale, (offset[1] - (Number(pan[1]) || 0)) / scale];
+}
+
+function pendingCanvasTitleNode(canvas) {
+  const keys = [
+    "node_dragged",
+    "_node_dragged",
+    "dragged_node",
+    "_dragged_node",
+    "node_to_add",
+    "_node_to_add",
+    "new_node",
+    "_new_node",
+    "pending_node",
+    "_pending_node",
+  ];
+  for (const key of keys) {
+    const node = canvas?.[key];
+    if (isTitleNode(node)) return node;
+  }
+  return null;
+}
+
+function clearPendingCanvasTitleNode(canvas, node) {
+  for (const key of [
+    "node_dragged",
+    "_node_dragged",
+    "dragged_node",
+    "_dragged_node",
+    "node_to_add",
+    "_node_to_add",
+    "new_node",
+    "_new_node",
+    "pending_node",
+    "_pending_node",
+  ]) {
+    if (canvas?.[key] === node) canvas[key] = null;
+  }
+}
+
+function placeTitleNodeFromEvent(canvas, event) {
+  const graph = currentGraph(canvas);
+  if (!graph) return false;
+
+  const lite = getLiteGraph();
+  const node = resolvePendingTitleNode(canvas) ?? pendingCanvasTitleNode(canvas) ?? lite.createNode?.(NODE_NAME);
+  if (!node) return false;
+
+  node.pos = eventToGraphPosition(canvas, event);
+  configureNode(node);
+  if (!graphHasNode(graph, node) && typeof graph.add === "function") graph.add(node);
+  clearPendingCanvasTitleNode(canvas, node);
+  configureNode(node);
+  syncDomTitleNode(node);
+
+  canvas?.selectNode?.(node, false);
+  requestAnimationFrame(() => showToolbar(node, canvas));
+  graph.change?.();
+  markDirty(node);
+  return true;
+}
+
+function handleTitlePlacementCanvasDown(event) {
+  if (event?.button !== undefined && event.button !== 0) return;
+  if (!hasActiveTitlePlacement()) return;
+
+  const canvas = currentCanvas();
+  if (!canvas?.canvas || !isEventInsideCanvas(canvas, event) || isIgnoredTitlePlacementTarget(event)) return;
+
+  if (placeTitleNodeFromEvent(canvas, event)) {
+    clearPendingTitlePlacement();
+    event.preventDefault?.();
+    event.stopPropagation?.();
+    event.stopImmediatePropagation?.();
+  }
+}
+
+function installTitlePlacementPatch() {
+  if (!document._ggTitlePlacementMenuInstalled) {
+    document._ggTitlePlacementMenuInstalled = true;
+    const onMenuPick = (event) => {
+      if (event.type === "click" && nowMs() - lastTitlePlacementArmAt < 700) return;
+      if (eventTargetsTitleSelection(event)) armTitlePlacement();
+    };
+    document.addEventListener("pointerdown", onMenuPick, true);
+    document.addEventListener("click", onMenuPick, true);
+  }
+
+  if (document._ggTitlePlacementCanvasInstalled) return;
+  document._ggTitlePlacementCanvasInstalled = true;
+  document.addEventListener("pointerdown", handleTitlePlacementCanvasDown, true);
+  document.addEventListener("mousedown", handleTitlePlacementCanvasDown, true);
+}
+
 function installPinnedClickThroughPatch() {
   if (
     !globalThis.LGraph?.prototype
@@ -2010,6 +2279,7 @@ function installTitlePatchesSoon() {
   injectStyles();
   installToolbarDismiss();
   installDomSyncPatch();
+  installTitlePlacementPatch();
 
   let attempts = 0;
   const install = () => {
@@ -2039,6 +2309,7 @@ app.registerExtension({
 
   loadedGraphNode(node) {
     if (!isTitleNode(node)) return;
+    if (pendingTitlePlacement?.node === node) clearPendingTitlePlacement();
     requestAnimationFrame(() => {
       configureNode(node);
       syncDomTitleNode(node);
