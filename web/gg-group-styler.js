@@ -7,6 +7,11 @@ const CANVAS_CAPTURE_FLAG = Symbol.for("GuliNodes.groupStyler.canvasCaptureInsta
 const TOP_BUTTONS_SETTING = "GuliNodes.groupStylerTopButton";
 const MENU_DISPLAY_SETTING = "Comfy.UseNewMenu";
 const PROMPT_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.graphToPromptPatched");
+const GROUP_DRAW_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.drawGroupsPatched");
+const GROUP_DRAW_ORIGINAL_KEY = Symbol.for("GuliNodes.groupStyler.drawGroupsOriginal");
+const GROUP_INTERACTION_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.interactionPatched");
+const GROUP_INTERACTION_ORIGINAL_KEY = Symbol.for("GuliNodes.groupStyler.interactionOriginal");
+const GROUP_REPLACEMENT_STYLE_ID = "gg-group-styler-replacement-style";
 const RESIZE_EDGE_PX = 10;
 const NATIVE_CORNER_PX = 18;
 const MIN_GROUP_WIDTH = 80;
@@ -30,6 +35,9 @@ const SCALE_HIDE_DURATION = 220;
 const SCALE_HIDE_GROUP_WIDTH = 178;
 const SCALE_HIDE_GROUP_HEIGHT = 48;
 const SCALE_HIDE_STATE_KEY = "GuliNodes.groupScaleHideState";
+const SCALE_HIDE_CACHE_KEY = "GuliNodes.groupScaleHideCache.v1";
+const SCALE_HIDE_CACHE_LIMIT = 80;
+const SCALE_HIDE_CACHE_TTL = 1000 * 60 * 60 * 24 * 90;
 const SUBWORKFLOW_INDICATOR_ID = "gg-subworkflow-indicators";
 const SUBWORKFLOW_INDICATOR_STYLE_ID = "gg-subworkflow-indicator-style";
 const HIDDEN_NODE_KEY = "__ggGroupScaleHidden";
@@ -84,6 +92,9 @@ const groupControlState = {
     proxyCaptureWindow: null,
     lastProxyEditAt: 0,
     lastProxyEditGroup: null,
+    hydrateTimer: null,
+    drawWatchdogTimer: null,
+    nativeGroupHover: null,
 };
 
 function readSetting(id, fallback) {
@@ -233,6 +244,40 @@ function isSkippedMode(mode) {
 
 function getActiveGraph(canvas = app.canvas) {
     return canvas?.getCurrentGraph?.() ?? canvas?.graph ?? app.graph;
+}
+
+function isGraphGroupLike(value) {
+    if (!value || typeof value !== "object") return false;
+    const GroupClass = globalThis.LiteGraph?.LGraphGroup ?? globalThis.LGraphGroup;
+    if (GroupClass && value instanceof GroupClass) return true;
+    if ("mode" in value || Array.isArray(value.inputs) || Array.isArray(value.outputs)) return false;
+    return !!(
+        getGroupBounds(value)
+        && ("title" in value || "name" in value || "color" in value || "_children" in value || "nodes" in value)
+    );
+}
+
+function selectionContainsGroup(value, depth = 0) {
+    if (!value || depth > 2) return false;
+    if (isGraphGroupLike(value)) return true;
+    if (Array.isArray(value)) return value.some((item) => selectionContainsGroup(item, depth + 1));
+    if (typeof value !== "object") return false;
+
+    const candidates = [
+        value.group,
+        value.item,
+        value.target,
+        value.selectedItem,
+        value.selected,
+        value.selection,
+        value.value,
+    ];
+    return candidates.some((item) => selectionContainsGroup(item, depth + 1));
+}
+
+function getVisibleGraphGroups(canvas = app.canvas) {
+    const graph = getActiveGraph(canvas);
+    return [...(graph?._groups ?? graph?.groups ?? [])].filter(isGraphGroupLike);
 }
 
 function getGraphGroups(graph) {
@@ -624,6 +669,7 @@ function normalizeScaleState(state) {
     if (!nodes.length) return null;
     const phase = ["hiding", "hidden", "restoring"].includes(state.phase) ? state.phase : (state.hidden ? "hidden" : null);
     const title = String(state.title || state.subworkflowName || state.name || "Subgraph");
+    const subworkflowName = String(state.subworkflowName || state.title || state.name || title);
     return {
         hidden: !!state.hidden || phase === "hiding" || phase === "hidden",
         phase,
@@ -631,7 +677,7 @@ function normalizeScaleState(state) {
         groupRect: normalizeScaleRect(state.groupRect),
         compactGroupRect: normalizeScaleRect(state.compactGroupRect),
         title,
-        subworkflowName: title,
+        subworkflowName,
         indicatorColor: normalizeHex(state.indicatorColor) || null,
         subworkflow: state.subworkflow !== false,
         updatedAt: Number(state.updatedAt) || Date.now(),
@@ -657,6 +703,68 @@ function serializeScaleState(state) {
         subworkflow: normalized.subworkflow,
         updatedAt: normalized.updatedAt,
     };
+}
+
+function hashString(value) {
+    let hash = 2166136261;
+    const text = String(value ?? "");
+    for (let i = 0; i < text.length; i++) {
+        hash ^= text.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
+
+function normalizeCacheTitle(value) {
+    const title = String(value ?? "").trim();
+    return title || "Subgraph";
+}
+
+function countNodeIdOverlap(leftIds, rightIds) {
+    const left = new Set((leftIds ?? []).map(String));
+    let count = 0;
+    for (const id of rightIds ?? []) {
+        if (left.has(String(id))) count += 1;
+    }
+    return count;
+}
+
+function getScaleStateUpdatedAt(value) {
+    return Number(value?.updatedAt) || Number(value?.state?.updatedAt) || 0;
+}
+
+function isScaleStateExpired(value, now = Date.now()) {
+    const updatedAt = getScaleStateUpdatedAt(value);
+    return updatedAt > 0 && now - updatedAt > SCALE_HIDE_CACHE_TTL;
+}
+
+function readScaleCache() {
+    try {
+        const raw = localStorage.getItem(SCALE_HIDE_CACHE_KEY);
+        const parsed = raw ? JSON.parse(raw) : null;
+        if (parsed && typeof parsed === "object" && parsed.entries && typeof parsed.entries === "object") {
+            return parsed;
+        }
+    } catch (error) {
+        console.warn("[GGGroupStyler] Unable to read group scale cache:", error);
+    }
+    return { version: 1, entries: {} };
+}
+
+function writeScaleCache(cache) {
+    try {
+        const now = Date.now();
+        const entries = Object.entries(cache?.entries ?? {})
+            .filter(([, entry]) => !isScaleStateExpired(entry, now))
+            .sort((left, right) => getScaleStateUpdatedAt(right[1]) - getScaleStateUpdatedAt(left[1]))
+            .slice(0, SCALE_HIDE_CACHE_LIMIT);
+        localStorage.setItem(SCALE_HIDE_CACHE_KEY, JSON.stringify({
+            version: 1,
+            entries: Object.fromEntries(entries),
+        }));
+    } catch (error) {
+        console.warn("[GGGroupStyler] Unable to write group scale cache:", error);
+    }
 }
 
 function getGroupProperties(group, create = false) {
@@ -686,6 +794,11 @@ function writeGroupScaleState(group, state) {
     const serialized = serializeScaleState(state);
     if (!serialized) return;
     groupControlState.scaleStates.set(group, serialized);
+    if (serialized.hidden) {
+        rememberGroupScaleState(group, serialized);
+    } else {
+        forgetGroupScaleState(group, serialized);
+    }
     try {
         group[SCALE_HIDE_STATE_KEY] = serialized;
     } catch (_) {
@@ -702,6 +815,8 @@ function writeGroupScaleState(group, state) {
 }
 
 function clearGroupScaleState(group) {
+    const existing = readGroupScaleState(group);
+    if (existing) forgetGroupScaleState(group, existing);
     groupControlState.scaleStates.delete(group);
     try {
         delete group[SCALE_HIDE_STATE_KEY];
@@ -764,6 +879,144 @@ function getNodeId(node) {
 
 function getGraphNodes(graph) {
     return graph?.nodes ?? graph?._nodes ?? [];
+}
+
+function getGraphScaleCacheSignature(graph = getActiveGraph()) {
+    const nodes = getGraphNodes(graph)
+        .map((node) => {
+            const id = getNodeId(node);
+            const type = String(node?.comfyClass || node?.type || node?.constructor?.type || node?.title || "");
+            return id == null ? null : `${id}:${type}`;
+        })
+        .filter(Boolean)
+        .sort();
+    return hashString([
+        location?.origin || "",
+        location?.pathname || "",
+        nodes.join("|"),
+    ].join("::"));
+}
+
+function getGroupScaleCacheNodeIds(group, state = null, canvas = app.canvas) {
+    const fromState = (state?.nodes ?? [])
+        .map(normalizeScaleSnapshot)
+        .filter(Boolean)
+        .map((snapshot) => snapshot.id);
+    if (fromState.length) return [...new Set(fromState)].sort();
+
+    recomputeGroupNodes(group, canvas);
+    return [...new Set(getGroupNodes(group).map(getNodeId).filter((id) => id != null))].sort();
+}
+
+function getGroupScaleCacheSignature(group, state = null, canvas = app.canvas) {
+    const title = normalizeCacheTitle(getGroupTitle(group));
+    const ids = getGroupScaleCacheNodeIds(group, state, canvas);
+    if (!ids.length) {
+        const rect = normalizeScaleRect(state?.groupRect) ?? getGroupRect(group);
+        return hashString(`${title}::empty::${rect ? [rect.x, rect.y, rect.w, rect.h].map(Math.round).join(",") : ""}`);
+    }
+    return hashString(`${title}::${ids.join(",")}`);
+}
+
+function getGroupScaleCacheKey(group, state = null, canvas = app.canvas) {
+    const graph = getGroupGraph(group, canvas);
+    const graphSignature = getGraphScaleCacheSignature(graph);
+    const groupSignature = getGroupScaleCacheSignature(group, state, canvas);
+    return {
+        key: `${graphSignature}:${groupSignature}`,
+        graphSignature,
+        groupSignature,
+        nodeIds: getGroupScaleCacheNodeIds(group, state, canvas),
+    };
+}
+
+function rememberGroupScaleState(group, state, canvas = app.canvas) {
+    const serialized = serializeScaleState(state);
+    if (!serialized?.hidden) return;
+
+    const cacheMeta = getGroupScaleCacheKey(group, serialized, canvas);
+    if (!cacheMeta.nodeIds.length) return;
+
+    const cache = readScaleCache();
+    cache.entries[cacheMeta.key] = {
+        state: serialized,
+        title: normalizeCacheTitle(getGroupTitle(group)),
+        subworkflowName: normalizeCacheTitle(serialized.subworkflowName || serialized.title),
+        graphSignature: cacheMeta.graphSignature,
+        groupSignature: cacheMeta.groupSignature,
+        nodeIds: cacheMeta.nodeIds,
+        updatedAt: Date.now(),
+    };
+    writeScaleCache(cache);
+}
+
+function forgetGroupScaleState(group, state = null, canvas = app.canvas) {
+    const cache = readScaleCache();
+    const meta = getGroupScaleCacheKey(group, state, canvas);
+    let changed = false;
+
+    for (const [key, entry] of Object.entries(cache.entries)) {
+        if (
+            key === meta.key
+            || (
+                entry?.groupSignature === meta.groupSignature
+                && entry?.graphSignature === meta.graphSignature
+            )
+        ) {
+            delete cache.entries[key];
+            changed = true;
+        }
+    }
+
+    if (changed) writeScaleCache(cache);
+}
+
+function readCachedGroupScaleState(group, canvas = app.canvas, options = {}) {
+    const expired = !!options.expired;
+    const now = Date.now();
+    const cache = readScaleCache();
+    const meta = getGroupScaleCacheKey(group, null, canvas);
+    const currentTitle = normalizeCacheTitle(getGroupTitle(group));
+    const currentNodeIds = meta.nodeIds.map(String);
+    const entries = Object.entries(cache.entries)
+        .map(([key, entry]) => ({ key, ...entry }))
+        .filter((entry) => isScaleStateExpired(entry, now) === expired);
+
+    const exact = entries.find((entry) => entry.key === meta.key);
+    const signatureFallback = entries
+        .filter((entry) => entry.groupSignature === meta.groupSignature)
+        .sort((left, right) => {
+            const graphMatch = Number(right.graphSignature === meta.graphSignature) - Number(left.graphSignature === meta.graphSignature);
+            if (graphMatch) return graphMatch;
+            return getScaleStateUpdatedAt(right) - getScaleStateUpdatedAt(left);
+        })[0];
+    const titleFallbackCandidates = entries
+        .filter((entry) => (
+            entry.graphSignature === meta.graphSignature
+            && (
+                normalizeCacheTitle(entry.title) === currentTitle
+                || normalizeCacheTitle(entry.subworkflowName) === currentTitle
+                || normalizeCacheTitle(entry.state?.title) === currentTitle
+                || normalizeCacheTitle(entry.state?.subworkflowName) === currentTitle
+            )
+        ))
+        .map((entry) => ({
+            ...entry,
+            overlap: countNodeIdOverlap(currentNodeIds, entry.nodeIds),
+        }))
+        .filter((entry) => currentNodeIds.length ? entry.overlap > 0 : true);
+    const titleFallback = (
+        currentNodeIds.length || titleFallbackCandidates.length === 1
+            ? titleFallbackCandidates.sort((left, right) => {
+                if (right.overlap !== left.overlap) return right.overlap - left.overlap;
+                return getScaleStateUpdatedAt(right) - getScaleStateUpdatedAt(left);
+            })[0]
+            : null
+    );
+
+    const state = normalizeScaleState((exact ?? signatureFallback ?? titleFallback)?.state);
+    if (!state?.hidden) return null;
+    return state;
 }
 
 function findNodeById(graph, id) {
@@ -1015,6 +1268,85 @@ function getScaleCandidateNodes(group, canvas) {
     recomputeGroupNodes(group, canvas);
     const ownerId = getGroupScaleOwnerId(group);
     return getGroupNodes(group).filter((node) => !isGroupScaleHiddenNode(node) || node[HIDDEN_NODE_OWNER_KEY] === ownerId);
+}
+
+function applyHiddenScaleState(group, state, canvas = app.canvas) {
+    const graph = getGroupGraph(group, canvas);
+    const snapshots = (state?.nodes ?? []).map(normalizeScaleSnapshot).filter(Boolean);
+    if (!graph || !snapshots.length) return false;
+
+    const originalGroupRect = normalizeScaleRect(state.groupRect) ?? getGroupRect(group);
+    const compactGroupRect = normalizeScaleRect(state.compactGroupRect)
+        ?? getCompactGroupRect(originalGroupRect, canvas)
+        ?? getGroupRect(group);
+    if (!compactGroupRect) return false;
+
+    const contentRect = boundsFromSnapshots(snapshots);
+    const hiddenNodes = [];
+    setGroupRect(group, compactGroupRect);
+
+    for (const snapshot of snapshots) {
+        const node = findNodeById(graph, snapshot.id);
+        if (!node) continue;
+
+        if (contentRect) {
+            setNodeRect(node, compactRectForSnapshot(snapshot, contentRect, compactGroupRect));
+        }
+        setNodeScaleHidden(node, true, group);
+        hiddenNodes.push(node);
+    }
+
+    if (!hiddenNodes.length) return false;
+    clearHiddenNodeSelection(canvas, hiddenNodes);
+    writeGroupScaleState(group, {
+        ...state,
+        hidden: true,
+        phase: "hidden",
+        nodes: snapshots,
+        groupRect: originalGroupRect,
+        compactGroupRect,
+        title: state.title || state.subworkflowName || getGroupTitle(group),
+        subworkflowName: state.subworkflowName || state.title || getGroupTitle(group),
+        indicatorColor: ensureScaleIndicatorColor(group, state),
+        subworkflow: true,
+        updatedAt: state.updatedAt || Date.now(),
+    });
+    return true;
+}
+
+function restoreExpiredScaleState(group, state, canvas = app.canvas) {
+    const graph = getGroupGraph(group, canvas);
+    const snapshots = (state?.nodes ?? []).map(normalizeScaleSnapshot).filter(Boolean);
+    if (!graph || !snapshots.length) return false;
+
+    const targetGroupRect = normalizeScaleRect(state.groupRect) ?? getGroupRect(group);
+    if (targetGroupRect) {
+        setGroupRect(group, targetGroupRect);
+    }
+
+    let restored = false;
+    for (const snapshot of snapshots) {
+        const node = findNodeById(graph, snapshot.id);
+        if (!node) continue;
+        setNodeRect(node, {
+            x: snapshot.pos[0],
+            y: snapshot.pos[1],
+            w: snapshot.size[0],
+            h: snapshot.size[1],
+        });
+        setNodeScaleHidden(node, false, group);
+        restored = true;
+    }
+
+    forgetGroupScaleState(group, state, canvas);
+    clearGroupScaleState(group);
+    recomputeGroupNodes(group, canvas);
+
+    if (restored || targetGroupRect) {
+        touchScaleGraph(group, canvas);
+        return true;
+    }
+    return false;
 }
 
 function hideGroupScaled(group, canvas = app.canvas) {
@@ -1492,9 +1824,29 @@ function resizeCursor(handle) {
     return "default";
 }
 
+function hitTestGraphGroup(canvas, event) {
+    const graphCandidates = eventToGraphCandidates(canvas, event);
+    const groups = getVisibleGraphGroups(canvas);
+    if (!graphCandidates.length || !groups?.length) return null;
+
+    for (const graphCandidate of graphCandidates) {
+        const [mx, my] = graphCandidate.pos;
+        for (let i = groups.length - 1; i >= 0; i--) {
+            const group = groups[i];
+            const rect = getGroupRect(group);
+            if (!rect || rect.w <= 0 || rect.h <= 0) continue;
+            if (mx >= rect.x && mx <= rect.x + rect.w && my >= rect.y && my <= rect.y + rect.h) {
+                return { canvas, group, rect, graphPos: graphCandidate.pos, coordMode: graphCandidate.mode };
+            }
+        }
+    }
+
+    return null;
+}
+
 function hitTestGroupResizeHandle(canvas, event) {
     const graphCandidates = eventToGraphCandidates(canvas, event);
-    const groups = getGraphGroups(getActiveGraph(canvas));
+    const groups = getVisibleGraphGroups(canvas);
     if (!graphCandidates.length || !groups?.length) return null;
 
     const scale = getCanvasScale(canvas);
@@ -1572,7 +1924,7 @@ function hitTestGroupResizeHandle(canvas, event) {
 
 function hitTestGroupToggle(canvas, event) {
     const graphCandidates = eventToGraphCandidates(canvas, event);
-    const groups = getGraphGroups(getActiveGraph(canvas));
+    const groups = getVisibleGraphGroups(canvas);
     if (!graphCandidates.length || !groups?.length) return null;
 
     const scale = getCanvasScale(canvas);
@@ -1597,7 +1949,7 @@ function hitTestGroupToggle(canvas, event) {
 
 function hitTestSubworkflowProxy(canvas, event) {
     const graphCandidates = eventToGraphCandidates(canvas, event);
-    const groups = getGraphGroups(getActiveGraph(canvas));
+    const groups = getVisibleGraphGroups(canvas);
     if (!graphCandidates.length || !groups?.length) return null;
 
     for (const graphCandidate of graphCandidates) {
@@ -1619,7 +1971,7 @@ function hitTestSubworkflowProxy(canvas, event) {
 
 function hitTestGroupScaleToggle(canvas, event) {
     const graphCandidates = eventToGraphCandidates(canvas, event);
-    const groups = getGraphGroups(getActiveGraph(canvas));
+    const groups = getVisibleGraphGroups(canvas);
     if (!graphCandidates.length || !groups?.length) return null;
 
     const scale = getCanvasScale(canvas);
@@ -1705,6 +2057,47 @@ function clearNativePointerAction(canvas) {
     pointer.dragStarted = false;
     pointer.isDown = false;
     pointer.isDouble = false;
+}
+
+function hasGroupReplacementTarget(canvas = app.canvas) {
+    if (!isEnabled()) return false;
+    return !!(
+        isGraphGroupLike(canvas?.selected_group)
+        || isGraphGroupLike(groupControlState.nativeGroupHover?.group)
+        || isGraphGroupLike(groupControlState.hoverScale?.group)
+        || isGraphGroupLike(groupControlState.hoverToggle?.group)
+        || isGraphGroupLike(groupControlState.hoverProxy?.group)
+        || isGraphGroupLike(resizeState.hover?.group)
+        || isGraphGroupLike(resizeState.active?.group)
+    );
+}
+
+function syncOfficialGroupReplacementState(canvas = app.canvas) {
+    const active = hasGroupReplacementTarget(canvas);
+    try {
+        document.body?.classList.toggle("gg-group-styler-force-groups", active);
+    } catch (_) {
+        // Body may not be ready during very early startup.
+    }
+}
+
+function installGroupReplacementStyles() {
+    if (document.getElementById(GROUP_REPLACEMENT_STYLE_ID)) return;
+    const style = document.createElement("style");
+    style.id = GROUP_REPLACEMENT_STYLE_ID;
+    style.textContent = `
+        body.gg-group-styler-force-groups .comfyui-selection-toolbox,
+        body.gg-group-styler-force-groups .selection-toolbox,
+        body.gg-group-styler-force-groups [class*="SelectionToolbox"],
+        body.gg-group-styler-force-groups [class*="selection-toolbox"],
+        body.gg-group-styler-force-groups [data-testid*="selection-toolbox"],
+        body.gg-group-styler-force-groups [data-test*="selection-toolbox"] {
+            display: none !important;
+            visibility: hidden !important;
+            pointer-events: none !important;
+        }
+    `;
+    document.head.appendChild(style);
 }
 
 function startGroupResizeFromEvent(canvas, event) {
@@ -2171,7 +2564,14 @@ function handleGroupScaleEvent(canvas, event) {
 }
 
 function updateGroupHoverFromEvent(canvas, event) {
-    if (!isEnabled() || resizeState.active?.canvas === canvas || groupControlState.proxyDrag?.canvas === canvas) return false;
+    if (!isEnabled() || resizeState.active?.canvas === canvas || groupControlState.proxyDrag?.canvas === canvas) {
+        groupControlState.nativeGroupHover = null;
+        syncOfficialGroupReplacementState(canvas);
+        return false;
+    }
+
+    groupControlState.nativeGroupHover = hitTestGraphGroup(canvas, event);
+    syncOfficialGroupReplacementState(canvas);
 
     const hit = hitTestGroupResizeHandle(canvas, event);
     const previous = resizeState.hover;
@@ -2280,6 +2680,12 @@ function clearScaleHover(canvas) {
     canvas?.setDirty?.(true, true);
     canvas?.setDirtyCanvas?.(true, true);
     syncTopScaleButton();
+}
+
+function clearNativeGroupHover(canvas) {
+    if (!groupControlState.nativeGroupHover) return;
+    groupControlState.nativeGroupHover = null;
+    syncOfficialGroupReplacementState(canvas);
 }
 
 function roundedRect(ctx, x, y, w, h, r) {
@@ -2661,7 +3067,7 @@ function drawSubworkflowProxy(ctx, group, rect, state, accent) {
 }
 
 function drawStyledGroups(ctx, canvas) {
-    const groups = canvas.graph?._groups;
+    const groups = getVisibleGraphGroups(canvas);
     if (!groups?.length) return;
 
     const scale = getCanvasScale(canvas);
@@ -2736,11 +3142,20 @@ function drawStyledGroups(ctx, canvas) {
 }
 
 function installGroupResizeInteractions(proto) {
-    const originalMouseDown = proto.processMouseDown;
-    const originalMouseMove = proto.processMouseMove;
-    const originalMouseUp = proto.processMouseUp;
+    if (!proto) return false;
+    if (
+        proto.processMouseDown?.[GROUP_INTERACTION_PATCH_FLAG]
+        && proto.processMouseMove?.[GROUP_INTERACTION_PATCH_FLAG]
+        && proto.processMouseUp?.[GROUP_INTERACTION_PATCH_FLAG]
+    ) {
+        return true;
+    }
 
-    proto.processMouseDown = function(event, ...args) {
+    const originalMouseDown = proto.processMouseDown?.[GROUP_INTERACTION_ORIGINAL_KEY] || proto.processMouseDown;
+    const originalMouseMove = proto.processMouseMove?.[GROUP_INTERACTION_ORIGINAL_KEY] || proto.processMouseMove;
+    const originalMouseUp = proto.processMouseUp?.[GROUP_INTERACTION_ORIGINAL_KEY] || proto.processMouseUp;
+
+    const wrappedMouseDown = function(event, ...args) {
         if (isEnabled() && event?.button === 0) {
             if (startSubworkflowProxyDragFromEvent(this, event)) {
                 return true;
@@ -2763,8 +3178,10 @@ function installGroupResizeInteractions(proto) {
         syncTopScaleButton();
         return result;
     };
+    wrappedMouseDown[GROUP_INTERACTION_PATCH_FLAG] = true;
+    wrappedMouseDown[GROUP_INTERACTION_ORIGINAL_KEY] = originalMouseDown;
 
-    proto.processMouseMove = function(event, ...args) {
+    const wrappedMouseMove = function(event, ...args) {
         if (updateActiveSubworkflowProxyDrag(this, event)) {
             return true;
         }
@@ -2777,6 +3194,7 @@ function installGroupResizeInteractions(proto) {
 
         if (!isEnabled()) {
             clearResizeHover(this);
+            clearNativeGroupHover(this);
             clearScaleHover(this);
             clearToggleHover(this);
             return result;
@@ -2786,8 +3204,10 @@ function installGroupResizeInteractions(proto) {
 
         return result;
     };
+    wrappedMouseMove[GROUP_INTERACTION_PATCH_FLAG] = true;
+    wrappedMouseMove[GROUP_INTERACTION_ORIGINAL_KEY] = originalMouseMove;
 
-    proto.processMouseUp = function(event, ...args) {
+    const wrappedMouseUp = function(event, ...args) {
         if (finishActiveSubworkflowProxyDrag(this, event)) {
             return true;
         }
@@ -2800,6 +3220,13 @@ function installGroupResizeInteractions(proto) {
         syncTopScaleButton();
         return result;
     };
+    wrappedMouseUp[GROUP_INTERACTION_PATCH_FLAG] = true;
+    wrappedMouseUp[GROUP_INTERACTION_ORIGINAL_KEY] = originalMouseUp;
+
+    proto.processMouseDown = wrappedMouseDown;
+    proto.processMouseMove = wrappedMouseMove;
+    proto.processMouseUp = wrappedMouseUp;
+    return true;
 }
 
 function isCanvasEventTarget(element, event) {
@@ -2839,6 +3266,7 @@ function installCanvasPointerCapture(canvas = app.canvas) {
     };
     const onPointerLeave = () => {
         clearResizeHover(canvas);
+        clearNativeGroupHover(canvas);
         clearProxyHover(canvas);
         clearScaleHover(canvas);
         clearToggleHover(canvas);
@@ -3081,48 +3509,60 @@ function hydrateScaleHiddenGroups(canvas = app.canvas) {
     const graph = getActiveGraph(canvas);
     if (!graph) return false;
 
+    let found = false;
     let changed = false;
     for (const group of getGraphGroups(graph)) {
-        const state = readGroupScaleState(group);
-        if (!state?.hidden) continue;
-        for (const snapshot of state.nodes) {
-            const node = findNodeById(graph, snapshot.id);
-            if (!node) continue;
-            setNodeScaleHidden(node, true, group);
-            changed = true;
+        const savedState = readGroupScaleState(group);
+        const expiredState = savedState && isScaleStateExpired(savedState)
+            ? savedState
+            : (!savedState ? readCachedGroupScaleState(group, canvas, { expired: true }) : null);
+        if (expiredState?.hidden) {
+            found = true;
+            changed = restoreExpiredScaleState(group, expiredState, canvas) || changed;
+            continue;
         }
+
+        const state = savedState ?? readCachedGroupScaleState(group, canvas);
+        if (!state?.hidden) continue;
+        found = true;
+        changed = applyHiddenScaleState(group, state, canvas) || changed;
     }
 
-    if (changed) {
+    if (found) {
         markCanvasDirty();
         syncTopScaleButton();
         syncSubworkflowIndicators(canvas);
     }
-    return true;
+    return found && changed;
 }
 
 function hydrateScaleHiddenGroupsWhenReady() {
     if (hydrateScaleHiddenGroups(app.canvas)) return;
+    if (groupControlState.hydrateTimer != null) return;
 
     let attempts = 0;
-    const timer = window.setInterval(() => {
+    groupControlState.hydrateTimer = window.setInterval(() => {
         attempts += 1;
-        if (hydrateScaleHiddenGroups(app.canvas) || attempts >= 20) {
-            window.clearInterval(timer);
+        if (hydrateScaleHiddenGroups(app.canvas) || attempts >= 80) {
+            window.clearInterval(groupControlState.hydrateTimer);
+            groupControlState.hydrateTimer = null;
         }
     }, 250);
 }
 
-function installGroupStyler() {
-    const CanvasClass = globalThis.LGraphCanvas;
-    const proto = CanvasClass?.prototype;
-    if (!proto || proto[INSTALL_FLAG]) return;
+function scheduleHydrateScaleHiddenGroups() {
+    requestAnimationFrame(() => hydrateScaleHiddenGroupsWhenReady());
+}
 
-    const originalDrawGroups = proto.drawGroups;
+function patchGroupDrawMethod(proto) {
+    if (!proto || typeof proto.drawGroups !== "function") return false;
+    if (proto.drawGroups[GROUP_DRAW_PATCH_FLAG]) return true;
 
-    proto.drawGroups = function(canvas, ctx) {
+    const originalDrawGroups = proto.drawGroups[GROUP_DRAW_ORIGINAL_KEY] || proto.drawGroups;
+    const wrappedDrawGroups = function(canvas, ctx) {
         if (!isEnabled()) {
             resizeState.hover = null;
+            clearNativeGroupHover(this);
             clearProxyHover(this);
             clearScaleHover(this);
             clearToggleHover(this);
@@ -3138,7 +3578,28 @@ function installGroupStyler() {
             return originalDrawGroups?.call(this, canvas, ctx);
         }
     };
+    wrappedDrawGroups[GROUP_DRAW_PATCH_FLAG] = true;
+    wrappedDrawGroups[GROUP_DRAW_ORIGINAL_KEY] = originalDrawGroups;
+    proto.drawGroups = wrappedDrawGroups;
+    return true;
+}
 
+function installGroupStylerWatchdog(proto) {
+    if (groupControlState.drawWatchdogTimer != null || typeof window === "undefined") return;
+    groupControlState.drawWatchdogTimer = window.setInterval(() => {
+        if (!isEnabled()) return;
+        patchGroupDrawMethod(proto);
+        installGroupResizeInteractions(proto);
+    }, 1000);
+}
+
+function installGroupStyler() {
+    const CanvasClass = globalThis.LGraphCanvas;
+    const proto = CanvasClass?.prototype;
+    if (!proto) return;
+
+    patchGroupDrawMethod(proto);
+    installGroupStylerWatchdog(proto);
     installGroupResizeInteractions(proto);
     proto[INSTALL_FLAG] = true;
 }
@@ -3438,6 +3899,7 @@ app.registerExtension({
             defaultValue: true,
             tooltip: "\u4f7f\u7528 GuliNodes \u7684\u5206\u7ec4\u6807\u9898\u680f\u3001\u8fb9\u6846\u548c\u989c\u8272\u5f3a\u8c03\u6837\u5f0f",
             onChange: () => {
+                syncOfficialGroupReplacementState(app.canvas);
                 window.__ggSyncGroupStylerTopButton?.();
                 markCanvasDirty();
             },
@@ -3469,7 +3931,20 @@ app.registerExtension({
         app[PROMPT_PATCH_FLAG] = true;
     },
 
+    loadedGraphNode() {
+        scheduleHydrateScaleHiddenGroups();
+    },
+
+    async afterConfigureGraph() {
+        hydrateScaleHiddenGroupsWhenReady();
+    },
+
+    getSelectionToolboxCommands(selectedItem) {
+        if (isEnabled() && selectionContainsGroup(selectedItem)) return [];
+    },
+
     async setup() {
+        installGroupReplacementStyles();
         installGroupStyler();
         installHiddenNodePatches();
         installHiddenConnectionsPatchWhenReady();
