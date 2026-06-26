@@ -42,6 +42,8 @@ const SUBWORKFLOW_INDICATOR_ID = "gg-subworkflow-indicators";
 const SUBWORKFLOW_INDICATOR_STYLE_ID = "gg-subworkflow-indicator-style";
 const HIDDEN_NODE_KEY = "__ggGroupScaleHidden";
 const HIDDEN_NODE_OWNER_KEY = "__ggGroupScaleHiddenOwner";
+const HIDDEN_GROUP_KEY = "__ggGroupScaleHidden";
+const HIDDEN_GROUP_OWNER_KEY = "__ggGroupScaleHiddenOwner";
 const HIDDEN_NODE_DRAW_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.hiddenNodeDrawPatched");
 const HIDDEN_NODE_HIT_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.hiddenNodeHitPatched");
 const HIDDEN_CANVAS_DRAW_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.hiddenCanvasDrawPatched");
@@ -277,7 +279,7 @@ function selectionContainsGroup(value, depth = 0) {
 
 function getVisibleGraphGroups(canvas = app.canvas) {
     const graph = getActiveGraph(canvas);
-    return [...(graph?._groups ?? graph?.groups ?? [])].filter(isGraphGroupLike);
+    return [...(graph?._groups ?? graph?.groups ?? [])].filter((group) => isGraphGroupLike(group) && !isGroupScaleHiddenByParent(group));
 }
 
 function getGraphGroups(graph) {
@@ -645,6 +647,19 @@ function normalizeScaleSnapshot(snapshot) {
     };
 }
 
+function normalizeScaleGroupSnapshot(snapshot) {
+    const pos = readVector2(snapshot?.pos);
+    const size = readVector2(snapshot?.size);
+    if (!pos || !size) return null;
+    const title = normalizeCacheTitle(snapshot?.title || snapshot?.name || "Subgraph");
+    return {
+        key: String(snapshot?.key || `${title}:${Math.round(pos[0])},${Math.round(pos[1])},${Math.round(size[0])},${Math.round(size[1])}`),
+        title,
+        pos: [pos[0], pos[1]],
+        size: [Math.max(1, size[0]), Math.max(1, size[1])],
+    };
+}
+
 function normalizeScaleRect(rect) {
     const bounds = readBoundsLike(rect);
     if (!bounds) return null;
@@ -664,9 +679,10 @@ function serializeScaleRect(rect) {
 }
 
 function normalizeScaleState(state) {
-    if (!state || typeof state !== "object" || !Array.isArray(state.nodes)) return null;
-    const nodes = state.nodes.map(normalizeScaleSnapshot).filter(Boolean);
-    if (!nodes.length) return null;
+    if (!state || typeof state !== "object") return null;
+    const nodes = (Array.isArray(state.nodes) ? state.nodes : []).map(normalizeScaleSnapshot).filter(Boolean);
+    const groups = (Array.isArray(state.groups) ? state.groups : []).map(normalizeScaleGroupSnapshot).filter(Boolean);
+    if (!nodes.length && !groups.length) return null;
     const phase = ["hiding", "hidden", "restoring"].includes(state.phase) ? state.phase : (state.hidden ? "hidden" : null);
     const title = String(state.title || state.subworkflowName || state.name || "Subgraph");
     const subworkflowName = String(state.subworkflowName || state.title || state.name || title);
@@ -674,6 +690,7 @@ function normalizeScaleState(state) {
         hidden: !!state.hidden || phase === "hiding" || phase === "hidden",
         phase,
         nodes,
+        groups,
         groupRect: normalizeScaleRect(state.groupRect),
         compactGroupRect: normalizeScaleRect(state.compactGroupRect),
         title,
@@ -692,6 +709,12 @@ function serializeScaleState(state) {
         phase: normalized.phase,
         nodes: normalized.nodes.map((snapshot) => ({
             id: snapshot.id,
+            pos: [snapshot.pos[0], snapshot.pos[1]],
+            size: [snapshot.size[0], snapshot.size[1]],
+        })),
+        groups: normalized.groups.map((snapshot) => ({
+            key: snapshot.key,
+            title: snapshot.title,
             pos: [snapshot.pos[0], snapshot.pos[1]],
             size: [snapshot.size[0], snapshot.size[1]],
         })),
@@ -868,6 +891,10 @@ function isGroupScaleRestoring(group) {
     return readGroupScaleState(group)?.phase === "restoring";
 }
 
+function hasScaleStateContent(state) {
+    return !!(state?.nodes?.length || state?.groups?.length);
+}
+
 function isGroupScaleHiddenNode(node) {
     return !!node?.[HIDDEN_NODE_KEY];
 }
@@ -935,7 +962,7 @@ function rememberGroupScaleState(group, state, canvas = app.canvas) {
     if (!serialized?.hidden) return;
 
     const cacheMeta = getGroupScaleCacheKey(group, serialized, canvas);
-    if (!cacheMeta.nodeIds.length) return;
+    if (!cacheMeta.nodeIds.length && !serialized.groups?.length) return;
 
     const cache = readScaleCache();
     cache.entries[cacheMeta.key] = {
@@ -1098,6 +1125,45 @@ function snapshotGroupScaleNodes(nodes) {
     return snapshots;
 }
 
+function rectCenterInsideRect(innerRect, outerRect) {
+    if (!innerRect || !outerRect) return false;
+    const cx = innerRect.x + innerRect.w / 2;
+    const cy = innerRect.y + innerRect.h / 2;
+    return cx >= outerRect.x && cx < outerRect.x + outerRect.w && cy >= outerRect.y && cy < outerRect.y + outerRect.h;
+}
+
+function collectGroupsInGroup(group, canvas = app.canvas) {
+    const graph = getGroupGraph(group, canvas);
+    const parentRect = getGroupRect(group);
+    if (!graph || !parentRect) return [];
+
+    return getGraphGroups(graph)
+        .filter((candidate) => candidate !== group && isGraphGroupLike(candidate))
+        .map((candidate, index) => ({ candidate, index, rect: getGroupRect(candidate) }))
+        .filter((entry) => rectCenterInsideRect(entry.rect, parentRect))
+        .sort((left, right) => {
+            const areaDelta = (right.rect.w * right.rect.h) - (left.rect.w * left.rect.h);
+            if (areaDelta) return areaDelta;
+            return left.index - right.index;
+        });
+}
+
+function snapshotGroupScaleGroups(group, canvas = app.canvas) {
+    return collectGroupsInGroup(group, canvas)
+        .map(({ candidate, index, rect }) => {
+            if (!rect) return null;
+            const title = getGroupTitle(candidate);
+            return {
+                key: `${title}:${index}:${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.w)},${Math.round(rect.h)}`,
+                title,
+                pos: [rect.x, rect.y],
+                size: [rect.w, rect.h],
+                group: candidate,
+            };
+        })
+        .filter(Boolean);
+}
+
 function boundsFromSnapshots(snapshots) {
     let minX = Infinity;
     let minY = Infinity;
@@ -1177,6 +1243,99 @@ function setNodeScaleHidden(node, hidden, group) {
     }
 }
 
+function isGroupScaleHiddenByParent(group) {
+    return !!group?.[HIDDEN_GROUP_KEY];
+}
+
+function setGroupScaleHiddenByParent(childGroup, hidden, ownerGroup) {
+    if (!childGroup || childGroup === ownerGroup) return;
+    const ownerId = getGroupScaleOwnerId(ownerGroup);
+    if (hidden) {
+        try {
+            Object.defineProperty(childGroup, HIDDEN_GROUP_KEY, {
+                value: true,
+                enumerable: false,
+                configurable: true,
+            });
+            Object.defineProperty(childGroup, HIDDEN_GROUP_OWNER_KEY, {
+                value: ownerId,
+                enumerable: false,
+                configurable: true,
+            });
+        } catch (_) {
+            childGroup[HIDDEN_GROUP_KEY] = true;
+            childGroup[HIDDEN_GROUP_OWNER_KEY] = ownerId;
+        }
+        return;
+    }
+
+    if (!childGroup[HIDDEN_GROUP_OWNER_KEY] || childGroup[HIDDEN_GROUP_OWNER_KEY] === ownerId) {
+        try {
+            delete childGroup[HIDDEN_GROUP_KEY];
+            delete childGroup[HIDDEN_GROUP_OWNER_KEY];
+        } catch (_) {
+            childGroup[HIDDEN_GROUP_KEY] = false;
+            childGroup[HIDDEN_GROUP_OWNER_KEY] = null;
+        }
+    }
+}
+
+function clearHiddenGroupSelection(canvas, groups) {
+    const hidden = new Set(groups);
+    if (hidden.has(canvas?.selected_group)) canvas.selected_group = null;
+    const selectedItems = canvas?.selected_items ?? canvas?.selectedItems;
+    if (Array.isArray(selectedItems)) {
+        for (let i = selectedItems.length - 1; i >= 0; i--) {
+            if (hidden.has(selectedItems[i])) selectedItems.splice(i, 1);
+        }
+    }
+}
+
+function rectDistanceScore(rect, targetRect) {
+    if (!rect || !targetRect) return 0;
+    const delta = Math.abs(rect.x - targetRect.x)
+        + Math.abs(rect.y - targetRect.y)
+        + Math.abs(rect.w - targetRect.w)
+        + Math.abs(rect.h - targetRect.h);
+    return Math.max(0, 80 - delta / 8);
+}
+
+function groupSnapshotToRect(snapshot) {
+    const normalized = normalizeScaleGroupSnapshot(snapshot);
+    return normalized
+        ? { x: normalized.pos[0], y: normalized.pos[1], w: normalized.size[0], h: normalized.size[1] }
+        : null;
+}
+
+function findGroupForScaleSnapshot(parentGroup, snapshot, canvas = app.canvas, used = new Set(), compactRect = null) {
+    if (snapshot?.group && isGraphGroupLike(snapshot.group) && !used.has(snapshot.group)) return snapshot.group;
+
+    const graph = getGroupGraph(parentGroup, canvas);
+    const originalRect = groupSnapshotToRect(snapshot);
+    const title = normalizeCacheTitle(snapshot?.title);
+    let best = null;
+    let bestScore = -Infinity;
+
+    for (const candidate of getGraphGroups(graph)) {
+        if (!candidate || candidate === parentGroup || used.has(candidate) || !isGraphGroupLike(candidate)) continue;
+        const rect = getGroupRect(candidate);
+        if (!rect) continue;
+
+        let score = 0;
+        if (normalizeCacheTitle(getGroupTitle(candidate)) === title) score += 120;
+        score += rectDistanceScore(rect, originalRect);
+        score += rectDistanceScore(rect, compactRect);
+        if (isGroupScaleHiddenByParent(candidate)) score += 12;
+
+        if (score > bestScore) {
+            best = candidate;
+            bestScore = score;
+        }
+    }
+
+    return bestScore > 0 ? best : null;
+}
+
 function clearHiddenNodeSelection(canvas, nodes) {
     const hidden = new Set(nodes);
     const clearSelectionMap = (selected) => {
@@ -1222,6 +1381,16 @@ function interpolateRect(from, to, progress) {
     };
 }
 
+function setScaleEntryRect(entry, rect) {
+    if (entry?.group) {
+        setGroupRect(entry.group, rect);
+        return;
+    }
+    if (entry?.node) {
+        setNodeRect(entry.node, rect);
+    }
+}
+
 function animateNodeRects(group, entries, canvas, onFinish, groupEntry = null) {
     cancelScaleAnimation(group);
     if (!entries.length && !groupEntry) {
@@ -1238,7 +1407,7 @@ function animateNodeRects(group, entries, canvas, onFinish, groupEntry = null) {
             setGroupRect(group, interpolateRect(groupEntry.from, groupEntry.to, progress));
         }
         for (const entry of entries) {
-            setNodeRect(entry.node, interpolateRect(entry.from, entry.to, progress));
+            setScaleEntryRect(entry, interpolateRect(entry.from, entry.to, progress));
         }
         markCanvasDirty();
 
@@ -1273,7 +1442,8 @@ function getScaleCandidateNodes(group, canvas) {
 function applyHiddenScaleState(group, state, canvas = app.canvas) {
     const graph = getGroupGraph(group, canvas);
     const snapshots = (state?.nodes ?? []).map(normalizeScaleSnapshot).filter(Boolean);
-    if (!graph || !snapshots.length) return false;
+    const groupSnapshots = (state?.groups ?? []).map(normalizeScaleGroupSnapshot).filter(Boolean);
+    if (!graph || (!snapshots.length && !groupSnapshots.length)) return false;
 
     const originalGroupRect = normalizeScaleRect(state.groupRect) ?? getGroupRect(group);
     const compactGroupRect = normalizeScaleRect(state.compactGroupRect)
@@ -1281,8 +1451,10 @@ function applyHiddenScaleState(group, state, canvas = app.canvas) {
         ?? getGroupRect(group);
     if (!compactGroupRect) return false;
 
-    const contentRect = boundsFromSnapshots(snapshots);
+    const contentRect = boundsFromSnapshots([...snapshots, ...groupSnapshots]);
     const hiddenNodes = [];
+    const hiddenGroups = [];
+    const usedGroups = new Set();
     setGroupRect(group, compactGroupRect);
 
     for (const snapshot of snapshots) {
@@ -1296,13 +1468,25 @@ function applyHiddenScaleState(group, state, canvas = app.canvas) {
         hiddenNodes.push(node);
     }
 
-    if (!hiddenNodes.length) return false;
-    clearHiddenNodeSelection(canvas, hiddenNodes);
+    for (const snapshot of groupSnapshots) {
+        const compactRect = contentRect ? compactRectForSnapshot(snapshot, contentRect, compactGroupRect) : null;
+        const childGroup = findGroupForScaleSnapshot(group, snapshot, canvas, usedGroups, compactRect);
+        if (!childGroup) continue;
+        usedGroups.add(childGroup);
+        if (compactRect) setGroupRect(childGroup, compactRect);
+        setGroupScaleHiddenByParent(childGroup, true, group);
+        hiddenGroups.push(childGroup);
+    }
+
+    if (!hiddenNodes.length && !hiddenGroups.length) return false;
+    if (hiddenNodes.length) clearHiddenNodeSelection(canvas, hiddenNodes);
+    if (hiddenGroups.length) clearHiddenGroupSelection(canvas, hiddenGroups);
     writeGroupScaleState(group, {
         ...state,
         hidden: true,
         phase: "hidden",
         nodes: snapshots,
+        groups: groupSnapshots,
         groupRect: originalGroupRect,
         compactGroupRect,
         title: state.title || state.subworkflowName || getGroupTitle(group),
@@ -1317,7 +1501,8 @@ function applyHiddenScaleState(group, state, canvas = app.canvas) {
 function restoreExpiredScaleState(group, state, canvas = app.canvas) {
     const graph = getGroupGraph(group, canvas);
     const snapshots = (state?.nodes ?? []).map(normalizeScaleSnapshot).filter(Boolean);
-    if (!graph || !snapshots.length) return false;
+    const groupSnapshots = (state?.groups ?? []).map(normalizeScaleGroupSnapshot).filter(Boolean);
+    if (!graph || (!snapshots.length && !groupSnapshots.length)) return false;
 
     const targetGroupRect = normalizeScaleRect(state.groupRect) ?? getGroupRect(group);
     if (targetGroupRect) {
@@ -1325,6 +1510,7 @@ function restoreExpiredScaleState(group, state, canvas = app.canvas) {
     }
 
     let restored = false;
+    const usedGroups = new Set();
     for (const snapshot of snapshots) {
         const node = findNodeById(graph, snapshot.id);
         if (!node) continue;
@@ -1335,6 +1521,19 @@ function restoreExpiredScaleState(group, state, canvas = app.canvas) {
             h: snapshot.size[1],
         });
         setNodeScaleHidden(node, false, group);
+        restored = true;
+    }
+    for (const snapshot of groupSnapshots) {
+        const childGroup = findGroupForScaleSnapshot(group, snapshot, canvas, usedGroups);
+        if (!childGroup) continue;
+        usedGroups.add(childGroup);
+        setGroupRect(childGroup, {
+            x: snapshot.pos[0],
+            y: snapshot.pos[1],
+            w: snapshot.size[0],
+            h: snapshot.size[1],
+        });
+        setGroupScaleHiddenByParent(childGroup, false, group);
         restored = true;
     }
 
@@ -1363,9 +1562,13 @@ function hideGroupScaled(group, canvas = app.canvas) {
         ? existing.nodes
         : snapshotGroupScaleNodes(getScaleCandidateNodes(group, canvas));
     const normalizedSnapshots = snapshots.map(normalizeScaleSnapshot).filter(Boolean);
-    if (!normalizedSnapshots.length) return false;
+    const groupSnapshots = existing?.phase === "restoring"
+        ? (existing.groups ?? [])
+        : snapshotGroupScaleGroups(group, canvas);
+    const normalizedGroupSnapshots = groupSnapshots.map(normalizeScaleGroupSnapshot).filter(Boolean);
+    if (!normalizedSnapshots.length && !normalizedGroupSnapshots.length) return false;
 
-    const contentRect = boundsFromSnapshots(normalizedSnapshots);
+    const contentRect = boundsFromSnapshots([...normalizedSnapshots, ...normalizedGroupSnapshots]);
     if (!contentRect) return false;
 
     const compactGroupRect = normalizeScaleRect(existing?.compactGroupRect) ?? getCompactGroupRect(originalGroupRect, canvas);
@@ -1374,6 +1577,8 @@ function hideGroupScaled(group, canvas = app.canvas) {
     const indicatorColor = ensureScaleIndicatorColor(group, existing);
 
     const entries = [];
+    const hiddenGroups = [];
+    const usedGroups = new Set();
     for (const snapshot of normalizedSnapshots) {
         const node = findNodeById(graph, snapshot.id);
         const from = getNodeRect(node);
@@ -1385,13 +1590,29 @@ function hideGroupScaled(group, canvas = app.canvas) {
             to: compactRectForSnapshot(snapshot, contentRect, compactGroupRect),
         });
     }
+    for (const snapshot of normalizedGroupSnapshots) {
+        const compactRect = compactRectForSnapshot(snapshot, contentRect, compactGroupRect);
+        const childGroup = findGroupForScaleSnapshot(group, snapshot, canvas, usedGroups, compactRect);
+        const from = getGroupRect(childGroup);
+        if (!childGroup || !from) continue;
+        usedGroups.add(childGroup);
+        setGroupScaleHiddenByParent(childGroup, true, group);
+        hiddenGroups.push(childGroup);
+        entries.push({
+            group: childGroup,
+            from,
+            to: compactRect,
+        });
+    }
     if (!entries.length) return false;
-    clearHiddenNodeSelection(canvas, entries.map((entry) => entry.node));
+    clearHiddenNodeSelection(canvas, entries.filter((entry) => entry.node).map((entry) => entry.node));
+    clearHiddenGroupSelection(canvas, hiddenGroups);
 
     writeGroupScaleState(group, {
         hidden: true,
         phase: "hiding",
         nodes: normalizedSnapshots,
+        groups: normalizedGroupSnapshots,
         groupRect: originalGroupRect,
         compactGroupRect,
         title: subworkflowName,
@@ -1406,13 +1627,15 @@ function hideGroupScaled(group, canvas = app.canvas) {
         if (!state || state.phase !== "hiding") return;
         setGroupRect(group, compactGroupRect);
         for (const entry of entries) {
-            setNodeRect(entry.node, entry.to);
-            setNodeScaleHidden(entry.node, true, group);
+            setScaleEntryRect(entry, entry.to);
+            if (entry.node) setNodeScaleHidden(entry.node, true, group);
+            if (entry.group) setGroupScaleHiddenByParent(entry.group, true, group);
         }
         writeGroupScaleState(group, {
             hidden: true,
             phase: "hidden",
             nodes: normalizedSnapshots,
+            groups: normalizedGroupSnapshots,
             groupRect: originalGroupRect,
             compactGroupRect,
             title: subworkflowName,
@@ -1430,14 +1653,15 @@ function hideGroupScaled(group, canvas = app.canvas) {
 
 function restoreGroupScaled(group, canvas = app.canvas) {
     const state = readGroupScaleState(group);
-    if (!group || !state?.nodes?.length) return false;
+    if (!group || (!state?.nodes?.length && !state?.groups?.length)) return false;
 
     const graph = getGroupGraph(group, canvas);
     const currentGroupRect = getGroupRect(group);
     const targetGroupRect = normalizeScaleRect(state.groupRect) ?? currentGroupRect;
     const compactGroupRect = normalizeScaleRect(state.compactGroupRect) ?? currentGroupRect;
     const entries = [];
-    for (const snapshot of state.nodes) {
+    const usedGroups = new Set();
+    for (const snapshot of state.nodes ?? []) {
         const normalized = normalizeScaleSnapshot(snapshot);
         const node = findNodeById(graph, normalized?.id);
         const from = getNodeRect(node);
@@ -1445,6 +1669,24 @@ function restoreGroupScaled(group, canvas = app.canvas) {
         setNodeScaleHidden(node, true, group);
         entries.push({
             node,
+            from,
+            to: {
+                x: normalized.pos[0],
+                y: normalized.pos[1],
+                w: normalized.size[0],
+                h: normalized.size[1],
+            },
+        });
+    }
+    for (const snapshot of state.groups ?? []) {
+        const normalized = normalizeScaleGroupSnapshot(snapshot);
+        const childGroup = findGroupForScaleSnapshot(group, normalized, canvas, usedGroups);
+        const from = getGroupRect(childGroup);
+        if (!childGroup || !normalized || !from) continue;
+        usedGroups.add(childGroup);
+        setGroupScaleHiddenByParent(childGroup, true, group);
+        entries.push({
+            group: childGroup,
             from,
             to: {
                 x: normalized.pos[0],
@@ -1464,7 +1706,8 @@ function restoreGroupScaled(group, canvas = app.canvas) {
     writeGroupScaleState(group, {
         hidden: false,
         phase: "restoring",
-        nodes: state.nodes,
+        nodes: state.nodes ?? [],
+        groups: state.groups ?? [],
         groupRect: targetGroupRect,
         compactGroupRect,
         title: state.title || getGroupTitle(group),
@@ -1479,8 +1722,9 @@ function restoreGroupScaled(group, canvas = app.canvas) {
             setGroupRect(group, targetGroupRect);
         }
         for (const entry of entries) {
-            setNodeRect(entry.node, entry.to);
-            setNodeScaleHidden(entry.node, false, group);
+            setScaleEntryRect(entry, entry.to);
+            if (entry.node) setNodeScaleHidden(entry.node, false, group);
+            if (entry.group) setGroupScaleHiddenByParent(entry.group, false, group);
         }
         clearGroupScaleState(group);
         touchScaleGraph(group, canvas);
@@ -1500,7 +1744,7 @@ function getRestorableScaleGroups(canvas = app.canvas) {
     const graph = getActiveGraph(canvas);
     return getGraphGroups(graph).filter((group) => {
         const state = readGroupScaleState(group);
-        return !!state?.nodes?.length && (
+        return hasScaleStateContent(state) && (
             state.hidden
             || state.phase === "hiding"
             || state.phase === "hidden"
@@ -1669,17 +1913,28 @@ function getSubworkflowIndicatorEntries(canvas = app.canvas) {
     const seen = new Set();
     for (const group of getRestorableScaleGroups(canvas)) {
         let state = readGroupScaleState(group);
-        if (!state?.nodes?.length) continue;
+        if (!hasScaleStateContent(state)) continue;
 
         const ownerKey = `owner:${getGroupScaleOwnerId(group)}`;
-        const nodesKey = `nodes:${state.nodes
+        const nodesKey = `nodes:${(state.nodes ?? [])
             .map((snapshot) => normalizeScaleSnapshot(snapshot)?.id)
             .filter(Boolean)
             .sort()
             .join("|")}`;
-        if (seen.has(ownerKey) || seen.has(nodesKey)) continue;
+        const groupsKey = `groups:${(state.groups ?? [])
+            .map((snapshot) => {
+                const normalized = normalizeScaleGroupSnapshot(snapshot);
+                return normalized ? `${normalized.title}:${normalized.key}` : null;
+            })
+            .filter(Boolean)
+            .sort()
+            .join("|")}`;
+        const hasNodesKey = nodesKey !== "nodes:";
+        const hasGroupsKey = groupsKey !== "groups:";
+        if (seen.has(ownerKey) || (hasNodesKey && seen.has(nodesKey)) || (hasGroupsKey && seen.has(groupsKey))) continue;
         seen.add(ownerKey);
-        seen.add(nodesKey);
+        if (hasNodesKey) seen.add(nodesKey);
+        if (hasGroupsKey) seen.add(groupsKey);
 
         let color = normalizeHex(state.indicatorColor);
         if (!color) {

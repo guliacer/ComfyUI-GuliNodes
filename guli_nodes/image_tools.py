@@ -1,4 +1,3 @@
-import asyncio
 import torch
 import torch.nn.functional as torch_F
 from PIL import Image, ImageDraw, ImageFont, ImageOps
@@ -14,16 +13,6 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-
-try:
-    from aiohttp import web
-except Exception:
-    web = None
-
-try:
-    from server import PromptServer
-except Exception:
-    PromptServer = None
 
 try:
     from comfy_api.latest import io
@@ -78,214 +67,6 @@ def _pil_to_tensor(image: Image.Image, device=None, dtype=torch.float32) -> torc
     elif dtype is not None:
         tensor = tensor.to(dtype=dtype)
     return tensor
-
-
-IMAGE_FOLDER_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp", "tif", "tiff"}
-_IMAGE_FOLDER_ROUTES_REGISTERED = False
-
-
-def _natural_sort_key(value: str) -> list[Any]:
-    import re
-
-    parts = re.split(r"(\d+)", str(value).lower())
-    return [int(part) if part.isdigit() else part for part in parts]
-
-
-def _is_supported_image_path(path: str | Path) -> bool:
-    return Path(path).suffix.lower().lstrip(".") in IMAGE_FOLDER_EXTENSIONS
-
-
-def _image_folder_item(path: str | Path, selected: bool = True) -> dict[str, Any]:
-    image_path = Path(path)
-    stat = image_path.stat()
-    return {
-        "path": str(image_path.resolve()),
-        "name": image_path.name,
-        "selected": bool(selected),
-        "mtime": stat.st_mtime,
-        "size": stat.st_size,
-    }
-
-
-def _scan_image_folder(directory: str) -> list[dict[str, Any]]:
-    if not directory:
-        return []
-
-    folder = Path(directory).expanduser()
-    if not folder.is_dir():
-        return []
-
-    images = []
-    for entry in folder.iterdir():
-        if entry.is_file() and _is_supported_image_path(entry):
-            try:
-                images.append(_image_folder_item(entry, True))
-            except OSError:
-                continue
-    return sorted(images, key=lambda item: _natural_sort_key(item["name"]))
-
-
-def _parse_image_folder_list(value: Any) -> list[dict[str, Any]]:
-    if isinstance(value, list):
-        raw_items = value
-    else:
-        text = str(value or "").strip()
-        if not text:
-            return []
-        try:
-            raw_items = json.loads(text)
-        except Exception:
-            raw_items = [line.strip() for line in text.splitlines() if line.strip()]
-
-    parsed = []
-    for item in raw_items:
-        if isinstance(item, str):
-            path = item
-            selected = True
-        elif isinstance(item, dict):
-            path = item.get("path") or item.get("file") or ""
-            selected = item.get("selected", True)
-        else:
-            continue
-
-        if not path:
-            continue
-
-        parsed.append({
-            "path": str(path),
-            "name": Path(str(path)).name,
-            "selected": bool(selected),
-        })
-    return parsed
-
-
-def _selected_image_paths(文件夹路径: str, 图像列表: Any) -> list[str]:
-    items = _parse_image_folder_list(图像列表)
-    if not items:
-        items = _scan_image_folder(文件夹路径)
-
-    paths = []
-    for item in items:
-        if not item.get("selected", True):
-            continue
-        path = str(item.get("path") or "")
-        if path and os.path.isfile(path) and _is_supported_image_path(path):
-            paths.append(path)
-    return paths
-
-
-def _pick_image_path(文件夹路径: str, 图像列表: Any, 当前索引: int, 循环: bool) -> tuple[str, int, int]:
-    paths = _selected_image_paths(文件夹路径, 图像列表)
-    if not paths:
-        raise FileNotFoundError("请先选择包含图片的文件夹，并在节点内至少选择一张图片。")
-
-    index = max(0, int(当前索引 or 0))
-    if 循环:
-        actual_index = index % len(paths)
-    else:
-        actual_index = min(index, len(paths) - 1)
-
-    return paths[actual_index], actual_index, len(paths)
-
-
-def _select_image_folder_dialog() -> str:
-    if os.name == "nt":
-        try:
-            import ctypes
-            from ctypes import wintypes
-
-            BIF_RETURNONLYFSDIRS = 0x0001
-            BIF_NEWDIALOGSTYLE = 0x0040
-
-            class BROWSEINFOW(ctypes.Structure):
-                _fields_ = [
-                    ("hwndOwner", wintypes.HWND),
-                    ("pidlRoot", wintypes.LPVOID),
-                    ("pszDisplayName", wintypes.LPWSTR),
-                    ("lpszTitle", wintypes.LPCWSTR),
-                    ("ulFlags", wintypes.UINT),
-                    ("lpfn", wintypes.LPVOID),
-                    ("lParam", wintypes.LPARAM),
-                    ("iImage", ctypes.c_int),
-                ]
-
-            display_name = ctypes.create_unicode_buffer(260)
-            browse_info = BROWSEINFOW(
-                hwndOwner=None,
-                pidlRoot=None,
-                pszDisplayName=display_name,
-                lpszTitle="选择图片文件夹",
-                ulFlags=BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE,
-                lpfn=None,
-                lParam=0,
-                iImage=0,
-            )
-
-            shell32 = ctypes.windll.shell32
-            ole32 = ctypes.windll.ole32
-            pidl = shell32.SHBrowseForFolderW(ctypes.byref(browse_info))
-            if not pidl:
-                return ""
-
-            path_buffer = ctypes.create_unicode_buffer(32768)
-            ok = shell32.SHGetPathFromIDListW(pidl, path_buffer)
-            ole32.CoTaskMemFree(pidl)
-            return path_buffer.value if ok else ""
-        except Exception:
-            pass
-
-    try:
-        import tkinter as tk
-        from tkinter import filedialog
-
-        root = tk.Tk()
-        root.withdraw()
-        root.attributes("-topmost", True)
-        try:
-            return filedialog.askdirectory(title="选择图片文件夹") or ""
-        finally:
-            root.destroy()
-    except Exception:
-        return ""
-
-
-def _register_image_folder_routes() -> None:
-    global _IMAGE_FOLDER_ROUTES_REGISTERED
-    if _IMAGE_FOLDER_ROUTES_REGISTERED or PromptServer is None or getattr(PromptServer, "instance", None) is None or web is None:
-        return
-
-    @PromptServer.instance.routes.get("/guli/image-folder/list")
-    async def guli_image_folder_list(request):
-        directory = request.query.get("directory", "")
-        images = _scan_image_folder(directory)
-        return web.json_response({"path": directory, "images": images})
-
-    @PromptServer.instance.routes.get("/guli/image-folder/preview")
-    async def guli_image_folder_preview(request):
-        image_path = request.query.get("path", "")
-        if not image_path or not os.path.isfile(image_path):
-            raise web.HTTPNotFound(text=f"找不到图片文件: {image_path}")
-        if not _is_supported_image_path(image_path):
-            raise web.HTTPBadRequest(text=f"不支持的图片格式: {Path(image_path).suffix}")
-        return web.FileResponse(path=image_path)
-
-    @PromptServer.instance.routes.post("/guli/image-folder/select")
-    async def guli_image_folder_select(request):
-        try:
-            directory = await asyncio.to_thread(_select_image_folder_dialog)
-        except Exception as exc:
-            raise web.HTTPInternalServerError(text=str(exc))
-
-        if not directory:
-            return web.json_response({"path": "", "images": []})
-
-        images = _scan_image_folder(directory)
-        return web.json_response({"path": directory, "images": images})
-
-    _IMAGE_FOLDER_ROUTES_REGISTERED = True
-
-
-_register_image_folder_routes()
 
 
 def _resolve_output_prefix(prefix: str) -> str:
@@ -486,52 +267,6 @@ def concatenate_images_horizontally(images: list, labels: list = None, font_size
         draw.text((x, H + label_height // 2), text, fill=(0, 0, 0), font=font, anchor="mm")
     final_np = np.array(new_img).astype(np.float32) / 255.0
     return torch.from_numpy(final_np).unsqueeze(0)
-
-
-class GGImageFolderSequenceLoad:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "文件夹路径": ("STRING", {"default": "", "multiline": False}),
-                "图像列表": ("STRING", {"default": "[]", "multiline": True}),
-                "当前索引": ("INT", {"default": 0, "min": 0, "max": 999999, "step": 1}),
-                "循环": ("BOOLEAN", {"default": True}),
-            }
-        }
-
-    RETURN_TYPES = ("IMAGE", "STRING", "STRING", "INT")
-    RETURN_NAMES = ("图像", "文件名", "路径", "当前序号")
-    FUNCTION = "load_image"
-    CATEGORY = "GuliNodes/图像"
-
-    @classmethod
-    def IS_CHANGED(cls, 文件夹路径: str = "", 图像列表: str = "[]", 当前索引: int = 0, 循环: bool = True):
-        try:
-            image_path, actual_index, total = _pick_image_path(文件夹路径, 图像列表, 当前索引, 循环)
-            stat = os.stat(image_path)
-            payload = {
-                "path": str(Path(image_path).resolve()),
-                "index": actual_index,
-                "total": total,
-                "mtime": stat.st_mtime,
-                "size": stat.st_size,
-            }
-            return json.dumps(payload, sort_keys=True)
-        except Exception as exc:
-            return f"error:{type(exc).__name__}:{exc}:{文件夹路径}:{当前索引}:{图像列表}"
-
-    def load_image(self, 文件夹路径: str = "", 图像列表: str = "[]", 当前索引: int = 0, 循环: bool = True):
-        image_path, actual_index, _total = _pick_image_path(文件夹路径, 图像列表, 当前索引, 循环)
-
-        try:
-            with Image.open(image_path) as image:
-                image = ImageOps.exif_transpose(image)
-                tensor = _pil_to_tensor(image).unsqueeze(0)
-        except Exception as exc:
-            raise RuntimeError(f"图片读取失败: {image_path}\n{exc}") from exc
-
-        return (tensor, Path(image_path).name, str(Path(image_path).resolve()), actual_index + 1)
 
 
 class GGRGBAtoRGB:
@@ -1900,7 +1635,6 @@ if io is not None:
 
 
 NODE_CLASS_MAPPINGS = {
-    "GGImageFolderSequenceLoad": GGImageFolderSequenceLoad,
     "GGRGBAtoRGB": GGRGBAtoRGB,
     "GGImageResize": GGImageResize,
     "GGImageCrop": GGImageCrop,
@@ -1921,7 +1655,6 @@ NODE_CLASS_MAPPINGS = {
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "GGImageFolderSequenceLoad": "GG 图像文件夹加载",
     "GGRGBAtoRGB": "GG RGBA转RGB",
     "GGImageResize": "GG 尺寸调整",
     "GGImageCrop": "GG 图像裁剪",
