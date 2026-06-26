@@ -105,6 +105,16 @@ app.registerExtension({
                     ${ggIcon("title", 21)}
                 </button>
                 <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <button id="btn-pick-color" class="tool-btn" data-tooltip="取色：复制节点/分组上色" style="background:transparent;border:none;padding:4px;">
+                    ${ggIcon("pipette", 21)}
+                </button>
+                <button id="btn-paste-color" class="tool-btn" data-tooltip="粘贴上色到选中节点/分组" style="background:transparent;border:none;padding:4px;">
+                    ${ggIcon("paste", 21)}
+                </button>
+                <button id="btn-clear-color" class="tool-btn" data-tooltip="删除节点颜色" style="background:transparent;border:none;padding:4px;">
+                    ${ggIcon("trash", 21)}
+                </button>
+                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
                 <div id="gg-color-presets" style="display:flex;align-items:center;gap:2px;"></div>
                 <button id="btn-custom-color-1" class="tool-btn custom-color-btn" data-index="1" data-tooltip="自定义颜色 1" style="background:transparent;border:none;padding:4px;">
                     <span class="color-dot custom-dot" style="background:#8fa39b;"></span>
@@ -112,18 +122,19 @@ app.registerExtension({
                 <button id="btn-custom-color-2" class="tool-btn custom-color-btn" data-index="2" data-tooltip="自定义颜色 2" style="background:transparent;border:none;padding:4px;">
                     <span class="color-dot custom-dot" style="background:#c9a7a2;"></span>
                 </button>
-                <button id="btn-clear-color" class="tool-btn" data-tooltip="删除节点颜色" style="background:transparent;border:none;padding:4px;">
-                    ${ggIcon("trash", 21)}
-                </button>
-                <button id="btn-custom-action" class="tool-btn" data-tooltip="自定义" style="background:transparent;border:none;padding:4px;">
-                    ${ggIcon("more", 21)}
-                </button>
                 <input id="gg-custom-color-input-1" type="color" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
                 <input id="gg-custom-color-input-2" type="color" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
             </div>
             <div class="toolbar-row-divider" style="width:100%;height:1px;background:#e0e0e0;"></div>
             <!-- 尺寸调节工具栏 -->
             <div class="main-section" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:center;">
+                <button id="btn-copy-size" class="tool-btn" data-tooltip="复制节点尺寸" style="background:transparent;border:none;padding:4px;">
+                    ${ggIcon("copy", 21)}
+                </button>
+                <button id="btn-paste-size" class="tool-btn" data-tooltip="粘贴尺寸到选中节点" style="background:transparent;border:none;padding:4px;">
+                    ${ggIcon("paste", 21)}
+                </button>
+                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
                 <button id="btn-same-width" class="tool-btn" data-tooltip="自动宽度" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("width", 21)}
                 </button>
@@ -1190,14 +1201,20 @@ app.registerExtension({
             "#c3a6a0",
             "#b7a6bd",
             "#d1c6a8",
+            "#8792a6",
         ];
         const GG_NODE_COLOR_STATE_KEY = "_gg_toolbar_color_state";
         const GG_GROUP_COLOR_STATE_KEY = "gg_toolbar_color_state";
+        const GG_COLOR_CLIPBOARD_KEY = "ggNodes_colorClipboard";
+        const GG_SIZE_CLIPBOARD_KEY = "ggNodes_sizeClipboard";
         const customColorDefaults = ["#8fa39b", "#c9a7a2"];
         let colorMode = "node";
         let paintAction = null;
         let paintEnabled = false;
         let selectedPaintColor = morandiColors[0];
+        let copiedColorState = null;
+        let copiedNodeSize = null;
+        let oneShotPaintEnabled = false;
 
         function hexToRgb(hex) {
             const normalized = hex.replace("#", "");
@@ -1358,6 +1375,299 @@ app.registerExtension({
             return state ? JSON.parse(JSON.stringify(state)) : null;
         }
 
+        function getOfficialColorOption(target) {
+            try {
+                return isOfficialColorable(target) ? (target.getColorOption() || null) : null;
+            } catch {
+                return null;
+            }
+        }
+
+        function buildNodeStateFromGroupColor(color) {
+            if (!color) return null;
+            return {
+                bodyColor: color,
+                bodyAlpha: 0.24,
+                titleColor: shadeHex(color, 20),
+            };
+        }
+
+        function normalizeToolbarColorState(state) {
+            if (!state || typeof state !== "object") return null;
+            const nodeState = cloneColorState(state.nodeState || state);
+            const groupColor = state.groupColor || nodeState?.bodyColor || nodeState?.titleColor || null;
+            if (!groupColor && !nodeState?.bodyColor && !nodeState?.titleColor) return null;
+            return {
+                version: 1,
+                sourceType: state.sourceType || "node",
+                groupColor,
+                nodeState: nodeState || buildNodeStateFromGroupColor(groupColor),
+            };
+        }
+
+        function loadColorClipboard() {
+            try {
+                return normalizeToolbarColorState(JSON.parse(localStorage.getItem(GG_COLOR_CLIPBOARD_KEY) || "null"));
+            } catch {
+                return null;
+            }
+        }
+
+        function saveColorClipboard(state) {
+            copiedColorState = normalizeToolbarColorState(state);
+            if (copiedColorState) {
+                localStorage.setItem(GG_COLOR_CLIPBOARD_KEY, JSON.stringify(copiedColorState));
+            } else {
+                localStorage.removeItem(GG_COLOR_CLIPBOARD_KEY);
+            }
+            refreshColorClipboardButtons();
+        }
+
+        function getReadableTargetName(target) {
+            return isGraphGroup(target) ? "分组" : "节点";
+        }
+
+        function getColorStateFromTarget(target) {
+            if (!isColorTarget(target)) return null;
+
+            if (isGraphGroup(target)) {
+                const option = getOfficialColorOption(target);
+                const groupColor = getPersistedColorState(target)?.groupColor
+                    || target.color
+                    || option?.groupcolor
+                    || option?.color
+                    || option?.bgcolor
+                    || null;
+                if (!groupColor) return null;
+                return normalizeToolbarColorState({
+                    sourceType: "group",
+                    groupColor,
+                    nodeState: buildNodeStateFromGroupColor(groupColor),
+                });
+            }
+
+            const persisted = getPersistedColorState(target) || cloneColorState(target._ggColorOverlay);
+            const option = getOfficialColorOption(target);
+            const bodyColor = persisted?.bodyColor
+                || target.bgcolor
+                || target.groupcolor
+                || option?.bgcolor
+                || option?.groupcolor
+                || null;
+            const titleColor = persisted?.titleColor
+                || target.title_color
+                || target.color
+                || option?.color
+                || null;
+            if (!bodyColor && !titleColor) return null;
+
+            return normalizeToolbarColorState({
+                sourceType: "node",
+                groupColor: target.groupcolor || option?.groupcolor || bodyColor || titleColor,
+                nodeState: {
+                    bodyColor,
+                    bodyAlpha: persisted?.bodyAlpha ?? (bodyColor && titleColor ? 0.24 : 0.32),
+                    titleColor,
+                },
+            });
+        }
+
+        function copyColorFromTarget(target) {
+            const state = getColorStateFromTarget(target);
+            if (!state) {
+                showToast(`这个${getReadableTargetName(target)}还没有可复制的上色`, "error");
+                return false;
+            }
+            saveColorClipboard(state);
+            showToast(`已取色：${getReadableTargetName(target)}上色信息`, "info");
+            return true;
+        }
+
+        function applyColorStateToTarget(target, state) {
+            const normalized = normalizeToolbarColorState(state);
+            if (!target || !normalized) return;
+
+            if (isGraphGroup(target)) {
+                const groupColor = normalized.groupColor
+                    || normalized.nodeState?.bodyColor
+                    || normalized.nodeState?.titleColor;
+                if (!groupColor) return;
+                if (isOfficialColorable(target)) {
+                    target.setColorOption({ groupcolor: groupColor });
+                } else {
+                    target.color = groupColor;
+                }
+                target.color = groupColor;
+                persistColorState(target);
+                target._ggRestoredColorStateHash = JSON.stringify(getPersistedColorState(target));
+                return;
+            }
+
+            const nodeState = cloneColorState(normalized.nodeState || buildNodeStateFromGroupColor(normalized.groupColor));
+            if (!nodeState?.bodyColor && !nodeState?.titleColor) return;
+
+            if (nodeState.bodyColor) {
+                target.bgcolor = nodeState.bodyColor;
+            } else {
+                delete target.bgcolor;
+            }
+
+            if (nodeState.titleColor) {
+                target.color = nodeState.titleColor;
+                target.title_color = nodeState.titleColor;
+            } else {
+                delete target.color;
+                delete target.title_color;
+            }
+
+            if (normalized.groupColor || nodeState.bodyColor) {
+                target.groupcolor = normalized.groupColor || nodeState.bodyColor;
+            } else {
+                delete target.groupcolor;
+            }
+
+            ensureColorOverlay(target);
+            target._ggColorOverlay = nodeState;
+            persistColorState(target);
+            target._ggRestoredColorStateHash = JSON.stringify(getPersistedColorState(target));
+            target.setDirtyCanvas?.(true, true);
+        }
+
+        function applyColorStateToTargets(targets, state) {
+            const normalized = normalizeToolbarColorState(state);
+            const validTargets = uniqueColorTargets(targets);
+            if (!normalized || validTargets.length === 0) return false;
+            withGraphChange(validTargets, () => {
+                validTargets.forEach(target => applyColorStateToTarget(target, normalized));
+            });
+            showToast(`已粘贴上色到 ${validTargets.length} 个目标`, "info");
+            return true;
+        }
+
+        function refreshColorClipboardButtons() {
+            const pickButton = document.getElementById("btn-pick-color");
+            const pasteButton = document.getElementById("btn-paste-color");
+            pickButton?.classList.toggle("active", paintAction?.type === "pick");
+            pasteButton?.classList.toggle("active", paintAction?.type === "paste");
+            if (pasteButton) pasteButton.style.opacity = copiedColorState ? "1" : "0.48";
+        }
+
+        function startOneShotPaintAction(action) {
+            oneShotPaintEnabled = !paintEnabled;
+            setPaintEnabled(true);
+            paintAction = action;
+            refreshColorButtons();
+            refreshColorClipboardButtons();
+        }
+
+        function finishOneShotPaintAction() {
+            const shouldDisable = oneShotPaintEnabled;
+            oneShotPaintEnabled = false;
+            if (shouldDisable) {
+                setPaintEnabled(false);
+            } else {
+                paintAction = paintEnabled && selectedPaintColor ? { type: "color", color: selectedPaintColor } : null;
+                refreshColorClipboardButtons();
+            }
+        }
+
+        function normalizeNodeSize(size) {
+            if (!size || typeof size !== "object" || typeof size.length !== "number" || size.length < 2) return null;
+            const width = Number(size[0]);
+            const height = Number(size[1]);
+            if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return null;
+            return [Math.round(width), Math.round(height)];
+        }
+
+        function readNodeSize(node) {
+            if (!node) return null;
+            return normalizeNodeSize(node.size)
+                || normalizeNodeSize(node._size)
+                || normalizeNodeSize(node.constructor?.size)
+                || (Number.isFinite(Number(node.width)) && Number.isFinite(Number(node.height))
+                    ? normalizeNodeSize([node.width, node.height])
+                    : null);
+        }
+
+        function writeNodeSize(node, size) {
+            const normalized = normalizeNodeSize(size);
+            if (!node || !normalized) return false;
+            if (typeof node.setSize === "function") {
+                node.setSize([...normalized]);
+            } else if (node.size && typeof node.size === "object" && typeof node.size.length === "number" && node.size.length >= 2) {
+                node.size[0] = normalized[0];
+                node.size[1] = normalized[1];
+            } else {
+                node.size = [...normalized];
+            }
+            if (node._size && typeof node._size === "object" && typeof node._size.length === "number" && node._size.length >= 2) {
+                node._size[0] = normalized[0];
+                node._size[1] = normalized[1];
+            }
+            node.width = normalized[0];
+            node.height = normalized[1];
+            node.setDirtyCanvas?.(true, true);
+            return true;
+        }
+
+        function loadSizeClipboard() {
+            try {
+                return normalizeNodeSize(JSON.parse(localStorage.getItem(GG_SIZE_CLIPBOARD_KEY) || "null"));
+            } catch {
+                return null;
+            }
+        }
+
+        function saveSizeClipboard(size) {
+            copiedNodeSize = normalizeNodeSize(size);
+            if (copiedNodeSize) {
+                localStorage.setItem(GG_SIZE_CLIPBOARD_KEY, JSON.stringify(copiedNodeSize));
+            } else {
+                localStorage.removeItem(GG_SIZE_CLIPBOARD_KEY);
+            }
+            refreshSizeClipboardButtons();
+        }
+
+        function refreshSizeClipboardButtons() {
+            const pasteButton = document.getElementById("btn-paste-size");
+            if (pasteButton) pasteButton.style.opacity = copiedNodeSize ? "1" : "0.48";
+        }
+
+        function copySelectedNodeSize() {
+            const nodes = getSelectedNodes();
+            if (nodes.length === 0) {
+                showToast("请先选中一个节点，再复制尺寸", "error");
+                return;
+            }
+            const size = readNodeSize(nodes[0]);
+            if (!size) {
+                showToast("当前节点没有可复制的尺寸", "error");
+                return;
+            }
+            saveSizeClipboard(size);
+            showToast(`已复制节点尺寸：${size[0]} × ${size[1]}`, "info");
+        }
+
+        function pasteSelectedNodeSize() {
+            const size = copiedNodeSize || loadSizeClipboard();
+            if (!size) {
+                showToast("请先复制节点尺寸", "error");
+                return;
+            }
+            saveSizeClipboard(size);
+            const nodes = getSelectedNodes();
+            if (nodes.length === 0) {
+                showToast("请选择要粘贴尺寸的节点", "error");
+                return;
+            }
+            withGraphChange(nodes, () => {
+                nodes.forEach(node => {
+                    writeNodeSize(node, copiedNodeSize);
+                });
+            });
+            showToast(`已粘贴尺寸到 ${nodes.length} 个节点`, "info");
+        }
+
         function getPersistedColorState(target) {
             if (isGraphGroup(target)) {
                 return cloneColorState(target.flags?.[GG_GROUP_COLOR_STATE_KEY] || null);
@@ -1503,6 +1813,32 @@ app.registerExtension({
             beginClearColor();
         }
 
+        function beginPickColor() {
+            const selectedTargets = getSelectedColorTargets();
+            if (selectedTargets.length > 0) {
+                copyColorFromTarget(selectedTargets[0]);
+                return;
+            }
+            startOneShotPaintAction({ type: "pick" });
+            showToast("点击画布中的节点或分组取色", "info");
+        }
+
+        function beginPasteColor() {
+            const state = copiedColorState || loadColorClipboard();
+            if (!state) {
+                showToast("请先取色，再粘贴到节点或分组", "error");
+                return;
+            }
+            saveColorClipboard(state);
+            const selectedTargets = getSelectedColorTargets();
+            if (selectedTargets.length > 0) {
+                applyColorStateToTargets(selectedTargets, copiedColorState);
+                return;
+            }
+            startOneShotPaintAction({ type: "paste" });
+            showToast("点击目标节点或分组粘贴上色", "info");
+        }
+
         function refreshColorButtons() {
             panel.querySelectorAll(".color-preset-btn, .custom-color-btn").forEach(btn => {
                 const dot = btn.querySelector(".color-dot");
@@ -1513,19 +1849,23 @@ app.registerExtension({
         }
 
         function beginPaintColor(color) {
+            oneShotPaintEnabled = false;
             if (selectedPaintColor && selectedPaintColor.toLowerCase() === color.toLowerCase()) {
                 selectedPaintColor = null;
                 if (paintAction?.type === "color") paintAction = null;
                 refreshColorButtons();
+                refreshColorClipboardButtons();
                 return;
             }
             selectedPaintColor = color;
             paintAction = paintEnabled ? { type: "color", color } : null;
             refreshColorButtons();
+            refreshColorClipboardButtons();
             showToast(paintEnabled ? "已选择颜色，点击节点上色" : "已选择颜色，启用画笔后可上色", "success");
         }
 
         function beginClearColor() {
+            oneShotPaintEnabled = false;
             const selectedNodes = getSelectedColorTargets();
             if (selectedNodes.length > 0) {
                 clearColorFromNodes(selectedNodes);
@@ -1534,6 +1874,7 @@ app.registerExtension({
             }
             if (paintEnabled) {
                 paintAction = { type: "clear" };
+                refreshColorClipboardButtons();
                 showToast("点击节点删除颜色", "success");
                 return;
             }
@@ -1552,11 +1893,18 @@ app.registerExtension({
 
         function setPaintEnabled(enabled) {
             paintEnabled = enabled;
+            if (!paintEnabled) oneShotPaintEnabled = false;
             const button = document.getElementById("btn-color-paint");
             button.classList.toggle("active", paintEnabled);
             button.dataset.tooltip = paintEnabled ? "关闭节点上色" : "启用节点上色";
             paintAction = paintEnabled && selectedPaintColor ? { type: "color", color: selectedPaintColor } : null;
+            refreshColorClipboardButtons();
         }
+
+        copiedColorState = loadColorClipboard();
+        copiedNodeSize = loadSizeClipboard();
+        refreshColorClipboardButtons();
+        refreshSizeClipboardButtons();
 
         const presetContainer = document.getElementById("gg-color-presets");
         morandiColors.forEach((color, index) => {
@@ -1607,6 +1955,10 @@ app.registerExtension({
         });
 
         document.getElementById("btn-clear-color").onclick = clearNodeColor;
+        document.getElementById("btn-pick-color").onclick = beginPickColor;
+        document.getElementById("btn-paste-color").onclick = beginPasteColor;
+        document.getElementById("btn-copy-size").onclick = copySelectedNodeSize;
+        document.getElementById("btn-paste-size").onclick = pasteSelectedNodeSize;
 
         function getCanvasPoint(event) {
             const graphCanvas = getActiveCanvas();
@@ -1684,12 +2036,30 @@ app.registerExtension({
             if (!paintEnabled || !paintAction || event.type !== "click" || event.button !== 0) return;
             const clickedTarget = getColorTargetAtEvent(event);
             const selectedTargets = getSelectedColorTargets();
+
+            if (paintAction.type === "pick") {
+                const source = clickedTarget || selectedTargets[0];
+                if (!source) return;
+                copyColorFromTarget(source);
+                finishOneShotPaintAction();
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+
             const targets = selectedTargets.length > 1 || (clickedTarget && selectedTargets.includes(clickedTarget))
                 ? selectedTargets
                 : clickedTarget
                     ? [clickedTarget]
                     : selectedTargets;
             if (targets.length === 0) return;
+            if (paintAction.type === "paste") {
+                applyColorStateToTargets(targets, copiedColorState || loadColorClipboard());
+                finishOneShotPaintAction();
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
             if (paintAction.type === "color") {
                 applyColorToNodes(targets, paintAction.color);
             } else if (paintAction.type === "clear") {
