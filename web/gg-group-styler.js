@@ -82,6 +82,10 @@ const groupControlState = {
     scaleAnimations: new WeakMap(),
     topScaleButton: null,
     indicatorHost: null,
+    indicatorGraph: null,
+    indicatorGraphKey: "",
+    indicatorPendingGraphKey: "",
+    indicatorSyncQueued: false,
     indicatorPositionInstalled: false,
     hoverProxy: null,
     proxyDrag: null,
@@ -98,6 +102,9 @@ const groupControlState = {
     drawWatchdogTimer: null,
     nativeGroupHover: null,
 };
+
+const graphIndicatorIds = new WeakMap();
+let nextGraphIndicatorId = 1;
 
 function readSetting(id, fallback) {
     try {
@@ -246,6 +253,20 @@ function isSkippedMode(mode) {
 
 function getActiveGraph(canvas = app.canvas) {
     return canvas?.getCurrentGraph?.() ?? canvas?.graph ?? app.graph;
+}
+
+function getIndicatorGraphKey(graph) {
+    if (!graph || (typeof graph !== "object" && typeof graph !== "function")) return "none";
+    let key = graphIndicatorIds.get(graph);
+    if (!key) {
+        key = `graph-${nextGraphIndicatorId++}`;
+        graphIndicatorIds.set(graph, key);
+    }
+    return key;
+}
+
+function groupBelongsToGraph(group, graph) {
+    return !!group && !!graph && getGraphGroups(graph).includes(group);
 }
 
 function isGraphGroupLike(value) {
@@ -1740,8 +1761,7 @@ function toggleGroupScale(group, canvas = app.canvas) {
         : hideGroupScaled(group, canvas);
 }
 
-function getRestorableScaleGroups(canvas = app.canvas) {
-    const graph = getActiveGraph(canvas);
+function getRestorableScaleGroups(canvas = app.canvas, graph = getActiveGraph(canvas)) {
     return getGraphGroups(graph).filter((group) => {
         const state = readGroupScaleState(group);
         return hasScaleStateContent(state) && (
@@ -1858,6 +1878,50 @@ function ensureSubworkflowIndicatorHost() {
     return host;
 }
 
+function clearSubworkflowIndicators(resetGraph = false) {
+    const host = groupControlState.indicatorHost
+        ?? (typeof document !== "undefined" ? document.getElementById(SUBWORKFLOW_INDICATOR_ID) : null);
+    if (host) {
+        host.replaceChildren();
+        host.hidden = true;
+        host.dataset.count = "0";
+        delete host.dataset.graphKey;
+    }
+    if (resetGraph) {
+        groupControlState.indicatorGraph = null;
+        groupControlState.indicatorGraphKey = "";
+        groupControlState.indicatorPendingGraphKey = "";
+    }
+}
+
+function queueSubworkflowIndicatorSync(canvas = app.canvas) {
+    if (groupControlState.indicatorSyncQueued) return;
+    const schedule = typeof requestAnimationFrame === "function"
+        ? requestAnimationFrame
+        : (callback) => setTimeout(callback, 0);
+    groupControlState.indicatorSyncQueued = true;
+    schedule(() => {
+        groupControlState.indicatorSyncQueued = false;
+        groupControlState.indicatorPendingGraphKey = "";
+        syncSubworkflowIndicators(canvas);
+    });
+}
+
+function noticeSubworkflowIndicatorGraph(canvas = app.canvas) {
+    if (!isEnabled()) {
+        clearSubworkflowIndicators(true);
+        return;
+    }
+    const graph = getActiveGraph(canvas);
+    const graphKey = getIndicatorGraphKey(graph);
+    if (graphKey === groupControlState.indicatorGraphKey) return;
+    if (graphKey !== groupControlState.indicatorPendingGraphKey) {
+        groupControlState.indicatorPendingGraphKey = graphKey;
+        clearSubworkflowIndicators();
+    }
+    queueSubworkflowIndicatorSync(canvas);
+}
+
 function getBottomRightFloatingToolbarRect(host) {
     if (typeof document === "undefined") return null;
     const viewportW = window.innerWidth || document.documentElement.clientWidth || 0;
@@ -1908,10 +1972,11 @@ function installSubworkflowIndicatorPositioning() {
     window.addEventListener("resize", () => positionSubworkflowIndicators(), { passive: true });
 }
 
-function getSubworkflowIndicatorEntries(canvas = app.canvas) {
+function getSubworkflowIndicatorEntries(canvas = app.canvas, graph = getActiveGraph(canvas)) {
     const entries = [];
     const seen = new Set();
-    for (const group of getRestorableScaleGroups(canvas)) {
+    for (const group of getRestorableScaleGroups(canvas, graph)) {
+        if (!groupBelongsToGraph(group, graph)) continue;
         let state = readGroupScaleState(group);
         if (!hasScaleStateContent(state)) continue;
 
@@ -1968,10 +2033,30 @@ function syncSubworkflowIndicators(canvas = app.canvas) {
     if (!host) return;
     installSubworkflowIndicatorPositioning();
 
-    const entries = getSubworkflowIndicatorEntries(canvas);
+    if (!isEnabled()) {
+        clearSubworkflowIndicators(true);
+        return;
+    }
+
+    const graph = getActiveGraph(canvas);
+    if (!graph) {
+        clearSubworkflowIndicators(true);
+        return;
+    }
+
+    const graphKey = getIndicatorGraphKey(graph);
+    if (graphKey !== groupControlState.indicatorGraphKey) {
+        clearSubworkflowIndicators();
+    }
+    groupControlState.indicatorGraph = graph;
+    groupControlState.indicatorGraphKey = graphKey;
+    groupControlState.indicatorPendingGraphKey = "";
+
+    const entries = getSubworkflowIndicatorEntries(canvas, graph);
     host.replaceChildren();
     host.hidden = entries.length === 0;
     host.dataset.count = String(entries.length);
+    host.dataset.graphKey = graphKey;
     if (!entries.length) return;
 
     for (const entry of entries) {
@@ -1985,6 +2070,11 @@ function syncSubworkflowIndicators(canvas = app.canvas) {
         button.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
+            const activeGraph = getActiveGraph(app.canvas);
+            if (!groupBelongsToGraph(entry.group, activeGraph)) {
+                syncSubworkflowIndicators(app.canvas);
+                return;
+            }
             restoreGroupScaled(entry.group, app.canvas);
             syncSubworkflowIndicators(app.canvas);
         });
@@ -3322,6 +3412,7 @@ function drawSubworkflowProxy(ctx, group, rect, state, accent) {
 }
 
 function drawStyledGroups(ctx, canvas) {
+    noticeSubworkflowIndicatorGraph(canvas);
     const groups = getVisibleGraphGroups(canvas);
     if (!groups?.length) return;
 
@@ -3821,6 +3912,7 @@ function patchGroupDrawMethod(proto) {
             clearProxyHover(this);
             clearScaleHover(this);
             clearToggleHover(this);
+            clearSubworkflowIndicators(true);
             cancelActiveSubworkflowProxyDrag(this);
             cancelActiveResize(this);
             return originalDrawGroups?.call(this, canvas, ctx);
@@ -4187,10 +4279,14 @@ app.registerExtension({
     },
 
     loadedGraphNode() {
+        noticeSubworkflowIndicatorGraph(app.canvas);
+        syncSubworkflowIndicators(app.canvas);
         scheduleHydrateScaleHiddenGroups();
     },
 
     async afterConfigureGraph() {
+        noticeSubworkflowIndicatorGraph(app.canvas);
+        syncSubworkflowIndicators(app.canvas);
         hydrateScaleHiddenGroupsWhenReady();
     },
 
