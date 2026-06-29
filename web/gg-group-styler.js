@@ -34,6 +34,7 @@ const SCALE_HIDE_MIN_HEIGHT = 16;
 const SCALE_HIDE_DURATION = 220;
 const SCALE_HIDE_GROUP_WIDTH = 178;
 const SCALE_HIDE_GROUP_HEIGHT = 48;
+const GROUP_CHILD_CONTAINMENT_TOLERANCE = 2;
 const SCALE_HIDE_STATE_KEY = "GuliNodes.groupScaleHideState";
 const SCALE_HIDE_CACHE_KEY = "GuliNodes.groupScaleHideCache.v1";
 const SCALE_HIDE_CACHE_LIMIT = 80;
@@ -1146,11 +1147,20 @@ function snapshotGroupScaleNodes(nodes) {
     return snapshots;
 }
 
-function rectCenterInsideRect(innerRect, outerRect) {
+function rectArea(rect) {
+    return rect ? Math.max(0, rect.w) * Math.max(0, rect.h) : 0;
+}
+
+function rectInsideRect(innerRect, outerRect, tolerance = GROUP_CHILD_CONTAINMENT_TOLERANCE) {
     if (!innerRect || !outerRect) return false;
-    const cx = innerRect.x + innerRect.w / 2;
-    const cy = innerRect.y + innerRect.h / 2;
-    return cx >= outerRect.x && cx < outerRect.x + outerRect.w && cy >= outerRect.y && cy < outerRect.y + outerRect.h;
+    const innerArea = rectArea(innerRect);
+    const outerArea = rectArea(outerRect);
+    if (innerArea >= outerArea - 1) return false;
+
+    return innerRect.x >= outerRect.x - tolerance
+        && innerRect.y >= outerRect.y - tolerance
+        && innerRect.x + innerRect.w <= outerRect.x + outerRect.w + tolerance
+        && innerRect.y + innerRect.h <= outerRect.y + outerRect.h + tolerance;
 }
 
 function collectGroupsInGroup(group, canvas = app.canvas) {
@@ -1161,7 +1171,7 @@ function collectGroupsInGroup(group, canvas = app.canvas) {
     return getGraphGroups(graph)
         .filter((candidate) => candidate !== group && isGraphGroupLike(candidate))
         .map((candidate, index) => ({ candidate, index, rect: getGroupRect(candidate) }))
-        .filter((entry) => rectCenterInsideRect(entry.rect, parentRect))
+        .filter((entry) => rectInsideRect(entry.rect, parentRect))
         .sort((left, right) => {
             const areaDelta = (right.rect.w * right.rect.h) - (left.rect.w * left.rect.h);
             if (areaDelta) return areaDelta;
@@ -2276,7 +2286,8 @@ function hitTestGroupToggle(canvas, event) {
 
     for (const graphCandidate of graphCandidates) {
         const [mx, my] = graphCandidate.pos;
-        for (let i = groups.length - 1; i >= 0; i--) {
+        const hits = [];
+        for (let i = 0; i < groups.length; i++) {
             const group = groups[i];
             const rect = getGroupRect(group);
             if (!rect || rect.w <= 0 || rect.h <= 0) continue;
@@ -2284,8 +2295,12 @@ function hitTestGroupToggle(canvas, event) {
             const metrics = getTitleMetrics(rect, scale);
             const button = getGroupToggleRect(rect, metrics, scale);
             if (mx >= button.x && mx <= button.x + button.w && my >= button.y && my <= button.y + button.h) {
-                return { canvas, group, rect, button, graphPos: graphCandidate.pos, coordMode: graphCandidate.mode };
+                hits.push({ index: i, hit: { canvas, group, rect, button, graphPos: graphCandidate.pos, coordMode: graphCandidate.mode } });
             }
+        }
+        if (hits.length) {
+            hits.sort((left, right) => rectArea(left.hit.rect) - rectArea(right.hit.rect) || right.index - left.index);
+            return hits[0].hit;
         }
     }
 
@@ -2323,7 +2338,8 @@ function hitTestGroupScaleToggle(canvas, event) {
 
     for (const graphCandidate of graphCandidates) {
         const [mx, my] = graphCandidate.pos;
-        for (let i = groups.length - 1; i >= 0; i--) {
+        const hits = [];
+        for (let i = 0; i < groups.length; i++) {
             const group = groups[i];
             const rect = getGroupRect(group);
             if (!rect || rect.w <= 0 || rect.h <= 0) continue;
@@ -2331,8 +2347,12 @@ function hitTestGroupScaleToggle(canvas, event) {
             const metrics = getTitleMetrics(rect, scale);
             const button = getGroupScaleRect(rect, metrics, scale);
             if (mx >= button.x && mx <= button.x + button.w && my >= button.y && my <= button.y + button.h) {
-                return { canvas, group, rect, button, graphPos: graphCandidate.pos, coordMode: graphCandidate.mode };
+                hits.push({ index: i, hit: { canvas, group, rect, button, graphPos: graphCandidate.pos, coordMode: graphCandidate.mode } });
             }
+        }
+        if (hits.length) {
+            hits.sort((left, right) => rectArea(left.hit.rect) - rectArea(right.hit.rect) || right.index - left.index);
+            return hits[0].hit;
         }
     }
 
