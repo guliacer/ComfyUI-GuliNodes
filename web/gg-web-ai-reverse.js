@@ -23,6 +23,10 @@ const PLATFORM_URLS = Object.freeze({
     "豆包": "https://www.doubao.com/",
     "腾讯元宝": "https://yuanbao.tencent.com/",
     "文心一言": "https://yiyan.baidu.com/",
+    "智谱清言": "https://chatglm.cn/",
+    "Kimi": "https://www.kimi.com/",
+    "讯飞星火": "https://xinghuo.xfyun.cn/",
+    "可灵AI": "https://klingai.com/",
 });
 
 function clampNumber(value, min, max, fallback) {

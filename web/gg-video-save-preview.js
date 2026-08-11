@@ -307,11 +307,12 @@ function installLockedSaveNodeLayout(node) {
         const result = originalOnResize?.apply(this, arguments);
         if (!this.ggVideoPreviewWidget) return result;
 
-        const width = Math.max(MIN_NODE_WIDTH, Array.isArray(size) ? Number(size[0]) || 0 : Number(this.size?.[0]) || 0);
+        const sizeLike = size != null && typeof size === "object" && typeof size.length === "number";
+        const width = Math.max(MIN_NODE_WIDTH, sizeLike ? Number(size[0]) || 0 : Number(this.size?.[0]) || 0);
         const previewSize = getPreviewWidgetSize(this);
         const minHeight = Math.max(this.computeSize?.()?.[1] || 0, previewSize[1] + 130);
 
-        if (Array.isArray(size)) {
+        if (sizeLike) {
             size[0] = width;
             size[1] = Math.max(Number(size[1]) || 0, minHeight);
         }

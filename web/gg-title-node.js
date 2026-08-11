@@ -1856,13 +1856,13 @@ function installTitleBehavior(nodeType) {
   const originalOnResize = nodeType.prototype.onResize;
   nodeType.prototype.onResize = function (size, ...args) {
     const result = originalOnResize?.call(this, size, ...args);
-    const requested = Array.isArray(size) ? size : this.size;
+    const requested = size != null && typeof size === "object" && typeof size.length === "number" ? size : this.size;
     const next = [
       Math.max(MIN_SIZE[0], Number(requested?.[0]) || MIN_SIZE[0]),
       Math.max(MIN_SIZE[1], Number(requested?.[1]) || MIN_SIZE[1]),
     ];
     this.size = next;
-    if (Array.isArray(size)) {
+    if (size != null && typeof size === "object" && typeof size.length === "number") {
       size[0] = next[0];
       size[1] = next[1];
     }

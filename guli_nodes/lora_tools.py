@@ -79,40 +79,6 @@ class LoRAStackerBase:
         return m.hexdigest()
 
 
-class GGLoRAFileStacker4V2(LoRAStackerBase):
-    @classmethod
-    def INPUT_TYPES(cls):
-        inputs = cls.get_base_inputs()
-        inputs["optional"] = cls.get_lora_file_inputs(4)
-        return inputs
-
-    RETURN_TYPES = ("MODEL",)
-    RETURN_NAMES = ("模型",)
-    FUNCTION = "stack"
-    CATEGORY = "GuliNodes/模型"
-
-    def stack(
-        self,
-        模型: object,
-        **kwargs,
-    ) -> tuple:
-        if 模型 is None:
-            return (None,)
-
-        lora_data = []
-        for index in range(1, 5):
-            lora_name = kwargs.get(f"LoRA{index}名称", "None")
-            strength = kwargs.get(f"LoRA{index}强度", 1.0)
-            lora = self.load_lora_file(lora_name, strength)
-            if lora is not None:
-                lora_data.append((lora, strength))
-
-        if not lora_data:
-            return (模型,)
-
-        return (self.apply_lora_stack(模型, lora_data),)
-
-
 class GGLoRACustomLoader(LoRAStackerBase):
     MAX_LORAS = 20
 
@@ -163,45 +129,11 @@ class GGLoRACustomLoader(LoRAStackerBase):
         return (self.apply_lora_stack(模型, lora_data),)
 
 
-class GGLoRAFileStacker8V2(LoRAStackerBase):
-    @classmethod
-    def INPUT_TYPES(cls):
-        inputs = cls.get_base_inputs()
-        inputs["optional"] = cls.get_lora_file_inputs(8)
-        return inputs
-
-    RETURN_TYPES = ("MODEL",)
-    RETURN_NAMES = ("模型",)
-    FUNCTION = "stack"
-    CATEGORY = "GuliNodes/模型"
-
-    def stack(self, 模型: object, **kwargs) -> tuple:
-        if 模型 is None:
-            return (None,)
-
-        lora_data = []
-        for index in range(1, 9):
-            lora_name = kwargs.get(f"LoRA{index}名称", "None")
-            strength = kwargs.get(f"LoRA{index}强度", 1.0)
-            lora = self.load_lora_file(lora_name, strength)
-            if lora is not None:
-                lora_data.append((lora, strength))
-
-        if not lora_data:
-            return (模型,)
-
-        return (self.apply_lora_stack(模型, lora_data),)
-
-
 NODE_CLASS_MAPPINGS = {
-    "GGLoRAFileStacker4V2": GGLoRAFileStacker4V2,
     "GGLoRACustomLoader": GGLoRACustomLoader,
-    "GGLoRAFileStacker8V2": GGLoRAFileStacker8V2,
 }
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "GGLoRAFileStacker4V2": "GG LoRA选择 4个",
     "GGLoRACustomLoader": "GG LoRA自定义加载",
-    "GGLoRAFileStacker8V2": "GG LoRA选择 8个",
 }

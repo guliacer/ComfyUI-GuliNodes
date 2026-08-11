@@ -27,25 +27,18 @@ ComfyUI-GuliNodes 是一个 ComfyUI 自定义节点与前端增强插件，面�
 
 - `aspect_ratio.py`：图像宽高、Latent 尺寸、图像转 Latent、尺寸缩放。
 - `image_tools.py`：基础图像处理、预览/保存/压缩、图像对比、风格参考、色彩校正。
-- `mask_tools.py`：蒙版绘制到图像。
-- `sharpen_tools.py`：CAS 风格锐化。
 - `video_tools.py`：视频加载、路径加载、合成、压缩、保存。
-- `lora_tools.py`：LoRA 选择和自定义叠加。
+- `lora_tools.py`：LoRA 自定义叠加。
 - `text_tools.py`：TXT/MD 文本加载。
 - `key_tools.py`：API Key/端点/模型配置输入。
-- `numeric_tools.py`：数值、浮点滑条、万能滑条。
-- `set_get.py`：Set/Get 虚拟连接节点。
+- `numeric_tools.py`：简单数学计算。
 - `title_node.py`：画布标题节点。
-- `reroute_tools.py`：轻量转接节点。
-- `dype_tools.py` + `dype_patch.py`：DyPE 动态位置补丁节点和实现。
 - `seed_tools.py`：种子生成器。
-- `group_controller.py`：单组/多组控制节点。
 - `clipboard.py`：文本显示复制、CLIP 文本相关节点。
-- `everywhere.py`：全局转接辅助节点。
 - `web_ai_tools.py`：网页 AI 图像/文本反推节点。
-- `model_loaders.py`：UNET、GGUF 桥接、VAE 编码/解码缓存、内存清理。
+- `model_loaders.py`：VAE 编码/解码缓存、内存清理。
 - `zimage_sampler.py`：Z-Image 采样器与集成采样器。
-- `seedvr2_aggregate.py`：SeedVR2 视频放大聚合节点。
+- `taprelay.py`：TapRelay 完成通知协议适配。
 
 新增后端节点时：
 
@@ -65,9 +58,8 @@ ComfyUI-GuliNodes 是一个 ComfyUI 自定义节点与前端增强插件，面�
 - `gg-toolbar.js`：顶部/底部工具栏。
 - `gg-link-style.js`：连接线样式工具。
 - `gg-group-styler.js`：GuliNodes 分组样式增强，包装 LiteGraph `drawGroups`，带设置开关和原生回退。
-- `gg-group-controller.js`：分组控制节点的前端绘制与交互。
-- `gg-title-node.js`、`gg-pretty-reroute.js`、`gg-set-get-nodes.js`、`gg-anything-everywhere.js`：工作流组织类节点前端行为。
-- `gg-clipboard.js`、`gg-key-input.js`、`gg-txt-load.js`、`gg-universal-slider.js`、`gg-seed-generator.js`：输入体验增强。
+- `gg-title-node.js`：工作流组织类节点前端行为。
+- `gg-clipboard.js`、`gg-key-input.js`、`gg-txt-load.js`、`gg-seed-generator.js`：输入体验增强。
 - `gg-image-comparer.js`、`gg-image-compress-save.js`、`gg-video-save-preview.js`、`gg-web-ai-reverse.js`：图像/视频/网页 AI 相关前端。
 - `gg-node-theme.js`、`gg-node-autofit.js`、`gg-ui-icons.js`、`gg-comfy-translate.js`：UI、图标、节点样式、翻译辅助。
 
@@ -93,7 +85,7 @@ ComfyUI-GuliNodes 是一个 ComfyUI 自定义节点与前端增强插件，面�
 
 - 可以使用 ComfyUI 环境通常已有的 `torch`、`PIL`、`numpy`。
 - 视频能力可调用外部 `ffmpeg`/`ffprobe`。
-- GGUF、SeedVR2 等节点是桥接/聚合节点，应检测可选插件是否存在，并给出清晰错误信息。
+- GGUF 等节点是桥接节点，应检测可选插件是否存在，并给出清晰错误信息。
 - 不要重新引入 README 中已明确移除的额外依赖路线，例如 `cv2`、`mediapipe`、`llama-cpp-python`、`color-matcher`、`kornia`，除非用户明确要求并同步文档。
 
 ## 借鉴与致谢要求
@@ -105,7 +97,6 @@ ComfyUI-GuliNodes 是一个 ComfyUI 自定义节点与前端增强插件，面�
 - ComfyUI、ComfyUI_frontend、LiteGraph 基础 API。
 - ComfyUI-DyPE 适配。
 - ComfyUI-GGUF 桥接。
-- ComfyUI-SeedVR2_VideoUpscaler 聚合。
 - ColorCorrect 类色彩校正功能。
 - KJNodes Draw Mask On Image 使用习惯。
 - rgthree、Anything Everywhere、Set/Get、Reroute 等社区常见工作流形态。
@@ -133,7 +124,7 @@ ComfyUI-GuliNodes 是一个 ComfyUI 自定义节点与前端增强插件，面�
 - `README.md` 的“更新记录”。
 - `pyproject.toml` 中版本号、`tool.gulinodes.node_count` 等发布元数据。
 
-当前 README 记录后端实际注册节点数为 58。新增前端扩展不计入后端节点数；新增 Python 后端节点才需要调整该数字。
+当前 README 记录后端实际注册节点数为 41。新增前端扩展不计入后端节点数；新增 Python 后端节点才需要调整该数字。
 
 ## 验证建议
 

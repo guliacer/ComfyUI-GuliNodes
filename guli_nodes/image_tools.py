@@ -269,56 +269,6 @@ def concatenate_images_horizontally(images: list, labels: list = None, font_size
     return torch.from_numpy(final_np).unsqueeze(0)
 
 
-class GGRGBAtoRGB:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "图像": ("IMAGE",),
-                "背景颜色": (["白色", "黑色", "灰色", "自定义"], {"default": "白色"}),
-            },
-            "optional": {
-                "背景R": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001}),
-                "背景G": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001}),
-                "背景B": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "round": 0.001}),
-            }
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("图像",)
-    FUNCTION = "convert"
-    CATEGORY = "GuliNodes/图像"
-
-    def convert(self, 图像: torch.Tensor, 背景颜色: str = "白色", 背景R: float = 1.0, 背景G: float = 1.0, 背景B: float = 1.0) -> tuple:
-        if 图像 is None:
-            return (_empty_image(),)
-        if 图像.shape[-1] == 1:
-            return (图像.expand(*图像.shape[:-1], 3).contiguous(),)
-        if 图像.shape[-1] == 2:
-            gray = 图像[..., :1].expand(*图像.shape[:-1], 3)
-            alpha = 图像[..., 1:2].clamp(0.0, 1.0)
-            background = self._background(图像, 背景颜色, 背景R, 背景G, 背景B)
-            return (torch.clamp(gray * alpha + background * (1.0 - alpha), 0.0, 1.0).contiguous(),)
-        if 图像.shape[-1] == 3:
-            return (图像,)
-        if 图像.shape[-1] >= 4:
-            rgb = 图像[..., :3]
-            alpha = 图像[..., 3:4].clamp(0.0, 1.0)
-            background = self._background(图像, 背景颜色, 背景R, 背景G, 背景B)
-            return (torch.clamp(rgb * alpha + background * (1.0 - alpha), 0.0, 1.0).contiguous(),)
-        return (_empty_image(图像.device, 图像.dtype),)
-
-    @staticmethod
-    def _background(图像: torch.Tensor, 背景颜色: str, 背景R: float, 背景G: float, 背景B: float) -> torch.Tensor:
-        presets = {
-            "白色": (1.0, 1.0, 1.0),
-            "黑色": (0.0, 0.0, 0.0),
-            "灰色": (0.5, 0.5, 0.5),
-        }
-        color = presets.get(背景颜色, (背景R, 背景G, 背景B))
-        return torch.tensor(color, device=图像.device, dtype=图像.dtype).view(1, 1, 1, 3)
-
-
 class GGImageResize:
     @classmethod
     def INPUT_TYPES(cls):
@@ -1635,7 +1585,6 @@ if io is not None:
 
 
 NODE_CLASS_MAPPINGS = {
-    "GGRGBAtoRGB": GGRGBAtoRGB,
     "GGImageResize": GGImageResize,
     "GGImageCrop": GGImageCrop,
     "GGImageTransform": GGImageTransform,
@@ -1655,7 +1604,6 @@ NODE_CLASS_MAPPINGS = {
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "GGRGBAtoRGB": "GG RGBA转RGB",
     "GGImageResize": "GG 尺寸调整",
     "GGImageCrop": "GG 图像裁剪",
     "GGImageTransform": "GG 图像变换",

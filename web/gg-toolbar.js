@@ -1069,8 +1069,8 @@ app.registerExtension({
 
         function isGraphNode(value) {
             return !!value && typeof value === "object" && (
-                Array.isArray(value.pos) ||
-                Array.isArray(value.size) ||
+                isArrayLikeNumber(value.pos) ||
+                isArrayLikeNumber(value.size) ||
                 typeof value.id === "number" ||
                 typeof value.setDirtyCanvas === "function"
             );
@@ -1078,7 +1078,7 @@ app.registerExtension({
 
         function isColorTarget(value) {
             return isGraphNode(value) || isOfficialColorable(value) || (
-                !!value && typeof value === "object" && Array.isArray(value._bounding)
+                !!value && typeof value === "object" && isArrayLikeNumber(value._bounding)
             );
         }
 
@@ -1086,8 +1086,17 @@ app.registerExtension({
             return !!value && typeof value === "object" && (
                 value.constructor === window.LiteGraph?.LGraphGroup ||
                 typeof value.font_size === "number" ||
-                Array.isArray(value._bounding)
+                isArrayLikeNumber(value._bounding)
             );
+        }
+
+        function isArrayLikeNumber(v) {
+            return v != null
+                && typeof v === "object"
+                && typeof v.length === "number"
+                && v.length >= 2
+                && typeof v[0] === "number"
+                && typeof v[1] === "number";
         }
 
         function normalizeSelectedNodes(value) {

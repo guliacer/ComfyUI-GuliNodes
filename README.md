@@ -4,12 +4,12 @@
 [![GitHub License](https://img.shields.io/github/license/guliacer/ComfyUI-GuliNodes?style=flat-square&color=97ca00)](https://github.com/guliacer/ComfyUI-GuliNodes/blob/main/LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/guliacer/ComfyUI-GuliNodes?style=flat-square&color=0078ff)](https://github.com/guliacer/ComfyUI-GuliNodes/releases)
 
-ComfyUI-GuliNodes 是一组面向中文工作流的轻量效率节点和前端增强工具，覆盖画布整理、文本输入、图像处理、Latent 尺寸、模型/LoRA 管理、采样、视频处理、显存清理和网页 AI 辅助。
+ComfyUI-GuliNodes 是一组面向中文工作流的轻量效率节点和前端增强工具，覆盖画布整理、文本输入、数值计算、图像处理、Latent 尺寸、模型/LoRA 管理、采样、视频处理、显存清理和网页 AI 辅助。
 
 <details>
 <summary>依赖说明</summary>
 
-当前主插件保持零额外 Python 依赖：不需要安装 `cv2`、`mediapipe`、`llama-cpp-python`、`color-matcher`、`kornia` 等额外包。部分功能会调用外部程序或可选插件，例如视频处理需要系统可调用 `ffmpeg`，GGUF 和 SeedVR2 聚合节点需要对应 ComfyUI 插件或模型环境。
+当前主插件保持零额外 Python 依赖：不需要安装 `cv2`、`mediapipe`、`llama-cpp-python`、`color-matcher`、`kornia` 等额外包。部分功能会调用外部程序或可选插件，例如视频处理需要系统可调用 `ffmpeg`。
 
 </details>
 
@@ -31,30 +31,30 @@ pip install -r requirements.txt
 
 - 顶部工具栏：节点/分组上色、取色粘贴、节点尺寸复制粘贴、对齐、等宽等高、自动间距、批量整理。
 - 连线样式：颜色、宽度、透明度、发光和流动效果可调。
-- 标题和转接：提供标题节点、轻量转接节点、全局转接和 Set/Get 虚拟连接节点。
+- 完成通知：工作流成功执行后，可通过本机同源后端适配自动通知 TapRelay，默认开启，并可在设置页或顶部铃铛按钮中关闭。
+- 标题节点：画布标题和分区标注。
 - 组增强：选中节点可直接新建为组，组名可改，标题随画布缩放保持清晰，支持四角和四边缘拖拽缩放；可在标题栏快速显示/隐藏整组以跳过组内节点，也可将分组折叠为同名子工作流小节点；折叠小节点支持拖动和双击改名，通过右下角彩色圆点或顶部快捷开关按快照还原原始位置和尺寸。
-- 文本与输入体验：文本复制展示、密钥输入、种子生成、数值输入、CLIP 文本编码一体化。
+- 文本与输入体验：文本复制展示、密钥输入、种子生成、简单数学计算、CLIP 文本编码一体化。
 
 ### 图像与 Latent
 
-- 基础图像处理：RGBA 转 RGB、尺寸调整、裁剪、翻转旋转、亮度/对比度/饱和度/锐化/虚化、色彩校正。
+- 基础图像处理：尺寸调整、裁剪、翻转旋转、亮度/对比度/饱和度/锐化/虚化、色彩校正。
 - 风格参考：使用纯 PyTorch 统计迁移和纹理混合实现，不依赖 OpenCV。
 - 图像保存与压缩：预览、保存、压缩保存、独立压缩，支持 JPEG/PNG/WEBP。
 - 图像对比：2/4/8 图拼接预览，适合参数对比和 A/B 测试。
 - Latent 尺寸：比例预设、图像转 Latent、Latent 缩放、尺寸读取、VAE 编码/解码缓存。
-- 遮罩与锐化：遮罩绘制、CAS 锐化增强。
 
 ### 模型、LoRA、采样与视频
 
-- LoRA：4 槽、8 槽和 20 槽自定义 LoRA 顺序叠加。
-- 模型加载：普通 UNET 加载、GGUF UNET 桥接加载、VAE 缓存编码/解码。
-- 采样：Z-Image 采样器、集成尺寸计算的 GG 采样器、DyPE 动态位置补丁。
+- LoRA：20 槽自定义 LoRA 叠加。
+- 模型加载：VAE 缓存编码/解码。
+- 采样：Z-Image 采样器、集成尺寸计算的 GG 采样器。
 - 显存清理：卸载 ComfyUI 模型、清理设备缓存、清理 GuliNodes VAE 缓存并输出报告。
-- 视频：视频加载、路径加载、图像音频合成视频、压缩、保存，以及 SeedVR2 视频放大聚合节点。
+- 视频：视频加载、路径加载、图像音频合成视频、压缩、保存。
 
 ## 节点清单
 
-当前版本实际注册 58 个节点。
+当前版本实际注册 41 个节点。
 
 ### 图像、尺寸与 Latent
 
@@ -74,15 +74,12 @@ pip install -r requirements.txt
 
 | 节点 | 用途 |
 | --- | --- |
-| `GG RGBA转RGB` | 将灰度、带 Alpha 或 RGBA 图像合成 RGB。 |
 | `GG 尺寸调整` | 按比例、固定尺寸或边长调整图像。 |
 | `GG 图像裁剪` | 中心、坐标、比例等裁剪。 |
 | `GG 图像变换` | 水平/垂直翻转和 90/180/270 度旋转。 |
 | `GG 图像调整` | 亮度、对比度、饱和度、锐化和虚化。 |
 | `GG 色彩校正` | 使用 torch 张量批量调整温度、色调、明度、对比度、饱和度和伽马。 |
 | `GG 风格参考` | 参考图像风格统计迁移和纹理混合。 |
-| `GG 绘制蒙版` | 将蒙版绘制到图像上，便于检查遮罩区域。 |
-| `GG 图像CAS锐化+` | CAS 锐化增强。 |
 | `GG 图像预览` | 预览图像。 |
 | `GG 图像保存` | 保存图像。 |
 | `GG 图像压缩保存` | 压缩并保存图像。 |
@@ -100,17 +97,9 @@ pip install -r requirements.txt
 | `GG CLIP文本` | 加载 CLIP 并编码文本。 |
 | `GG CLIP文本编码器` | 文本编码辅助节点。 |
 | `GG 密钥输入` | 用于 API Key、令牌、API 端点和模型名称，可测试当前配置，并输出单个 `API配置`。 |
-| `GG 数值` | 输出数值参数。 |
-| `GG 浮点滑条` | 输出 0 到 1 的浮点滑条参数。 |
-| `GG 万能滑条` | 可自定义范围、步长、显示名称和浮点/整数输出的自绘滑条。 |
+| `GG 简单数学` | 使用 `a`、`b`、`c`、`d` 四个输入执行简单表达式计算，并输出两组整数/浮点结果。 |
 | `GG 种子生成器` | 生成或固定随机种子。 |
-| `GG Set` | 声明画布内可复用连接值。 |
-| `GG Get` | 读取同名 Set 节点值。 |
 | `GG 标题` | 画布标题和分区标注。 |
-| `GG 转接` | 轻量转接节点。 |
-| `GG 全局转接` | 全局连接辅助。 |
-| `GG 单组控制` | 控制单个分组启用/跳过。 |
-| `GG 多组控制` | 批量控制多个分组。 |
 | `GG 网页AI图像反推` | 在节点中打开豆包、腾讯元宝、文心一言或自定义网页。 |
 | `GG 文本反推` | 调用大模型按规则提取小说内容并总结，支持文本或 TXT 输入。 |
 
@@ -118,13 +107,8 @@ pip install -r requirements.txt
 
 | 节点 | 用途 |
 | --- | --- |
-| `GG LoRA选择 4个` | 最多 4 个 LoRA 顺序叠加。 |
-| `GG LoRA选择 8个` | 最多 8 个 LoRA 顺序叠加。 |
 | `GG LoRA自定义加载` | 最多 20 槽 LoRA 自定义叠加。 |
-| `GG UNET模型` | 加载普通 UNET/diffusion 模型。 |
-| `GG GGUF模型` | 桥接 ComfyUI-GGUF 加载 GGUF UNET。 |
 | `GG 内存清理` | 卸载模型、清理缓存并输出报告。 |
-| `GG DyPE动态位置` | 为 FLUX、Qwen、Z-Image 应用动态位置补丁。 |
 | `GG Z-Image采样器` | Z-Image 专用采样。 |
 | `GG 采样器` | 集成尺寸计算和 Z-Image 采样的便捷采样器。 |
 
@@ -137,7 +121,6 @@ pip install -r requirements.txt
 | `GG 视频合成` | 将上游 IMAGE 批次与 AUDIO 合成为 VIDEO，支持视频格式、像素格式、CRF、输出帧率和音频修剪，便于接入 `GG 视频压缩`。 |
 | `GG 视频压缩` | 使用 ffmpeg 压缩视频并显示进度。 |
 | `GG 视频保存` | 保存或封装视频输出。 |
-| `GG SeedVR2视频放大器` | 聚合 SeedVR2 DiT、VAE 和视频放大流程。 |
 
 ## 致谢与借鉴说明
 
@@ -146,18 +129,15 @@ pip install -r requirements.txt
 | 涉及功能/节点 | 致谢对象 | 说明 |
 | --- | --- | --- |
 | 全部节点与前端工具 | ComfyUI、ComfyUI_frontend、LiteGraph | 本项目运行在 ComfyUI 自定义节点和前端扩展机制之上，画布、节点、连线、分组绘制等能力依赖这些基础 API。 |
-| `GG DyPE动态位置` | [wildminder/ComfyUI-DyPE](https://github.com/wildminder/ComfyUI-DyPE) | `guli_nodes/dype_patch.py` 已注明基于本地 ComfyUI-DyPE 实现适配，保留 Apache-2.0 来源说明，并封装为 GuliNodes 的中文参数节点。 |
-| `GG GGUF模型` | [city96/ComfyUI-GGUF](https://github.com/city96/ComfyUI-GGUF) | 本节点是桥接加载器，不内置 GGUF 加载实现；运行时检测并调用 ComfyUI-GGUF 中的 `UnetLoaderGGUFAdvanced` 或 `UnetLoaderGGUF`。 |
-| `GG SeedVR2视频放大器` | [numz/ComfyUI-SeedVR2_VideoUpscaler](https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler) | 本节点参考并聚合 SeedVR2 插件的 DiT、VAE、注册表和视频放大接口，简化常用参数，不复制其模型或核心推理实现。 |
 | `GG 色彩校正` | ColorCorrect 类色彩校正功能 | 参数设计和功能目标参考 ColorCorrect 的温度、色调、明度、对比度、饱和度、伽马调节思路；当前实现改写为 torch 张量批处理，不依赖额外 OpenCV/kornia 包。 |
-| `GG 绘制蒙版` | KJNodes 的 Draw Mask On Image 使用习惯 | 节点搜索别名保留 `DrawMaskOnImage`、`Draw Mask On Image`、`KJNodes`，方便用户迁移；实现为本项目的向量化 alpha blend。 |
 | `GG 图像对比 2张` | ComfyUI-KJNodes、[ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes) | 双图对比节点的交互形态和使用场景参考了 KJNodes 与 JosiaNodes 的相关实现；本项目按 GuliNodes 的预览、保存和前端交互方式重新整理。 |
 | 文本框悬浮按钮 | [ComfyUI-Prompt-Assistant](https://github.com/yawiii/ComfyUI-Prompt-Assistant) | 文本框悬浮复制、粘贴、清空按钮的交互灵感来源于 Prompt Assistant；本项目按 GuliNodes 的全局文本框识别、设置开关和前端按钮样式重新实现。 |
-| `GG Set`、`GG Get`、`GG 全局转接`、`GG 转接`、`GG 标题` | rgthree、Anything Everywhere、Set/Get、Reroute 等社区常见工作流形态 | 这些节点借鉴了社区里“虚拟连接、全局转接、轻量转接、画布标注”的交互思路，但前后端逻辑按 GuliNodes 的中文体验和序列化方式重写。 |
-| `GG 单组控制`、`GG 多组控制`、分组前端增强 | [Josia-doit/ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes)、ComfyUI 原生 Group 与社区分组管理/样式插件 | 单组/多组控制相关节点参考 JosiaNodes 的分组控制思路，并按 GuliNodes 的中文参数和工作流习惯重新整理；标题栏显示/隐藏按钮沿用本项目单组/多组控制的组内节点识别机制，使用 `mode=2/0` 控制执行禁用/启用，并兼容旧的 `mode=4` 跳过状态。子工作流折叠为本项目前端交互增强，会保存组内节点位置和尺寸快照，仅影响分组内节点的画布显示与命中，并提供可拖动/改名的画布折叠小节点和右下角圆点恢复入口。 |
-| `GG 图像CAS锐化+` | Contrast Adaptive Sharpening（CAS）算法思路 | 使用 CAS 风格的对比度自适应锐化思路，以 PyTorch 张量实现为 ComfyUI 图像节点。 |
+| `GG 标题` | rgthree、Anything Everywhere、Reroute 等社区常见工作流形态 | 这些节点借鉴了社区里“画布标注”的交互思路，但前后端逻辑按 GuliNodes 的中文体验和序列化方式重写。 |
+| `GG 简单数学` | ComfyUI_essentials 的 SimpleMathDual+ 节点形态 | 节点输入结构和常用表达式场景参考 SimpleMathDual+；当前实现按 GuliNodes 中文命名重新实现，并使用 AST 白名单求值避免直接执行任意代码。 |
+| 分组前端增强 | [Josia-doit/ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes)、ComfyUI 原生 Group 与社区分组管理/样式插件 | 标题栏显示/隐藏按钮和组内节点识别机制沿用本项目之前单组/多组控制节点的思路，使用 `mode=2/0` 控制执行禁用/启用，并兼容旧的 `mode=4` 跳过状态。子工作流折叠为本项目前端交互增强，会保存组内节点位置和尺寸快照，仅影响分组内节点的画布显示与命中，并提供可拖动/改名的画布折叠小节点和右下角圆点恢复入口。 |
 | `GG 视频加载`、`GG 视频路径加载`、`GG 视频合成`、`GG 视频压缩`、`GG 视频保存` | ffmpeg/ffprobe 与 ComfyUI 视频工作流生态 | 视频封装、压缩和探测依赖 ffmpeg/ffprobe；节点形态面向 ComfyUI 常见 IMAGE/AUDIO/VIDEO 串联工作流重新封装。 |
 | `web/gg-group-styler.js` | ComfyUI-Group-Styler 的“前端扩展 + LiteGraph Group 绘制”路线 | 新增分组样式增强参考了该类前端实现路线，但没有复制其源码；当前文件在本项目内独立包装 `drawGroups`，带设置开关和原生绘制回退，并扩展标题栏按钮、顶部快捷开关、子工作流折叠动画、隐藏节点过滤与右下角圆点恢复指示器。 |
+| TapRelay 完成通知 | `W:\TapRelay` 的 HTTP/WebSocket 通知协议 | 适配 TapRelay PC 端固定的 `POST http://127.0.0.1:1122/send` 接收协议，发送 `message`、`source`、`status`、`taskId` 和 `durationMs`；GuliNodes 只做协议桥接，不复制 TapRelay 的接收或广播实现。 |
 
 ## 依赖与兼容
 
@@ -166,15 +146,12 @@ pip install -r requirements.txt
 | 主插件节点 | 无额外 Python 包 | 仅依赖 ComfyUI 自带 Python 环境中的常规库。 |
 | 图像处理 | ComfyUI 环境内的 `torch`、`PIL`、`numpy` | 不需要 `cv2`、`mediapipe`、`kornia` 或 `color-matcher`。 |
 | 视频加载/压缩/保存 | `ffmpeg`，可选 `ffprobe` | 需要系统命令可调用，或把 ffmpeg 放到 PATH。 |
-| GGUF 模型加载 | ComfyUI-GGUF 插件 | 只有使用 `GG GGUF模型` 节点时需要。 |
-| SeedVR2 视频放大 | ComfyUI-SeedVR2_VideoUpscaler 插件 | 只有使用 `GG SeedVR2视频放大器` 节点时需要。 |
+| TapRelay 完成通知 | TapRelay PC 软件（本机 `1122` 端口） | 可选功能。需要 TapRelay 正在运行；TapRelay 未启动或通知失败时只记录前端警告，不影响 ComfyUI 工作流。 |
 
 推荐模型目录：
 
 | 资源类型 | 推荐目录 |
 | --- | --- |
-| UNET / diffusion model | `ComfyUI/models/unet/` 或 `ComfyUI/models/diffusion_models/` |
-| GGUF UNET | `ComfyUI/models/unet/`、`ComfyUI/models/diffusion_models/` 或 ComfyUI-GGUF 配置目录 |
 | VAE | `ComfyUI/models/vae/` |
 | CLIP / text encoder | `ComfyUI/models/text_encoders/` |
 | LoRA | `ComfyUI/models/loras/` |
@@ -189,22 +166,27 @@ pip install -r requirements.txt
 
 确认 `ffmpeg` 可以在系统 PATH 中直接运行。大视频可以使用 `GG 视频路径加载` 直接选择本机文件路径，避免浏览器上传大小限制；也可以放入 `ComfyUI/input` 后在节点里选择。
 
-### GGUF 节点提示未检测到 ComfyUI-GGUF？
-
-`GG GGUF模型` 只是桥接节点，不内置 GGUF 加载器。需要安装并启用 ComfyUI-GGUF，并把 `.gguf` 模型放到对应目录。
-
-### SeedVR2 节点提示无法加载插件？
-
-`GG SeedVR2视频放大器` 会调用 `ComfyUI-SeedVR2_VideoUpscaler` 的接口。需要先安装该插件和对应模型。
-
 ### 网页 AI 节点无法嵌入？
 
 部分平台会限制 iframe 嵌入。可以尝试自定义移动端地址，或在外部浏览器打开平台网页使用。
 
+### TapRelay 没有收到 ComfyUI 完成通知？
+
+确认 TapRelay PC 软件正在运行并监听 `1122` 端口，然后在 ComfyUI 设置的 `GuliNodes / TapRelay` 中，或点击顶部铃铛按钮，确认“ComfyUI 完成后通知 TapRelay”已开启。通知由 GuliNodes 后端转发到 `http://127.0.0.1:1122/send`，TapRelay 不可用时不会阻断工作流。
+
 ## 更新记录
+
+### v1.0.12
+
+- 移除一批节点，精简插件体积和分类：`GG GGUF模型`、`GG UNET模型`、`GG DyPE动态位置`、`GG LoRA选择 4个`、`GG LoRA选择 8个`、`GG 全局转接`、`GG 转接`、`GG Set`、`GG Get`、`GG RGBA转RGB`、`GG 数值`、`GG 浮点滑条`、`GG 万能滑条`、`GG 绘制蒙版`、`GG 图像CAS锐化+`、`GG 单组控制`、`GG 多组控制`。
+- 移除上述节点对应的前端扩展文件（转接、Set/Get、万能滑条、分组控制等）。
+- 保留 `GG LoRA自定义加载`（20 槽 LoRA 叠加）、`GG 简单数学`、VAE 缓存编码/解码、内存清理、视频、网页 AI 等节点。
+- 当前实际注册节点数由 58 调整为 41。
 
 ### v1.0.11
 
+- 新增 ComfyUI 完成后 TapRelay 通知适配：监听工作流成功完成事件，发送完成状态、任务 ID 和耗时；支持在 GuliNodes 设置页和顶部铃铛按钮中关闭。
+- 新增 `GG 简单数学` 节点：支持 `a`、`b`、`c`、`d` 四个输入和两条表达式，输出两组整数/浮点计算结果，可用于宽高、倍率、步长等简单参数换算。
 - 顶部工具栏：新增上色取色/粘贴功能，可从画布节点或分组复制上色信息，并粘贴到单个/多个选中节点或分组。
 - 顶部工具栏：新增节点尺寸复制/粘贴功能，可把一个节点的宽高应用到单个或多个选中节点。
 - 分组样式增强：修复四边四角拖拽缩放的事件捕获顺序，并兼容新版 LiteGraph 分组矩形写回。
@@ -228,7 +210,7 @@ pip install -r requirements.txt
 - 主插件与额外 Python 依赖解耦，保留零额外 Python 依赖安装体验。
 - 当前实际注册 56 个节点。
 - 新增 `GG 色彩校正` 节点，基于 ColorCorrect 功能用 torch 张量批量实现，无需额外 OpenCV 依赖。
-- 保留 GGUF、SeedVR2、DyPE、Z-Image、视频、前端工具栏、Set/Get、标题、转接、内存清理等节点。
+- 保留 GGUF、DyPE、Z-Image、视频、前端工具栏、Set/Get、标题、转接、内存清理等节点。
 - 移除需要额外 Python 包的节点代码，例如 `color-matcher` / `kornia` 色彩匹配、`llama-cpp-python` 图像提示词和提示词优化相关节点。
 - 恢复零额外 Python 依赖的网页 AI 节点和风格参考节点。
 

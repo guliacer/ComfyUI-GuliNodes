@@ -10,25 +10,18 @@ FAILED_MODULES = {}
 _NODE_MODULES = (
     "aspect_ratio",
     "image_tools",
-    "mask_tools",
-    "sharpen_tools",
     "video_tools",
     "lora_tools",
     "text_tools",
     "key_tools",
     "numeric_tools",
-    "set_get",
     "title_node",
-    "reroute_tools",
-    "dype_tools",
     "seed_tools",
-    "group_controller",
     "clipboard",
-    "everywhere",
     "web_ai_tools",
     "model_loaders",
     "zimage_sampler",
-    "seedvr2_aggregate",
+    "taprelay",
 )
 
 

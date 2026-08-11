@@ -49,6 +49,7 @@ const HIDDEN_NODE_DRAW_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.hiddenNode
 const HIDDEN_NODE_HIT_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.hiddenNodeHitPatched");
 const HIDDEN_CANVAS_DRAW_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.hiddenCanvasDrawPatched");
 const HIDDEN_CONNECTIONS_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.hiddenConnectionsPatched");
+const HIDDEN_COMPUTE_VISIBLE_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.computeVisiblePatched");
 
 const FALLBACK_COLOR = "#64748b";
 const GROUP_COLORS = {
@@ -324,7 +325,7 @@ function getNodeBounds(node) {
     } catch (_) {
         // Fall back to pos/size below.
     }
-    if (Array.isArray(node?.pos) && Array.isArray(node?.size)) {
+    if (isArrayLikeNumber(node?.pos) && isArrayLikeNumber(node?.size)) {
         return [node.pos[0], node.pos[1], node.size[0], node.size[1]];
     }
     return null;
@@ -352,8 +353,17 @@ function collectNodesInGroup(group, graph) {
 }
 
 function syncGroupNodeCache(group, nodes) {
+    // Newer LiteGraph builds store nodes, reroutes AND nested groups in
+    // group._children. Only the node subset should be refreshed here so we
+    // preserve reroutes / nested groups that native recomputeInsideNodes adds.
     if (group?._children instanceof Set) {
-        group._children.clear();
+        const current = [...group._children];
+        const nodeSet = new Set(nodes);
+        for (const child of current) {
+            if (child && typeof child === "object" && "mode" in child && !nodeSet.has(child)) {
+                group._children.delete(child);
+            }
+        }
         for (const node of nodes) {
             group._children.add(node);
         }
@@ -423,7 +433,7 @@ function setGroupBypass(group, bypass, canvas = app.canvas) {
     recomputeGroupNodes(group, canvas);
     const nodes = getGroupNodes(group);
     for (const node of nodes) {
-        node.mode = bypass ? DISABLED_MODE : ACTIVE_MODE;
+        node.mode = bypass ? BYPASS_MODE : ACTIVE_MODE;
         node.setDirtyCanvas?.(true, false);
     }
 
@@ -441,7 +451,7 @@ function enforceHiddenGroupsBeforePrompt(canvas = app.canvas) {
         if (!nodes.length || !nodes.every((node) => isSkippedMode(node.mode))) continue;
 
         for (const node of nodes) {
-            node.mode = DISABLED_MODE;
+            node.mode = BYPASS_MODE;
         }
     }
 }
@@ -3679,8 +3689,17 @@ function installCanvasPointerCaptureWhenReady() {
     }, 250);
 }
 
+function isArrayLikeNumber(v) {
+    return v != null
+        && typeof v === "object"
+        && typeof v.length === "number"
+        && v.length >= 2
+        && typeof v[0] === "number"
+        && typeof v[1] === "number";
+}
+
 function findDrawNodeArg(args) {
-    return args.find((arg) => arg && typeof arg === "object" && ("mode" in arg) && Array.isArray(arg.pos) && Array.isArray(arg.size));
+    return args.find((arg) => arg && typeof arg === "object" && ("mode" in arg) && isArrayLikeNumber(arg.pos) && isArrayLikeNumber(arg.size));
 }
 
 function hasHiddenScaleNodes(graph) {
@@ -3819,6 +3838,25 @@ function installHiddenNodePatches() {
         }
     }
 
+    // Patch computeVisibleNodes to exclude hidden nodes at the culling stage.
+    // This prevents hidden nodes from entering _visible_node_ids, which cascades
+    // to both canvas draw (drawFrontCanvas loop) and DOM layer (isNodeVisible gate).
+    if (canvasProto && !canvasProto[HIDDEN_COMPUTE_VISIBLE_PATCH_FLAG] && typeof canvasProto.computeVisibleNodes === "function") {
+        const originalComputeVisibleNodes = canvasProto.computeVisibleNodes;
+        canvasProto.computeVisibleNodes = function(nodes, out) {
+            const result = originalComputeVisibleNodes.call(this, nodes, out);
+            if (!result || !Array.isArray(result)) return result;
+            // Filter out scale-hidden nodes from the visible set
+            for (let i = result.length - 1; i >= 0; i--) {
+                if (isGroupScaleHiddenNode(result[i])) {
+                    result.splice(i, 1);
+                }
+            }
+            return result;
+        };
+        canvasProto[HIDDEN_COMPUTE_VISIBLE_PATCH_FLAG] = true;
+    }
+
     const GraphClass = globalThis.LGraph ?? app.graph?.constructor;
     const graphProto = GraphClass?.prototype;
     if (graphProto && !graphProto[HIDDEN_NODE_HIT_PATCH_FLAG] && typeof graphProto.getNodeOnPos === "function") {
@@ -3833,6 +3871,22 @@ function installHiddenNodePatches() {
             });
         };
         graphProto[HIDDEN_NODE_HIT_PATCH_FLAG] = true;
+    }
+}
+
+function installHiddenNodePatchesWhenReady() {
+    installHiddenNodePatches();
+    const canvasReady = !!globalThis.LGraphCanvas?.prototype && !!app.canvas;
+    if (!canvasReady) {
+        let attempts = 0;
+        const tick = () => {
+            attempts += 1;
+            installHiddenNodePatches();
+            if (attempts < 80) {
+                setTimeout(tick, 150);
+            }
+        };
+        setTimeout(tick, 150);
     }
 }
 
@@ -4317,7 +4371,7 @@ app.registerExtension({
     async setup() {
         installGroupReplacementStyles();
         installGroupStyler();
-        installHiddenNodePatches();
+        installHiddenNodePatchesWhenReady();
         installHiddenConnectionsPatchWhenReady();
         installCanvasPointerCaptureWhenReady();
         installSubworkflowIndicators();

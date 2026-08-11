@@ -446,8 +446,8 @@ function installResizeHook(node) {
   node.onResize = function (size) {
     const result = originalOnResize?.apply(this, arguments);
     const width = Math.max(MIN_WIDTH, Number(size?.[0]) || Number(this.size?.[0]) || MIN_WIDTH);
-    if (Array.isArray(size) && width !== size[0]) size[0] = width;
-    if (Array.isArray(size) && Number(size[1]) < COMPACT_NODE_HEIGHT) size[1] = COMPACT_NODE_HEIGHT;
+    if (size != null && typeof size === "object" && typeof size.length === "number" && width !== size[0]) size[0] = width;
+    if (size != null && typeof size === "object" && typeof size.length === "number" && Number(size[1]) < COMPACT_NODE_HEIGHT) size[1] = COMPACT_NODE_HEIGHT;
     if (this.ggKeyInputPanel) applyPanelLayout(this.ggKeyInputPanel, width);
     return result;
   };
