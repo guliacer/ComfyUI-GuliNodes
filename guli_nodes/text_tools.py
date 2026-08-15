@@ -32,15 +32,29 @@ def _resolve_txt_path(txt_file: str) -> str:
     value = str(txt_file or "").strip()
     if not value or value == NO_TXT_FILE:
         return ""
+
+    try:
+        input_dir = Path(folder_paths.get_input_directory()).resolve()
+    except Exception:
+        return ""
+
+    def resolve_input_file(candidate: str | Path) -> str:
+        try:
+            resolved = Path(candidate).resolve()
+            resolved.relative_to(input_dir)
+        except (OSError, ValueError):
+            return ""
+        return str(resolved) if resolved.is_file() else ""
+
     try:
         annotated = folder_paths.get_annotated_filepath(value)
-        if annotated and os.path.isfile(annotated):
-            return annotated
+        resolved = resolve_input_file(annotated)
+        if resolved:
+            return resolved
     except Exception:
         pass
 
-    candidate = Path(folder_paths.get_input_directory()) / value
-    return str(candidate) if candidate.is_file() else ""
+    return resolve_input_file(input_dir / value)
 
 
 def _read_txt_file(path: str) -> str:

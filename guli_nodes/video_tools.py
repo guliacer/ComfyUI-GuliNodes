@@ -461,7 +461,7 @@ def _build_temp_output_path(source_path: str, output_format: str) -> str:
     temp_root = Path(folder_paths.get_temp_directory()) / "GuliVideos"
     temp_root.mkdir(parents=True, exist_ok=True)
     source = Path(source_path)
-    filename = f"{source.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{output_format.lower()}"
+    filename = f"{source.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}.{output_format.lower()}"
     return str((temp_root / filename).resolve())
 
 
@@ -600,7 +600,7 @@ def _build_saved_output_path(video_path: str, filename_prefix: str) -> str:
         raise ValueError(f"保存路径必须位于 ComfyUI 输出目录内: {parent}")
     parent.mkdir(parents=True, exist_ok=True)
     stem = prefix_path.name or source.stem
-    filename = f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}{source.suffix.lower() or '.mp4'}"
+    filename = f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}{source.suffix.lower() or '.mp4'}"
     output_path = (parent / filename).resolve()
     if not (output_path.parent == output_root or output_root in output_path.parent.parents):
         raise ValueError(f"保存路径必须位于 ComfyUI 输出目录内: {output_path}")
@@ -695,6 +695,8 @@ def _build_ffmpeg_command(
     command.extend(["-i", source_path, "-map_metadata", "-1" if remove_metadata else "0", "-c:v", video_codec])
 
     _add_quality_arguments(command, profile, chosen_crf, preset)
+    if profile["family"] == "legacy":
+        command.extend(["-pix_fmt", profile["pix_fmt"]])
 
     if keep_original_resolution:
         command.extend(["-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2"])
@@ -1217,18 +1219,11 @@ class GGVideoSave:
             source_path,
             "-c:v",
             fallback_profile["codec"],
-            "-pix_fmt",
-            fallback_profile["pix_fmt"],
-            "-preset",
-            "medium",
-            "-crf",
-            "23.5",
-            "-c:a",
-            fallback_audio,
-            "-b:a",
-            "96k",
-            destination_path,
         ]
+        _add_quality_arguments(transcode_command, fallback_profile, fallback_profile["default_crf"], "medium")
+        if fallback_profile["family"] == "legacy":
+            transcode_command.extend(["-pix_fmt", fallback_profile["pix_fmt"]])
+        transcode_command.extend(["-c:a", fallback_audio, "-b:a", "96k", destination_path])
         transcode_result = _run_ffmpeg_command(transcode_command)
         if transcode_result.returncode != 0 or not os.path.exists(destination_path):
             stderr = (transcode_result.stderr or remux_result.stderr or "").strip()

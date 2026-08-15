@@ -123,8 +123,12 @@ function requiredNodeWidth(node) {
 
 function compactNodeWidth(node, computedWidth) {
     const requiredWidth = requiredNodeWidth(node);
+    // 含 DOM widget（预览/面板/输入框等）的节点，宽度必须能容纳其内容。
+    // computedWidth 是节点原生 computeSize 的结果，已包含 DOM widget 的
+    // 内容宽度（如 WebAI 面板 520、视频预览 360），不能截断到
+    // MAX_AUTO_NODE_WIDTH，否则内容会溢出节点边界。
     if (hasLayoutSensitiveWidget(node)) {
-        return Math.max(MIN_NODE_WIDTH, Math.min(computedWidth, MAX_AUTO_NODE_WIDTH), requiredWidth);
+        return Math.max(MIN_NODE_WIDTH, computedWidth, requiredWidth);
     }
     return Math.max(MIN_NODE_WIDTH, requiredWidth);
 }
@@ -144,6 +148,11 @@ function fitNode(node, options = {}) {
         return;
     }
 
+    // GGLoRACustomLoader 由 gg-lora-custom-loader.js 自行管理高度
+    // （隐藏/显示 LoRA 槽位时精确贴合内容），autofit 只负责宽度，
+    // 避免 allowShrink:false 把高度抬出内容范围。
+    const heightLocked = node.comfyClass === "GGLoRACustomLoader" || node.type === "GGLoRACustomLoader";
+
     installWidgetCallbacks(node);
 
     const computed = constrainedComputedSize(node);
@@ -153,7 +162,9 @@ function fitNode(node, options = {}) {
     const minimumHeight = Math.max(MIN_NODE_HEIGHT, Number(computed[1]) || 0);
     const allowShrink = options.allowShrink !== false;
     let width = allowShrink ? minimumWidth : Math.max(currentWidth, minimumWidth);
-    let height = allowShrink ? minimumHeight : Math.max(currentHeight, minimumHeight);
+    let height = heightLocked
+        ? computed[1]
+        : allowShrink ? minimumHeight : Math.max(currentHeight, minimumHeight);
 
     width = Math.max(width, minimumWidth);
     height = Math.max(height, minimumHeight);

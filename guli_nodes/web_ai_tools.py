@@ -131,22 +131,31 @@ def _resolve_txt_path(txt_file: str = "", txt_path: str = "") -> str:
     if not file_value or file_value == NO_TXT_FILE:
         return ""
 
-    if folder_paths is not None:
-        try:
-            annotated = folder_paths.get_annotated_filepath(file_value)
-            if annotated and os.path.isfile(annotated):
-                return annotated
-        except Exception:
-            pass
-        try:
-            input_candidate = Path(folder_paths.get_input_directory()) / file_value
-            if input_candidate.is_file():
-                return str(input_candidate)
-        except Exception:
-            pass
+    if folder_paths is None:
+        return ""
 
-    candidate = Path(file_value).expanduser()
-    return str(candidate) if candidate.is_file() else ""
+    try:
+        input_dir = Path(folder_paths.get_input_directory()).resolve()
+    except Exception:
+        return ""
+
+    def resolve_input_file(candidate: str | Path) -> str:
+        try:
+            resolved = Path(candidate).resolve()
+            resolved.relative_to(input_dir)
+        except (OSError, ValueError):
+            return ""
+        return str(resolved) if resolved.is_file() else ""
+
+    try:
+        annotated = folder_paths.get_annotated_filepath(file_value)
+        resolved = resolve_input_file(annotated)
+        if resolved:
+            return resolved
+    except Exception:
+        pass
+
+    return resolve_input_file(input_dir / file_value)
 
 
 def _read_text_file(path: str) -> str:
@@ -202,15 +211,27 @@ def _select_text(文本="", 文本输入=None, TXT文件=NO_TXT_FILE, TXT路径=
 
 def _normalize_chat_api_url(value: str | None = "") -> str:
     api_url = str(value or "").strip() or DEFAULT_LLM_API_URL
-    parsed = urllib.parse.urlparse(api_url)
+    if "://" not in api_url:
+        api_url = f"https://{api_url.lstrip('/')}"
+    parsed = urllib.parse.urlsplit(api_url)
+    try:
+        has_host = bool(parsed.hostname)
+        _ = parsed.port
+    except ValueError:
+        has_host = False
+    if parsed.scheme.lower() not in {"http", "https"} or not has_host:
+        raise ValueError("API地址必须是有效的 HTTP 或 HTTPS 地址，例如 https://api.openai.com/v1。")
+
     path = (parsed.path or "").rstrip("/")
     if path.endswith("/chat/completions"):
-        return api_url
-    if path.endswith("/v1"):
-        return api_url.rstrip("/") + "/chat/completions"
-    if parsed.scheme and parsed.netloc and not path:
-        return api_url.rstrip("/") + "/v1/chat/completions"
-    return api_url
+        normalized_path = path
+    elif path.endswith("/v1"):
+        normalized_path = f"{path}/chat/completions"
+    elif not path:
+        normalized_path = "/v1/chat/completions"
+    else:
+        normalized_path = path
+    return urllib.parse.urlunsplit((parsed.scheme.lower(), parsed.netloc, normalized_path, parsed.query, ""))
 
 
 def _limit_text(text: str, max_chars: int) -> tuple[str, str]:
@@ -591,7 +612,7 @@ class GGWebAIReverseText:
         rules_text = _stringify_text(提取规则).strip()
         prompt = _compose_novel_prompt(limited_text, rules_text, _stringify_text(总结要求), 输出格式, truncate_note)
         api_key, api_endpoint, api_model_name = _parse_api_config(API配置)
-        has_api_config = bool(api_key or api_endpoint or api_model_name)
+        has_api_config = bool(api_key or api_endpoint)
 
         local_error = None
         if 模型 is not None:

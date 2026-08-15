@@ -14,6 +14,7 @@ const API_CONFIG_INPUT_NAME = "API配置";
 const TEXT_OUTPUT_NAME = "提取总结";
 const DOM_WIDGET_NAME = "gg_web_ai_reverse";
 const MIN_NODE_WIDTH = 520;
+const MIN_PANEL_WIDTH = 200;
 const MIN_PANEL_HEIGHT = 360;
 const MAX_PANEL_HEIGHT = 1500;
 const DEFAULT_PANEL_HEIGHT = 820;
@@ -245,7 +246,10 @@ function updateUrlBar(panel, url) {
 }
 
 function applyPanelLayout(panel, width) {
-    const outerWidth = Math.max(MIN_NODE_WIDTH - 28, Number(width || MIN_NODE_WIDTH) - 28);
+    // 面板宽度跟随节点实际宽度，避免节点被拉伸到比 MIN_NODE_WIDTH 更窄时
+    // iframe 超出节点右边界导致内容溢出节点。
+    const nodeWidth = Number(width) || MIN_NODE_WIDTH;
+    const outerWidth = Math.max(MIN_PANEL_WIDTH, nodeWidth - 28);
     const panelHeight = getPanelHeight(panel.node);
     const iframeHeight = Math.max(MIN_PANEL_HEIGHT - URL_BAR_HEIGHT, panelHeight - URL_BAR_HEIGHT);
 
@@ -472,8 +476,16 @@ function installNodeHooks(node) {
     node.onResize = function (size) {
         const result = originalOnResize?.apply(this, arguments);
         clearNodeSlots(this);
+        const sizeLike = size != null && typeof size === "object" && typeof size.length === "number";
+        const nextWidth = Math.max(MIN_NODE_WIDTH, sizeLike ? Number(size[0]) || 0 : Number(this.size?.[0]) || 0);
+        if (sizeLike && Number(size[0]) < MIN_NODE_WIDTH) {
+            size[0] = nextWidth;
+        }
+        if (this.size && Number(this.size[0]) < MIN_NODE_WIDTH) {
+            this.size[0] = nextWidth;
+        }
         if (this.ggWebAIReversePanel) {
-            applyPanelLayout(this.ggWebAIReversePanel, size?.[0] || this.size?.[0] || MIN_NODE_WIDTH);
+            applyPanelLayout(this.ggWebAIReversePanel, nextWidth);
         }
         return result;
     };

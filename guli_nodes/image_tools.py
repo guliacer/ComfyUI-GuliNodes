@@ -736,7 +736,10 @@ class GGSaveImage(SaveImage):
             })
             counter += 1
 
-        return {"ui": {"images": results}}
+        # 节点继承自 SaveImage，其 RETURN_TYPES = ("IMAGE",)，
+        # 因此工作流可能把本节点输出连到下游。必须回传 result 元组，
+        # 否则 ComfyUI 缓存更新时 value.outputs[from_socket] 越界报错。
+        return {"ui": {"images": results}, "result": (图像,)}
 
     def _select_format(self, images: torch.Tensor, image: torch.Tensor, requested_format: str) -> str:
         if requested_format != "AUTO":
@@ -954,7 +957,10 @@ class GGImageCompressSave(GGSaveImage):
             })
             counter += 1
 
-        return {"ui": {"images": results}}
+        # 节点继承自 SaveImage，其 RETURN_TYPES = ("IMAGE",)，
+        # 因此工作流可能把本节点输出连到下游。必须回传 result 元组，
+        # 否则 ComfyUI 缓存更新时 value.outputs[from_socket] 越界报错。
+        return {"ui": {"images": results}, "result": (图像,)}
 
     def _select_compressed_format(
         self,
@@ -1215,10 +1221,19 @@ class GGImageComparer4(ImageComparerBase):
     def compare(self, 图像_A: torch.Tensor = None, 图像_B: torch.Tensor = None, 图像_C: torch.Tensor = None, 图像_D: torch.Tensor = None,
                 标签_A: str = "图像 A", 标签_B: str = "图像 B", 标签_C: str = "图像 C", 标签_D: str = "图像 D",
                 字体大小: int = 40, 边框宽度: int = 32, 标签高度: int = 80, 图像间距: int = 20, **kwargs) -> tuple:
-        images = [img for img in [图像_A, 图像_B, 图像_C, 图像_D] if img is not None]
-        labels = [标签_A, 标签_B, 标签_C, 标签_D][:len(images)]
-        if len(images) < 2:
-            return (图像_A or 图像_B or 图像_C or 图像_D,)
+        image_pairs = [
+            (图像_A, 标签_A),
+            (图像_B, 标签_B),
+            (图像_C, 标签_C),
+            (图像_D, 标签_D),
+        ]
+        image_pairs = [(image, label) for image, label in image_pairs if image is not None]
+        if not image_pairs:
+            raise RuntimeError("请至少连接一张图像用于对比。")
+        images = [image for image, _ in image_pairs]
+        labels = [label for _, label in image_pairs]
+        if len(images) == 1:
+            return (images[0],)
         return (concatenate_images_horizontally(images, labels, 字体大小, 边框宽度, 标签高度, 图像间距),)
 
 
@@ -1242,7 +1257,7 @@ class GGImageComparer2(PreviewImage):
     def compare(self, 图像_A: torch.Tensor, 图像_B: torch.Tensor,
                 filename_prefix="GG.compare.",
                 prompt=None, extra_pnginfo=None) -> dict:
-        result = {"ui": {"a_images": [], "b_images": []}}
+        result = {"ui": {"a_images": [], "b_images": []}, "result": (图像_A,)}
         if 图像_A is not None and len(图像_A) > 0:
             result["ui"]["a_images"] = self._save_compare_images(
                 图像_A, f"{filename_prefix}a_", "JPEG", prompt, extra_pnginfo
@@ -1373,19 +1388,61 @@ class GGImageComparer8(ImageComparerBase):
     CATEGORY = "GuliNodes/图像"
 
     def compare(self, **kwargs) -> tuple:
-        images = [kwargs.get(f"图像_{chr(65 + i)}") for i in range(8)]
-        images = [img for img in images if img is not None]
-        labels = [kwargs.get(f"标签_{chr(65 + i)}", f"图像 {chr(65 + i)}") for i in range(8)][:len(images)]
+        image_pairs = [
+            (
+                kwargs.get(f"图像_{chr(65 + index)}"),
+                kwargs.get(f"标签_{chr(65 + index)}", f"图像 {chr(65 + index)}"),
+            )
+            for index in range(8)
+        ]
+        image_pairs = [(image, label) for image, label in image_pairs if image is not None]
+        if not image_pairs:
+            raise RuntimeError("请至少连接一张图像用于对比。")
+        images = [image for image, _ in image_pairs]
+        labels = [label for _, label in image_pairs]
         font_size = kwargs.get("字体大小", 40)
         border = kwargs.get("边框宽度", 32)
         label_height = kwargs.get("标签高度", 80)
         spacing = kwargs.get("图像间距", 20)
-        if len(images) < 2:
-            return (images[0] if images else None,)
+        if len(images) == 1:
+            return (images[0],)
         return (concatenate_images_horizontally(images, labels, font_size, border, label_height, spacing),)
 
 
 _缩放方法选项 = ["nearest-exact", "bilinear", "lanczos", "area", "bicubic"]
+_VAE_TILE_SIZE = 512
+_VAE_TILE_OVERLAP = 64
+
+
+def _decode_vae_image(vae, samples, use_tiled: bool):
+    if not use_tiled:
+        return vae.decode(samples)
+    if not callable(getattr(vae, "decode_tiled", None)):
+        raise RuntimeError("当前 VAE 不支持分块解码，请关闭“分块VAE”或更新 ComfyUI。")
+
+    try:
+        compression = max(1, int(vae.spacial_compression_decode()))
+    except Exception:
+        compression = 8
+    return vae.decode_tiled(
+        samples,
+        tile_x=max(1, _VAE_TILE_SIZE // compression),
+        tile_y=max(1, _VAE_TILE_SIZE // compression),
+        overlap=max(0, _VAE_TILE_OVERLAP // compression),
+    )
+
+
+def _encode_vae_image(vae, image, use_tiled: bool):
+    if not use_tiled:
+        return vae.encode(image)
+    if not callable(getattr(vae, "encode_tiled", None)):
+        raise RuntimeError("当前 VAE 不支持分块编码，请关闭“分块VAE”或更新 ComfyUI。")
+    return vae.encode_tiled(
+        image,
+        tile_x=_VAE_TILE_SIZE,
+        tile_y=_VAE_TILE_SIZE,
+        overlap=_VAE_TILE_OVERLAP,
+    )
 
 class GG图像缩放:
     @classmethod
@@ -1410,7 +1467,7 @@ class GG图像缩放:
 
     def execute(self, Latent, VAE, 缩放方法="lanczos", 缩放倍率=1.5, 分块VAE=False, 放大模型=None):
         倍率 = max(0.1, float(缩放倍率))
-        原始图像 = VAE.decode(Latent["samples"])
+        原始图像 = _decode_vae_image(VAE, Latent["samples"], 分块VAE)
         if len(原始图像.shape) == 5:
             原始图像 = 原始图像.reshape(-1, 原始图像.shape[-3], 原始图像.shape[-2], 原始图像.shape[-1])
 
@@ -1419,19 +1476,19 @@ class GG图像缩放:
             _upscale_cls = _NCM.get("ImageUpscaleWithModel")
             if _upscale_cls is not None:
                 _upscaler = _upscale_cls()
-                当前宽度 = 原始图像.shape[3]
+                当前宽度 = 原始图像.shape[2]
                 目标宽度 = int(当前宽度 * 倍率)
-                while 原始图像.shape[3] < 目标宽度:
+                while 原始图像.shape[2] < 目标宽度:
                     if hasattr(_upscaler, "execute"):
                         原始图像 = _upscaler.execute(放大模型, 原始图像)[0]
                     else:
                         原始图像 = _upscaler.upscale(放大模型, 原始图像)[0]
-                    if 原始图像.shape[3] == 当前宽度:
+                    if 原始图像.shape[2] == 当前宽度:
                         break
-                    当前宽度 = 原始图像.shape[3]
+                    当前宽度 = 原始图像.shape[2]
 
-        原始高度 = 原始图像.shape[2]
-        原始宽度 = 原始图像.shape[3]
+        原始高度 = 原始图像.shape[1]
+        原始宽度 = 原始图像.shape[2]
         目标高度 = max(1, round(原始高度 * 倍率))
         目标宽度 = max(1, round(原始宽度 * 倍率))
 
@@ -1439,7 +1496,7 @@ class GG图像缩放:
         缩放后 = comfy.utils.common_upscale(缩放后, 目标宽度, 目标高度, 缩放方法, "disabled")
         缩放后 = 缩放后.movedim(1, -1)
 
-        新Latent = VAE.encode(缩放后)
+        新Latent = _encode_vae_image(VAE, 缩放后, 分块VAE)
         return ({"samples": 新Latent}, 缩放后)
 
 
@@ -1493,7 +1550,7 @@ if io is not None:
         @classmethod
         def execute(cls, Latent, VAE, 缩放方法="lanczos", 缩放倍率=1.5, 分块VAE=False, 放大模型=None):
             倍率 = max(0.1, float(缩放倍率))
-            原始图像 = VAE.decode(Latent["samples"])
+            原始图像 = _decode_vae_image(VAE, Latent["samples"], 分块VAE)
             if len(原始图像.shape) == 5:
                 原始图像 = 原始图像.reshape(-1, 原始图像.shape[-3], 原始图像.shape[-2], 原始图像.shape[-1])
 
@@ -1502,19 +1559,19 @@ if io is not None:
                 _upscale_cls = _NCM.get("ImageUpscaleWithModel")
                 if _upscale_cls is not None:
                     _upscaler = _upscale_cls()
-                    当前宽度 = 原始图像.shape[3]
+                    当前宽度 = 原始图像.shape[2]
                     目标宽度 = int(当前宽度 * 倍率)
-                    while 原始图像.shape[3] < 目标宽度:
+                    while 原始图像.shape[2] < 目标宽度:
                         if hasattr(_upscaler, "execute"):
                             原始图像 = _upscaler.execute(放大模型, 原始图像)[0]
                         else:
                             原始图像 = _upscaler.upscale(放大模型, 原始图像)[0]
-                        if 原始图像.shape[3] == 当前宽度:
+                        if 原始图像.shape[2] == 当前宽度:
                             break
-                        当前宽度 = 原始图像.shape[3]
+                        当前宽度 = 原始图像.shape[2]
 
-            原始高度 = 原始图像.shape[2]
-            原始宽度 = 原始图像.shape[3]
+            原始高度 = 原始图像.shape[1]
+            原始宽度 = 原始图像.shape[2]
             目标高度 = max(1, round(原始高度 * 倍率))
             目标宽度 = max(1, round(原始宽度 * 倍率))
 
@@ -1522,8 +1579,8 @@ if io is not None:
             缩放后 = comfy.utils.common_upscale(缩放后, 目标宽度, 目标高度, 缩放方法, "disabled")
             缩放后 = 缩放后.movedim(1, -1)
 
-            新Latent = VAE.encode(缩放后)
-            return io.NodeOutput({"samples": 新Latent}, extra_outputs=[缩放后])
+            新Latent = _encode_vae_image(VAE, 缩放后, 分块VAE)
+            return io.NodeOutput({"samples": 新Latent}, 缩放后)
 
     GG图像缩放 = GG图像缩放_V3
 

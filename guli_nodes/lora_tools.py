@@ -45,26 +45,29 @@ class LoRAStackerBase:
                 self.loaded_loras[lora_key] = lora_data
                 return lora_data
 
+            lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
             if len(self.loaded_loras) >= self.cache_size:
                 first_key = next(iter(self.loaded_loras))
                 del self.loaded_loras[first_key]
 
-            lora = comfy.utils.load_torch_file(lora_path, safe_load=True)
             self.loaded_loras[lora_key] = lora
             return lora
         except Exception as exc:
-            print(f"Error loading LoRA {lora_name}: {exc}")
-            return None
+            raise RuntimeError(
+                f"加载 LoRA 失败：{lora_name}。请确认文件位于 ComfyUI/models/loras，且文件未损坏。\n原始错误：{exc}"
+            ) from exc
 
     def apply_lora_stack(self, model: object, lora_data: list) -> object:
         result_model = model
-        for lora, strength in lora_data:
+        for lora, strength, lora_name in lora_data:
             if lora is None or strength == 0:
                 continue
             try:
                 result_model, _ = comfy.sd.load_lora_for_models(result_model, None, lora, strength, 0)
             except Exception as exc:
-                print(f"Error applying LoRA: {exc}")
+                raise RuntimeError(
+                    f"应用 LoRA 失败：{lora_name}。请确认它与当前基础模型兼容，或调整 LoRA 强度。\n原始错误：{exc}"
+                ) from exc
         return result_model
 
     @classmethod
@@ -121,7 +124,7 @@ class GGLoRACustomLoader(LoRAStackerBase):
             strength = float(kwargs.get(f"LoRA{index}强度", 1.0))
             lora = self.load_lora_file(lora_name, strength)
             if lora is not None:
-                lora_data.append((lora, strength))
+                lora_data.append((lora, strength, lora_name))
 
         if not lora_data:
             return (模型,)
