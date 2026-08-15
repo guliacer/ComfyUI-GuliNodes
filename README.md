@@ -176,7 +176,7 @@ pip install -r requirements.txt
 
 ## 更新记录
 
-### 未发布
+### v1.0.13
 
 - 修复 `GG 图像缩放` 在 BHWC 图像上的宽高索引错误、新版 `NodeOutput` 返回不兼容和“分块VAE”开关未生效问题，以及图像对比节点的空输入、稀疏输入标签错位和输出缺失问题。
 - 收紧 TXT 文件选择的目录边界，防止 `TXT文件` 绕过 ComfyUI `input` 目录；`TXT路径` 仍支持显式本机路径。

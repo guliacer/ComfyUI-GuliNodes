@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "comfyui-gulinodes"
-version = "1.0.12"
+version = "1.0.13"
 description = "GuliNodes - 工具栏 + 图像处理 + 潜空间尺寸 + 模型/LoRA + 工作流 + 文本 + 采样 + 视频"
 readme = "README.md"
 requires-python = ">=3.10"
