@@ -18,6 +18,14 @@ const MIN_LETTER_SPACING = -64;
 const MAX_LETTER_SPACING = 128;
 const LETTER_SPACING_STEP = 3;
 
+function isNodes20Mode(canvas = app.canvas) {
+  return !!(
+    globalThis.LiteGraph?.vueNodesMode
+    || canvas?.vueNodesMode
+    || app?.vueNodesMode
+  );
+}
+
 const ALIGN_MAP = {
   左对齐: "left",
   居中: "center",
@@ -623,7 +631,11 @@ function shouldDrawBackground(config) {
 }
 
 function drawSelectionFrame(node, ctx, canvas, width, height) {
-  const selected = node.selected || canvas?.selected_nodes?.[node.id] !== undefined;
+  const selectedItems = canvas?.selectedItems ?? canvas?.selected_items;
+  const selected = node.selected
+    || canvas?.selected_nodes?.[node.id] !== undefined
+    || (selectedItems instanceof Set && selectedItems.has(node))
+    || (Array.isArray(selectedItems) && selectedItems.includes(node));
   if (!selected) return;
 
   ctx.save();
@@ -1789,7 +1801,17 @@ function syncDomTitleNode(node) {
   element.classList.add("gg-title-dom-node");
   element.style.setProperty("--gg-title-node-width", `${width}px`);
   element.style.setProperty("--gg-title-node-height", `${height}px`);
-  element.style.transform = `translate(${node.pos?.[0] ?? 0}px, ${node.pos?.[1] ?? 0}px)`;
+  // Nodes 2.0 owns the node transform through its layout renderer. Writing a
+  // graph-space translate here would move the DOM node twice and make title
+  // labels drift after zoom/pan. Legacy DOM widgets still need the fallback
+  // transform because their host is not positioned by Vue.
+  if (!isNodes20Mode()) {
+    element.style.transform = `translate(${node.pos?.[0] ?? 0}px, ${node.pos?.[1] ?? 0}px)`;
+  } else {
+    // If the user toggles Nodes 2.0 after this DOM node was created, remove
+    // the legacy graph-space transform so Vue remains the sole layout owner.
+    element.style.removeProperty("transform");
+  }
 
   Object.assign(label.style, {
     color: textColorStyle(layout.config),
@@ -1951,7 +1973,7 @@ function installDrawPatch() {
   const originalDrawNode = globalThis.LGraphCanvas.prototype.drawNode;
   globalThis.LGraphCanvas.prototype._ggTitleDrawPatched = true;
   globalThis.LGraphCanvas.prototype.drawNode = function (node, ctx) {
-    if (!isTitleNode(node)) return originalDrawNode.apply(this, arguments);
+    if (!isTitleNode(node) || isNodes20Mode(this)) return originalDrawNode.apply(this, arguments);
     this.current_node = node;
     drawTitle(node, ctx, this);
   };

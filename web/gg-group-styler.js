@@ -11,6 +11,8 @@ const GROUP_DRAW_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.drawGroupsPatche
 const GROUP_DRAW_ORIGINAL_KEY = Symbol.for("GuliNodes.groupStyler.drawGroupsOriginal");
 const GROUP_INTERACTION_PATCH_FLAG = Symbol.for("GuliNodes.groupStyler.interactionPatched");
 const GROUP_INTERACTION_ORIGINAL_KEY = Symbol.for("GuliNodes.groupStyler.interactionOriginal");
+const GROUP_SELECTION_HOOK_FLAG = Symbol.for("GuliNodes.groupStyler.selectionHooked");
+const GROUP_REPLACEMENT_EVENT_FLAG = Symbol.for("GuliNodes.groupStyler.replacementEventInstalled");
 const GROUP_REPLACEMENT_STYLE_ID = "gg-group-styler-replacement-style";
 const RESIZE_EDGE_PX = 10;
 const NATIVE_CORNER_PX = 18;
@@ -28,6 +30,7 @@ const RECOMPUTE_INTERVAL = 300;
 const DISABLED_MODE = 2;
 const BYPASS_MODE = 4;
 const ACTIVE_MODE = 0;
+const GROUP_BYPASS_STATE_KEY = Symbol.for("GuliNodes.groupStyler.groupBypassModes");
 const SCALE_HIDE_RATIO = 0.16;
 const SCALE_HIDE_MIN_WIDTH = 24;
 const SCALE_HIDE_MIN_HEIGHT = 16;
@@ -35,7 +38,17 @@ const SCALE_HIDE_DURATION = 220;
 const SCALE_HIDE_GROUP_WIDTH = 178;
 const SCALE_HIDE_GROUP_HEIGHT = 48;
 const GROUP_CHILD_CONTAINMENT_TOLERANCE = 2;
+const LEGACY_COMPACT_GROUP_MAX_WIDTH = 220;
+const LEGACY_COMPACT_GROUP_MAX_HEIGHT = 96;
+const LEGACY_RECOVERY_MAX_WIDTH = 1200;
+const LEGACY_RECOVERY_MAX_HEIGHT = 900;
+const LEGACY_RECOVERY_MIN_NODES = 3;
+const LEGACY_RECOVERY_PADDING = 24;
 const SCALE_HIDE_STATE_KEY = "GuliNodes.groupScaleHideState";
+// Group properties are not part of LiteGraph's serialized group payload.
+// Keep the same state in flags as well so a saved workflow can restore a
+// collapsed group without exposing its real nodes on the next load.
+const SCALE_HIDE_STATE_FLAG = "__guli_group_scale_state";
 const SCALE_HIDE_CACHE_KEY = "GuliNodes.groupScaleHideCache.v1";
 const SCALE_HIDE_CACHE_LIMIT = 80;
 const SCALE_HIDE_CACHE_TTL = 1000 * 60 * 60 * 24 * 90;
@@ -74,10 +87,25 @@ const resizeState = {
     captureWindow: null,
 };
 
+// Keep title dragging separate from LiteGraph's resize/pan state.  Nodes 2.0
+// can render node DOM above the canvas, and the native drag state is not
+// reliable when the canvas is zoomed or has a non-1:1 backing store.
+const groupDragState = {
+    active: null,
+    windowMove: null,
+    windowUp: null,
+    windowPointerMove: null,
+    windowPointerUp: null,
+    windowPointerCancel: null,
+    windowBlur: null,
+    captureWindow: null,
+};
+
 const groupControlState = {
     hoverToggle: null,
     hoverScale: null,
     recomputeTimes: new WeakMap(),
+    bypassModes: new WeakMap(),
     lastToggle: null,
     lastScaleToggle: null,
     scaleStates: new WeakMap(),
@@ -103,7 +131,12 @@ const groupControlState = {
     hydrateTimer: null,
     drawWatchdogTimer: null,
     nativeGroupHover: null,
+    legacyRecoveredGroups: new WeakSet(),
 };
+
+const hiddenNodeDomStates = new WeakMap();
+let hiddenNodeDomObserver = null;
+let hiddenNodeDomSyncFrame = null;
 
 const graphIndicatorIds = new WeakMap();
 let nextGraphIndicatorId = 1;
@@ -246,11 +279,70 @@ function getGroupRect(group) {
 }
 
 function getGroupGraph(group, canvas = app.canvas) {
-    return group?.graph ?? canvas?.graph ?? app.canvas?.getCurrentGraph?.() ?? app.graph;
+    const activeGraph = canvas?.getCurrentGraph?.() ?? canvas?.graph ?? app.graph;
+    // A group object can outlive a subgraph switch.  Never use that stale
+    // graph when the canvas is currently displaying another graph.
+    if (group?.graph && (!activeGraph || group.graph === activeGraph)) return group.graph;
+    return activeGraph ?? group?.graph ?? app.graph;
 }
 
 function isSkippedMode(mode) {
     return mode === DISABLED_MODE || mode === BYPASS_MODE;
+}
+
+function setNodeMode(node, mode) {
+    if (!node || !Number.isFinite(mode)) return false;
+
+    // Use LiteGraph's public mode transition when available.  Some ComfyUI
+    // versions expose BYPASS (4) in the enum but do not yet handle it in
+    // changeMode(), so verify the result and fall back to a direct write.
+    let changed = false;
+    try {
+        if (typeof node.changeMode === "function") {
+            node.changeMode(mode);
+            changed = node.mode === mode;
+        }
+    } catch (_) {
+        changed = false;
+    }
+    if (!changed && node.mode !== mode) {
+        try {
+            node.mode = mode;
+            changed = node.mode === mode;
+        } catch (_) {
+            changed = false;
+        }
+    }
+    if (changed) node.setDirtyCanvas?.(true, false);
+    return changed;
+}
+
+function readGroupBypassModes(group) {
+    return groupControlState.bypassModes.get(group)
+        ?? (group?.[GROUP_BYPASS_STATE_KEY] instanceof Map ? group[GROUP_BYPASS_STATE_KEY] : null);
+}
+
+function writeGroupBypassModes(group, modes) {
+    if (!group || !(modes instanceof Map) || !modes.size) return;
+    groupControlState.bypassModes.set(group, modes);
+    try {
+        Object.defineProperty(group, GROUP_BYPASS_STATE_KEY, {
+            value: modes,
+            enumerable: false,
+            configurable: true,
+        });
+    } catch (_) {
+        // WeakMap state above is sufficient for sealed group objects.
+    }
+}
+
+function clearGroupBypassModes(group) {
+    groupControlState.bypassModes.delete(group);
+    try {
+        delete group[GROUP_BYPASS_STATE_KEY];
+    } catch (_) {
+        // Ignore non-configurable host objects.
+    }
 }
 
 function getActiveGraph(canvas = app.canvas) {
@@ -287,9 +379,18 @@ function selectionContainsGroup(value, depth = 0) {
     if (isGraphGroupLike(value)) return true;
     if (Array.isArray(value)) return value.some((item) => selectionContainsGroup(item, depth + 1));
     if (typeof value !== "object") return false;
+    // A node can carry layout/ownership metadata that happens to reference a
+    // group.  It is still a node selection and must keep the official node
+    // toolbox; never recurse through node-shaped values here.
+    if ("mode" in value || Array.isArray(value.inputs) || Array.isArray(value.outputs)) return false;
 
+    // `LGraphNode` instances can expose their owning group as `group` (and
+    // some ComfyUI selection wrappers copy that property).  Ownership is not
+    // selection: treating it as a selected group suppresses the official
+    // node toolbox whenever a node lives inside a GuliNodes group.  Only walk
+    // fields that represent the selected item itself; a group selected
+    // directly is already caught by the isGraphGroupLike check above.
     const candidates = [
-        value.group,
         value.item,
         value.target,
         value.selectedItem,
@@ -308,14 +409,12 @@ function getVisibleGraphGroups(canvas = app.canvas) {
 function getGraphGroups(graph) {
     if (!graph) return [];
 
-    const groups = [...(graph._groups ?? graph.groups ?? [])];
-    const subgraphs = graph.subgraphs?.values?.();
-    if (subgraphs) {
-        for (const subgraph of subgraphs) {
-            groups.push(...(subgraph?._groups ?? subgraph?.groups ?? []));
-        }
-    }
-    return groups;
+    // LiteGraph keeps all subgraph definitions in the root graph's `subgraphs`
+    // registry, but a canvas can only display the groups belonging to its
+    // current graph.  Do not flatten that registry here: doing so lets a group
+    // from another subgraph match the current graph's nodes/IDs and is the
+    // source of the intermittent "all nodes pile up" behaviour.
+    return [...(graph._groups ?? graph.groups ?? [])];
 }
 
 function getNodeBounds(node) {
@@ -383,13 +482,23 @@ function recomputeGroupNodes(group, canvas = app.canvas) {
     const graph = getGroupGraph(group, canvas);
     if (!graph || !getGroupRect(group)) return;
 
+    let usedNativeMembership = false;
     try {
-        group.recomputeInsideNodes?.();
+        if (typeof group.recomputeInsideNodes === "function") {
+            group.recomputeInsideNodes();
+            usedNativeMembership = true;
+        }
     } catch (_) {
         // Older LiteGraph builds may not expose recomputeInsideNodes.
     }
 
-    syncGroupNodeCache(group, collectNodesInGroup(group, graph));
+    // LiteGraph's native method includes nodes, reroutes and nested groups in
+    // the exact same way as its selection and drag code.  Replacing that
+    // cache with a second centre-in-rectangle calculation used to drop edge
+    // nodes and cause only part of a group to be bypassed.
+    if (!usedNativeMembership) {
+        syncGroupNodeCache(group, collectNodesInGroup(group, graph));
+    }
 }
 
 function recomputeGroupNodesIfNeeded(group, canvas) {
@@ -424,7 +533,13 @@ function getGroupBypassState(group, canvas) {
     recomputeGroupNodesIfNeeded(group, canvas);
     const nodes = getGroupNodes(group);
     const hasNodes = nodes.length > 0;
-    const bypassed = hasNodes && nodes.every((node) => isSkippedMode(node.mode));
+    const savedModes = readGroupBypassModes(group);
+    const managedBypassed = savedModes?.size > 0
+        && [...savedModes.keys()].every((node) => node?.mode === BYPASS_MODE);
+    // A group is bypassed only when every member is in LiteGraph's official
+    // BYPASS mode (4). NEVER (2) remains a genuine mute and must not be
+    // rewritten or treated as an implicit group bypass.
+    const bypassed = hasNodes && (managedBypassed || nodes.every((node) => node.mode === BYPASS_MODE));
     const mixed = hasNodes && !bypassed && nodes.some((node) => isSkippedMode(node.mode));
     return { nodes, hasNodes, bypassed, mixed };
 }
@@ -432,28 +547,47 @@ function getGroupBypassState(group, canvas) {
 function setGroupBypass(group, bypass, canvas = app.canvas) {
     recomputeGroupNodes(group, canvas);
     const nodes = getGroupNodes(group);
-    for (const node of nodes) {
-        node.mode = bypass ? BYPASS_MODE : ACTIVE_MODE;
-        node.setDirtyCanvas?.(true, false);
+    if (!nodes.length) return false;
+
+    if (bypass) {
+        const savedModes = readGroupBypassModes(group) ?? new Map();
+        // Match ComfyUI's official "Bypass selected nodes" action: every
+        // selected node receives mode=4.  Filtering by input/output shape
+        // leaves mixed groups half-active and diverges from the official
+        // execution semantics.
+        for (const node of nodes) {
+            if (!savedModes.has(node)) {
+                savedModes.set(node, Number.isFinite(node.mode) ? node.mode : ACTIVE_MODE);
+            }
+            setNodeMode(node, BYPASS_MODE);
+        }
+        writeGroupBypassModes(group, savedModes);
+    } else {
+        const savedModes = readGroupBypassModes(group);
+        for (const node of nodes) {
+            // Restore the exact pre-bypass mode, including NEVER, ON_EVENT,
+            // and ON_TRIGGER. Nodes added while bypass was active fall back
+            // to ALWAYS rather than remaining stuck in BYPASS.
+            const originalMode = savedModes?.get(node);
+            setNodeMode(node, Number.isFinite(originalMode)
+                ? originalMode
+                : (node.mode === BYPASS_MODE ? ACTIVE_MODE : node.mode));
+        }
+        clearGroupBypassModes(group);
     }
 
     const graph = getGroupGraph(group, canvas);
     graph?.change?.();
     graph?.setDirtyCanvas?.(true, false);
     markCanvasDirty();
+    return true;
 }
 
 function enforceHiddenGroupsBeforePrompt(canvas = app.canvas) {
-    const graph = getActiveGraph(canvas);
-    for (const group of getGraphGroups(graph)) {
-        recomputeGroupNodes(group, canvas);
-        const nodes = getGroupNodes(group);
-        if (!nodes.length || !nodes.every((node) => isSkippedMode(node.mode))) continue;
-
-        for (const node of nodes) {
-            node.mode = BYPASS_MODE;
-        }
-    }
+    // Keep the graph's serialized node modes untouched. ComfyUI's official
+    // graph-to-prompt path distinguishes NEVER (2) from BYPASS (4); changing
+    // one into the other here can remove outputs or alter downstream execution.
+    return false;
 }
 
 function getNativeGroupMinSize() {
@@ -729,6 +863,10 @@ function normalizeScaleState(state) {
         subworkflowName,
         indicatorColor: normalizeHex(state.indicatorColor) || null,
         subworkflow: state.subworkflow !== false,
+        // Hidden nodes keep their original graph layout.  Older saved states
+        // did not have this field; treating them as layout-preserving also
+        // migrates those states away from the old compacted-node behaviour.
+        preserveLayout: state.preserveLayout !== false,
         updatedAt: Number(state.updatedAt) || Date.now(),
     };
 }
@@ -756,6 +894,7 @@ function serializeScaleState(state) {
         subworkflowName: normalized.subworkflowName,
         indicatorColor: normalized.indicatorColor,
         subworkflow: normalized.subworkflow,
+        preserveLayout: normalized.preserveLayout,
         updatedAt: normalized.updatedAt,
     };
 }
@@ -839,7 +978,9 @@ function readGroupScaleState(group) {
     const cached = groupControlState.scaleStates.get(group);
     if (cached) return cached;
 
-    const raw = group?.[SCALE_HIDE_STATE_KEY] ?? getGroupProperties(group)?.[SCALE_HIDE_STATE_KEY];
+    const raw = group?.[SCALE_HIDE_STATE_KEY]
+        ?? getGroupProperties(group)?.[SCALE_HIDE_STATE_KEY]
+        ?? group?.flags?.[SCALE_HIDE_STATE_FLAG];
     const state = normalizeScaleState(raw);
     if (state) groupControlState.scaleStates.set(group, state);
     return state;
@@ -867,6 +1008,12 @@ function writeGroupScaleState(group, state) {
             // Some group property bags may be readonly.
         }
     }
+    try {
+        if (!group.flags || typeof group.flags !== "object") group.flags = {};
+        group.flags[SCALE_HIDE_STATE_FLAG] = serialized;
+    } catch (_) {
+        // The runtime and local cache still cover sealed host objects.
+    }
 }
 
 function clearGroupScaleState(group) {
@@ -885,6 +1032,13 @@ function clearGroupScaleState(group) {
         } catch (_) {
             // Ignore readonly group property bags.
         }
+    }
+    try {
+        if (group.flags && typeof group.flags === "object") {
+            delete group.flags[SCALE_HIDE_STATE_FLAG];
+        }
+    } catch (_) {
+        // Ignore readonly host flags.
     }
 }
 
@@ -929,6 +1083,110 @@ function hasScaleStateContent(state) {
 
 function isGroupScaleHiddenNode(node) {
     return !!node?.[HIDDEN_NODE_KEY];
+}
+
+function isNodes20Mode(canvas = app.canvas) {
+    return !!(
+        globalThis.LiteGraph?.vueNodesMode
+        || canvas?.vueNodesMode
+        || app?.vueNodesMode
+    );
+}
+
+function getNodeDomElement(node) {
+    const element = node?.domElement
+        ?? node?.element
+        ?? node?.dom_element
+        ?? null;
+    if (element?.style) return element;
+
+    // Nodes 2.0 keeps the Vue element in its own renderer registry instead
+    // of attaching it to the LiteGraph node instance. Resolve it by the
+    // stable data-node-id attribute when the direct references are absent.
+    const nodeId = getNodeId(node);
+    if (nodeId == null || typeof document === "undefined") return null;
+    for (const candidate of document.querySelectorAll?.(".lg-node[data-node-id], [data-node-id].lg-node") ?? []) {
+        if (String(candidate.dataset?.nodeId) === nodeId && candidate.style) return candidate;
+    }
+    return null;
+}
+
+function setNodeDomScaleHidden(node, hidden, ownerId) {
+    const element = getNodeDomElement(node);
+    if (!element) return;
+
+    if (hidden) {
+        const existingState = hiddenNodeDomStates.get(node);
+        if (!existingState || existingState.element !== element) {
+            hiddenNodeDomStates.set(node, {
+                ownerId,
+                element,
+                visibility: element.style.visibility,
+                opacity: element.style.opacity,
+                pointerEvents: element.style.pointerEvents,
+                ariaHidden: element.getAttribute?.("aria-hidden"),
+            });
+        } else {
+            if (!existingState.ownerId) existingState.ownerId = ownerId;
+        }
+        element.classList?.add("gg-group-scale-hidden-node");
+        element.style.visibility = "hidden";
+        element.style.opacity = "0";
+        element.style.pointerEvents = "none";
+        element.setAttribute?.("aria-hidden", "true");
+        return;
+    }
+
+    const state = hiddenNodeDomStates.get(node);
+    if (state && state.ownerId && ownerId && state.ownerId !== ownerId) return;
+    hiddenNodeDomStates.delete(node);
+    element.classList?.remove("gg-group-scale-hidden-node");
+    if (state) {
+        element.style.visibility = state.visibility;
+        element.style.opacity = state.opacity;
+        element.style.pointerEvents = state.pointerEvents;
+        if (state.ariaHidden == null) element.removeAttribute?.("aria-hidden");
+        else element.setAttribute?.("aria-hidden", state.ariaHidden);
+    } else {
+        element.style.visibility = "";
+        element.style.opacity = "";
+        element.style.pointerEvents = "";
+        element.removeAttribute?.("aria-hidden");
+    }
+}
+
+function syncHiddenNodeDomElements(canvas = app.canvas) {
+    if (!isNodes20Mode(canvas)) return;
+    const graph = getActiveGraph(canvas);
+    for (const node of getGraphNodes(graph)) {
+        if (!isGroupScaleHiddenNode(node)) continue;
+        setNodeDomScaleHidden(node, true, node[HIDDEN_NODE_OWNER_KEY]);
+    }
+}
+
+function scheduleHiddenNodeDomSync(canvas = app.canvas) {
+    if (hiddenNodeDomSyncFrame != null || typeof requestAnimationFrame !== "function") return;
+    hiddenNodeDomSyncFrame = requestAnimationFrame(() => {
+        hiddenNodeDomSyncFrame = null;
+        syncHiddenNodeDomElements(canvas);
+    });
+}
+
+function installHiddenNodeDomObserver() {
+    if (hiddenNodeDomObserver || typeof MutationObserver === "undefined" || typeof document === "undefined") return;
+    hiddenNodeDomObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            for (const added of mutation.addedNodes) {
+                if (added.nodeType !== 1) continue;
+                if (added.classList?.contains("lg-node") || added.hasAttribute?.("data-node-id")
+                    || added.querySelector?.(".lg-node, [data-node-id]")) {
+                    scheduleHiddenNodeDomSync(app.canvas);
+                    return;
+                }
+            }
+        }
+    });
+    hiddenNodeDomObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 function getNodeId(node) {
@@ -1271,6 +1529,8 @@ function setNodeScaleHidden(node, hidden, group) {
     if (hidden) {
         node[HIDDEN_NODE_KEY] = true;
         node[HIDDEN_NODE_OWNER_KEY] = ownerId;
+        if (isNodes20Mode()) setNodeDomScaleHidden(node, true, ownerId);
+        if (isNodes20Mode()) scheduleHiddenNodeDomSync(app.canvas);
         return;
     }
     if (!node[HIDDEN_NODE_OWNER_KEY] || node[HIDDEN_NODE_OWNER_KEY] === ownerId) {
@@ -1281,6 +1541,8 @@ function setNodeScaleHidden(node, hidden, group) {
             node[HIDDEN_NODE_KEY] = false;
             node[HIDDEN_NODE_OWNER_KEY] = null;
         }
+        setNodeDomScaleHidden(node, false, ownerId);
+        if (isNodes20Mode()) scheduleHiddenNodeDomSync(app.canvas);
     }
 }
 
@@ -1329,7 +1591,13 @@ function clearHiddenGroupSelection(canvas, groups) {
         for (let i = selectedItems.length - 1; i >= 0; i--) {
             if (hidden.has(selectedItems[i])) selectedItems.splice(i, 1);
         }
+    } else if (selectedItems instanceof Set) {
+        for (const item of hidden) selectedItems.delete(item);
     }
+    for (const group of hidden) {
+        if (group) group.selected = false;
+    }
+    canvas?.updateSelectedItems?.();
 }
 
 function rectDistanceScore(rect, targetRect) {
@@ -1396,7 +1664,19 @@ function clearHiddenNodeSelection(canvas, nodes) {
 
     clearSelectionMap(canvas?.selected_nodes);
     clearSelectionMap(canvas?.graph?.selected_nodes);
+    const selectedItems = canvas?.selected_items ?? canvas?.selectedItems;
+    if (Array.isArray(selectedItems)) {
+        for (let i = selectedItems.length - 1; i >= 0; i--) {
+            if (hidden.has(selectedItems[i])) selectedItems.splice(i, 1);
+        }
+    } else if (selectedItems instanceof Set) {
+        for (const node of hidden) selectedItems.delete(node);
+    }
+    for (const node of hidden) {
+        if (node) node.selected = false;
+    }
     if (hidden.has(canvas?.selected_node)) canvas.selected_node = null;
+    canvas?.updateSelectedItems?.();
 }
 
 function cancelScaleAnimation(group) {
@@ -1486,35 +1766,96 @@ function applyHiddenScaleState(group, state, canvas = app.canvas) {
     const groupSnapshots = (state?.groups ?? []).map(normalizeScaleGroupSnapshot).filter(Boolean);
     if (!graph || (!snapshots.length && !groupSnapshots.length)) return false;
 
-    const originalGroupRect = normalizeScaleRect(state.groupRect) ?? getGroupRect(group);
-    const compactGroupRect = normalizeScaleRect(state.compactGroupRect)
-        ?? getCompactGroupRect(originalGroupRect, canvas)
-        ?? getGroupRect(group);
+    // 打开工作流恢复隐藏态时，必须以分组当前 rect 作为位置基准。
+    // 缓存里记录的 groupRect/compactGroupRect 是上次隐藏时的位置，
+    // 分组若已被挪动，再用旧位置会把分组拽回老地方、节点也会跑到分组外（错位）。
+    const currentGroupRect = getGroupRect(group);
+    if (!currentGroupRect) return false;
+    const originalGroupRect = normalizeScaleRect(state.groupRect) ?? currentGroupRect;
+    const cachedCompact = normalizeScaleRect(state.compactGroupRect);
+    const fallbackCompact = cachedCompact ?? getCompactGroupRect(originalGroupRect, canvas) ?? currentGroupRect;
+    const sameCompactSize = Math.abs(currentGroupRect.w - fallbackCompact.w) < 2
+        && Math.abs(currentGroupRect.h - fallbackCompact.h) < 2;
+    // A serialized hidden group has the compact proxy rectangle, while the
+    // saved snapshots retain the real node layout.  Use the compact rectangle
+    // as the movement baseline; using originalGroupRect here shifts all nodes
+    // into the proxy and recreates the stacked-node bug after reload.
+    const layoutOffset = sameCompactSize
+        ? {
+            x: currentGroupRect.x - fallbackCompact.x,
+            y: currentGroupRect.y - fallbackCompact.y,
+        }
+        : {
+            x: currentGroupRect.x - originalGroupRect.x,
+            y: currentGroupRect.y - originalGroupRect.y,
+        };
+    const translatedOriginalGroupRect = {
+        ...originalGroupRect,
+        x: originalGroupRect.x + layoutOffset.x,
+        y: originalGroupRect.y + layoutOffset.y,
+    };
+    const translatedSnapshots = snapshots.map((snapshot) => ({
+        ...snapshot,
+        pos: [snapshot.pos[0] + layoutOffset.x, snapshot.pos[1] + layoutOffset.y],
+    }));
+    const translatedGroupSnapshots = groupSnapshots.map((snapshot) => ({
+        ...snapshot,
+        pos: [snapshot.pos[0] + layoutOffset.x, snapshot.pos[1] + layoutOffset.y],
+    }));
+    // 位置用当前，尺寸用缓存的目标隐藏尺寸
+    const compactGroupRect = {
+        x: currentGroupRect.x,
+        y: currentGroupRect.y,
+        w: fallbackCompact.w,
+        h: fallbackCompact.h,
+    };
     if (!compactGroupRect) return false;
 
-    const contentRect = boundsFromSnapshots([...snapshots, ...groupSnapshots]);
+    const contentRect = boundsFromSnapshots([...translatedSnapshots, ...translatedGroupSnapshots]);
     const hiddenNodes = [];
     const hiddenGroups = [];
     const usedGroups = new Set();
     setGroupRect(group, compactGroupRect);
 
-    for (const snapshot of snapshots) {
+    for (const snapshot of translatedSnapshots) {
         const node = findNodeById(graph, snapshot.id);
         if (!node) continue;
 
-        if (contentRect) {
+        // Keep the real node at its saved position.  The old implementation
+        // compacted every hidden node into the proxy rectangle; native/DOM
+        // render paths that did not see our hidden marker then rendered those
+        // nodes on top of one another.  Restoring the source rect makes the
+        // hidden state safe even when a ComfyUI build uses a different draw
+        // path, while the hidden marker still removes it from the canvas.
+        if (state.preserveLayout !== false) {
+            setNodeRect(node, {
+                x: snapshot.pos[0] + layoutOffset.x,
+                y: snapshot.pos[1] + layoutOffset.y,
+                w: snapshot.size[0],
+                h: snapshot.size[1],
+            });
+        } else if (contentRect) {
             setNodeRect(node, compactRectForSnapshot(snapshot, contentRect, compactGroupRect));
         }
         setNodeScaleHidden(node, true, group);
         hiddenNodes.push(node);
     }
 
-    for (const snapshot of groupSnapshots) {
+    for (const snapshot of translatedGroupSnapshots) {
         const compactRect = contentRect ? compactRectForSnapshot(snapshot, contentRect, compactGroupRect) : null;
         const childGroup = findGroupForScaleSnapshot(group, snapshot, canvas, usedGroups, compactRect);
         if (!childGroup) continue;
         usedGroups.add(childGroup);
-        if (compactRect) setGroupRect(childGroup, compactRect);
+        if (state.preserveLayout !== false) {
+            setGroupRect(childGroup, {
+                x: snapshot.pos[0] + layoutOffset.x,
+                y: snapshot.pos[1] + layoutOffset.y,
+                w: snapshot.size[0],
+                h: snapshot.size[1],
+            });
+        } else if (compactRect) {
+            setGroupRect(childGroup, compactRect);
+        }
         setGroupScaleHiddenByParent(childGroup, true, group);
         hiddenGroups.push(childGroup);
     }
@@ -1526,14 +1867,15 @@ function applyHiddenScaleState(group, state, canvas = app.canvas) {
         ...state,
         hidden: true,
         phase: "hidden",
-        nodes: snapshots,
-        groups: groupSnapshots,
-        groupRect: originalGroupRect,
+        nodes: translatedSnapshots,
+        groups: translatedGroupSnapshots,
+        groupRect: translatedOriginalGroupRect,
         compactGroupRect,
         title: state.title || state.subworkflowName || getGroupTitle(group),
         subworkflowName: state.subworkflowName || state.title || getGroupTitle(group),
         indicatorColor: ensureScaleIndicatorColor(group, state),
         subworkflow: true,
+        preserveLayout: state.preserveLayout !== false,
         updatedAt: state.updatedAt || Date.now(),
     });
     return true;
@@ -1628,7 +1970,10 @@ function hideGroupScaled(group, canvas = app.canvas) {
         entries.push({
             node,
             from,
-            to: compactRectForSnapshot(snapshot, contentRect, compactGroupRect),
+            // Preserve the node's real layout while the group proxy shrinks.
+            // This avoids a fallback renderer exposing a stack of compacted
+            // nodes at the proxy position.
+            to: from,
         });
     }
     for (const snapshot of normalizedGroupSnapshots) {
@@ -1642,7 +1987,7 @@ function hideGroupScaled(group, canvas = app.canvas) {
         entries.push({
             group: childGroup,
             from,
-            to: compactRect,
+            to: from,
         });
     }
     if (!entries.length) return false;
@@ -1660,6 +2005,7 @@ function hideGroupScaled(group, canvas = app.canvas) {
         subworkflowName,
         indicatorColor,
         subworkflow: true,
+        preserveLayout: true,
         updatedAt: Date.now(),
     });
 
@@ -1683,6 +2029,7 @@ function hideGroupScaled(group, canvas = app.canvas) {
             subworkflowName,
             indicatorColor,
             subworkflow: true,
+            preserveLayout: true,
             updatedAt: Date.now(),
         });
         touchScaleGraph(group, canvas);
@@ -1755,6 +2102,7 @@ function restoreGroupScaled(group, canvas = app.canvas) {
         subworkflowName: state.subworkflowName || state.title || getGroupTitle(group),
         indicatorColor: ensureScaleIndicatorColor(group, state),
         subworkflow: true,
+        preserveLayout: state.preserveLayout !== false,
         updatedAt: Date.now(),
     });
 
@@ -1800,6 +2148,97 @@ function restoreAllScaledGroups(canvas = app.canvas) {
         restored = restoreGroupScaled(group, canvas) || restored;
     }
     return restored;
+}
+
+function getRawGroupNodeMembers(group) {
+    const result = new Set();
+    const add = (node) => {
+        if (node && typeof node === "object" && "mode" in node) result.add(node);
+    };
+    for (const node of group?._children instanceof Set ? group._children : []) add(node);
+    for (const node of Array.isArray(group?._nodes) ? group._nodes : []) add(node);
+    for (const node of Array.isArray(group?.nodes) ? group.nodes : []) add(node);
+    return result;
+}
+
+function recoverLegacyCompactGroups(canvas = app.canvas) {
+    const graph = getActiveGraph(canvas);
+    if (!graph) return false;
+
+    const groups = getGraphGroups(graph);
+    const nodes = getGraphNodes(graph);
+    const ownedNodes = new Set();
+    for (const group of groups) {
+        for (const node of getRawGroupNodeMembers(group)) ownedNodes.add(node);
+    }
+
+    let changed = false;
+    for (const group of groups) {
+        if (!group || groupControlState.legacyRecoveredGroups.has(group)) continue;
+        groupControlState.legacyRecoveredGroups.add(group);
+
+        // Older versions saved a collapsed proxy as an ordinary 178x80 group,
+        // while its hidden markers lived only in memory.  On reload that left
+        // the real nodes outside the proxy.  Only migrate groups that have no
+        // serialized members and a sizeable, unowned node cluster below them;
+        // small label groups and groups whose nodes already belong elsewhere
+        // remain untouched.
+        if (readGroupScaleState(group)) continue;
+        // Older releases kept the collapse snapshot only in localStorage.
+        // Let the normal hydration path consume that snapshot before the
+        // heuristic migration changes the group's current rectangle.
+        if (readCachedGroupScaleState(group, canvas)?.hidden) continue;
+        const rect = getGroupRect(group);
+        if (!rect
+            || rect.w > LEGACY_COMPACT_GROUP_MAX_WIDTH
+            || rect.h > LEGACY_COMPACT_GROUP_MAX_HEIGHT
+            || getRawGroupNodeMembers(group).size) continue;
+
+        const left = rect.x - LEGACY_RECOVERY_PADDING;
+        const top = rect.y + Math.max(0, rect.h - LEGACY_RECOVERY_PADDING);
+        const right = rect.x + LEGACY_RECOVERY_MAX_WIDTH;
+        const bottom = rect.y + LEGACY_RECOVERY_MAX_HEIGHT;
+        const candidates = nodes.filter((node) => {
+            if (!node || ownedNodes.has(node)) return false;
+            const bounds = getNodeRect(node);
+            if (!bounds) return false;
+            return bounds.x >= left
+                && bounds.y >= top
+                && bounds.x <= right
+                && bounds.y <= bottom;
+        });
+        if (candidates.length < LEGACY_RECOVERY_MIN_NODES) continue;
+
+        let maxX = rect.x + rect.w;
+        let maxY = rect.y + rect.h;
+        for (const node of candidates) {
+            const bounds = getNodeRect(node);
+            if (!bounds) continue;
+            maxX = Math.max(maxX, bounds.x + bounds.w);
+            maxY = Math.max(maxY, bounds.y + bounds.h);
+        }
+        const recoveredRect = {
+            x: rect.x,
+            y: rect.y,
+            w: maxX - rect.x + LEGACY_RECOVERY_PADDING,
+            h: maxY - rect.y + LEGACY_RECOVERY_PADDING,
+        };
+        setGroupRect(group, recoveredRect);
+        try {
+            group.recomputeInsideNodes?.();
+        } catch (_) {
+            syncGroupNodeCache(group, candidates);
+        }
+        changed = true;
+        console.warn("[GGGroupStyler] Recovered legacy compact group layout:", getGroupTitle(group));
+    }
+
+    if (changed) {
+        graph.change?.();
+        graph.setDirtyCanvas?.(true, true);
+        markCanvasDirty();
+    }
+    return changed;
 }
 
 function installSubworkflowIndicatorStyles() {
@@ -2209,6 +2648,69 @@ function hitTestGraphGroup(canvas, event) {
     return null;
 }
 
+function hitTestGroupTitle(canvas, event) {
+    const graphCandidates = eventToGraphCandidates(canvas, event).sort((left, right) => {
+        // The browser CSS coordinate is the same coordinate space used by
+        // LiteGraph's convertEventToCanvasOffset(). Prefer it over stale
+        // canvasX values on zoomed/high-DPI pointer events.
+        const priority = {
+            "client-css": 0,
+            graph: 1,
+            adjusted: 2,
+            "offset-css": 3,
+            "client-backing": 4,
+            "offset-backing": 5,
+        };
+        return (priority[left.mode] ?? 99) - (priority[right.mode] ?? 99);
+    });
+    const groups = getVisibleGraphGroups(canvas);
+    if (!graphCandidates.length || !groups?.length) return null;
+
+    const scale = getCanvasScale(canvas);
+    const cornerThreshold = Math.max(12, NATIVE_CORNER_PX / scale);
+
+    for (const graphCandidate of graphCandidates) {
+        const [mx, my] = graphCandidate.pos;
+        for (let i = groups.length - 1; i >= 0; i--) {
+            const group = groups[i];
+            if (!group || group.pinned || isGroupScaleHidden(group)) continue;
+
+            const rect = getGroupRect(group);
+            if (!rect || rect.w <= 0 || rect.h <= 0) continue;
+
+            const metrics = getTitleMetrics(rect, scale);
+            const inTitle = (
+                mx >= rect.x
+                && mx <= rect.x + rect.w
+                && my >= rect.y
+                && my <= rect.y + metrics.titleHeight
+            );
+            if (!inTitle) continue;
+
+            // Let the custom buttons and native corner resize handles keep
+            // their existing priority over title dragging.
+            const titleButtons = [
+                getGroupScaleRect(rect, metrics, scale),
+                getGroupToggleRect(rect, metrics, scale),
+            ];
+            if (titleButtons.some((button) => (
+                mx >= button.x && mx <= button.x + button.w
+                && my >= button.y && my <= button.y + button.h
+            ))) continue;
+
+            const nearCorner = [
+                [rect.x, rect.y],
+                [rect.x + rect.w, rect.y],
+            ].some(([x, y]) => Math.abs(mx - x) <= cornerThreshold && Math.abs(my - y) <= cornerThreshold);
+            if (nearCorner) continue;
+
+            return { canvas, group, rect, graphPos: graphCandidate.pos, coordMode: graphCandidate.mode };
+        }
+    }
+
+    return null;
+}
+
 function hitTestGroupResizeHandle(canvas, event) {
     const graphCandidates = eventToGraphCandidates(canvas, event);
     const groups = getVisibleGraphGroups(canvas);
@@ -2434,16 +2936,243 @@ function clearNativePointerAction(canvas) {
     pointer.isDouble = false;
 }
 
+function stopGroupDragCapture() {
+    const captureWindow = groupDragState.captureWindow;
+    if (!captureWindow) return;
+
+    if (groupDragState.windowMove) captureWindow.removeEventListener("mousemove", groupDragState.windowMove, true);
+    if (groupDragState.windowUp) captureWindow.removeEventListener("mouseup", groupDragState.windowUp, true);
+    if (groupDragState.windowPointerMove) captureWindow.removeEventListener("pointermove", groupDragState.windowPointerMove, true);
+    if (groupDragState.windowPointerUp) captureWindow.removeEventListener("pointerup", groupDragState.windowPointerUp, true);
+    if (groupDragState.windowPointerCancel) {
+        captureWindow.removeEventListener("pointercancel", groupDragState.windowPointerCancel, true);
+        captureWindow.removeEventListener("lostpointercapture", groupDragState.windowPointerCancel, true);
+    }
+    if (groupDragState.windowBlur) captureWindow.removeEventListener("blur", groupDragState.windowBlur, true);
+
+    groupDragState.windowMove = null;
+    groupDragState.windowUp = null;
+    groupDragState.windowPointerMove = null;
+    groupDragState.windowPointerUp = null;
+    groupDragState.windowPointerCancel = null;
+    groupDragState.windowBlur = null;
+    groupDragState.captureWindow = null;
+}
+
+function startGroupDragCapture(canvas) {
+    stopGroupDragCapture();
+
+    const captureWindow = getCanvasEventWindow(canvas);
+    groupDragState.captureWindow = captureWindow;
+    groupDragState.windowMove = (event) => {
+        if (groupDragState.active?.canvas === canvas) updateActiveGroupTitleDrag(canvas, event);
+    };
+    groupDragState.windowUp = (event) => {
+        if (groupDragState.active?.canvas === canvas) finishActiveGroupTitleDrag(canvas, event);
+    };
+    groupDragState.windowPointerMove = (event) => {
+        if (groupDragState.active?.canvas === canvas) updateActiveGroupTitleDrag(canvas, event);
+    };
+    groupDragState.windowPointerUp = (event) => {
+        if (groupDragState.active?.canvas === canvas) finishActiveGroupTitleDrag(canvas, event);
+    };
+    groupDragState.windowPointerCancel = (event) => {
+        if (groupDragState.active?.canvas === canvas) cancelActiveGroupTitleDrag(canvas, event);
+    };
+    groupDragState.windowBlur = () => cancelActiveGroupTitleDrag(canvas);
+
+    captureWindow.addEventListener("mousemove", groupDragState.windowMove, true);
+    captureWindow.addEventListener("mouseup", groupDragState.windowUp, true);
+    captureWindow.addEventListener("pointermove", groupDragState.windowPointerMove, true);
+    captureWindow.addEventListener("pointerup", groupDragState.windowPointerUp, true);
+    captureWindow.addEventListener("pointercancel", groupDragState.windowPointerCancel, true);
+    captureWindow.addEventListener("lostpointercapture", groupDragState.windowPointerCancel, true);
+    captureWindow.addEventListener("blur", groupDragState.windowBlur, true);
+}
+
+function startGroupTitleDragFromEvent(canvas, event) {
+    if (!isEnabled() || event?.button !== 0) return false;
+
+    if (groupDragState.active?.canvas === canvas) {
+        consumeEvent(event);
+        return true;
+    }
+
+    const hit = hitTestGroupTitle(canvas, event);
+    if (!hit?.group || hit.group.pinned) return false;
+
+    try {
+        hit.group.recomputeInsideNodes?.();
+    } catch (_) {
+        // The fallback movement path still works for older group objects.
+    }
+
+    const startRect = getGroupRect(hit.group) ?? hit.rect;
+    const memberSnapshots = getGroupNodes(hit.group)
+        .map((node) => ({ node, rect: getNodeRect(node) }))
+        .filter((entry) => entry.rect);
+    const childSnapshots = collectGroupsInGroup(hit.group, canvas)
+        .map(({ candidate }) => ({ group: candidate, rect: getGroupRect(candidate) }))
+        .filter((entry) => entry.rect);
+
+    groupDragState.active = {
+        canvas,
+        group: hit.group,
+        startMouse: hit.graphPos,
+        lastMouse: hit.graphPos,
+        startRect,
+        memberSnapshots,
+        childSnapshots,
+        coordMode: hit.coordMode,
+        pointerId: event?.pointerId,
+        previousSelectedGroup: canvas.selected_group ?? null,
+        previousSelected: !!hit.group.selected,
+        previousPrivateSelected: "_selected" in hit.group ? !!hit.group._selected : false,
+    };
+
+    clearNativePointerAction(canvas);
+    canvas.selected_group = hit.group;
+    try {
+        canvas.selectItems?.([hit.group]);
+    } catch (_) {
+        hit.group.selected = true;
+    }
+    hit.group.selected = true;
+    if ("_selected" in hit.group) hit.group._selected = true;
+
+    if (canvas.canvas?.style) canvas.canvas.style.cursor = "grabbing";
+    try {
+        if (event?.pointerId != null) canvas.canvas?.setPointerCapture?.(event.pointerId);
+    } catch (_) {
+        // Window capture below covers browsers without pointer capture support.
+    }
+    startGroupDragCapture(canvas);
+    syncOfficialGroupReplacementState(canvas);
+    markCanvasDirty();
+    consumeEvent(event);
+    return true;
+}
+
+function updateActiveGroupTitleDrag(canvas, event) {
+    const active = groupDragState.active;
+    if (!isEnabled() || !active || active.canvas !== canvas) return false;
+
+    const graphPos = eventToGraphPos(canvas, event, "client-css")
+        ?? eventToGraphPos(canvas, event, active.coordMode);
+    if (!graphPos) {
+        consumeEvent(event);
+        return true;
+    }
+
+    const totalDx = graphPos[0] - active.startMouse[0];
+    const totalDy = graphPos[1] - active.startMouse[1];
+    if (totalDx || totalDy) {
+        const group = active.group;
+        // Write the group target directly.  Calling group.move() here is
+        // tempting, but its child handling differs between LiteGraph builds
+        // (notably for zero-height nodes), which can leave one member behind.
+        if (active.startRect) {
+            setGroupRect(group, {
+                ...active.startRect,
+                x: active.startRect.x + totalDx,
+                y: active.startRect.y + totalDy,
+            });
+        }
+
+        // Always write the absolute target from the pre-move snapshots so no
+        // member can receive a half or duplicated delta.
+        for (const entry of active.memberSnapshots ?? []) {
+            setNodeRect(entry.node, {
+                x: entry.rect.x + totalDx,
+                y: entry.rect.y + totalDy,
+                w: entry.rect.w,
+                h: entry.rect.h,
+            });
+        }
+        for (const entry of active.childSnapshots ?? []) {
+            setGroupRect(entry.group, {
+                ...entry.rect,
+                x: entry.rect.x + totalDx,
+                y: entry.rect.y + totalDy,
+            });
+        }
+        active.lastMouse = graphPos;
+        markCanvasDirty();
+    }
+
+    if (canvas.canvas?.style) canvas.canvas.style.cursor = "grabbing";
+    consumeEvent(event);
+    return true;
+}
+
+function finishActiveGroupTitleDrag(canvas, event) {
+    const active = groupDragState.active;
+    if (!active || active.canvas !== canvas) return false;
+
+    groupDragState.active = null;
+    stopGroupDragCapture();
+    try {
+        if (active.pointerId != null) canvas.canvas?.releasePointerCapture?.(active.pointerId);
+    } catch (_) {
+        // The pointer may already have been released by the browser.
+    }
+    if (canvas.canvas?.style) canvas.canvas.style.cursor = "";
+    const finalRect = getGroupRect(active.group);
+    if (finalRect && active.startRect) {
+        const dx = finalRect.x - active.startRect.x;
+        const dy = finalRect.y - active.startRect.y;
+        for (const entry of active.memberSnapshots ?? []) {
+            setNodeRect(entry.node, {
+                x: entry.rect.x + dx,
+                y: entry.rect.y + dy,
+                w: entry.rect.w,
+                h: entry.rect.h,
+            });
+        }
+        for (const entry of active.childSnapshots ?? []) {
+            setGroupRect(entry.group, {
+                ...entry.rect,
+                x: entry.rect.x + dx,
+                y: entry.rect.y + dy,
+            });
+        }
+    }
+    active.group.recomputeInsideNodes?.();
+    const graph = getGroupGraph(active.group, canvas);
+    graph?.change?.();
+    graph?.setDirtyCanvas?.(true, true);
+    markCanvasDirty();
+    consumeEvent(event);
+    return true;
+}
+
+function cancelActiveGroupTitleDrag(canvas, event) {
+    const active = groupDragState.active;
+    if (!active || active.canvas !== canvas) return false;
+
+    groupDragState.active = null;
+    stopGroupDragCapture();
+    try {
+        if (active.pointerId != null) canvas.canvas?.releasePointerCapture?.(active.pointerId);
+    } catch (_) {
+        // Ignore an already released pointer.
+    }
+    if (canvas.canvas?.style) canvas.canvas.style.cursor = "";
+    if (canvas.selected_group === active.group) canvas.selected_group = active.previousSelectedGroup;
+    active.group.selected = active.previousSelected;
+    if ("_selected" in active.group) active.group._selected = active.previousPrivateSelected;
+    consumeEvent(event);
+    return true;
+}
+
 function hasGroupReplacementTarget(canvas = app.canvas) {
     if (!isEnabled()) return false;
     return !!(
-        isGraphGroupLike(canvas?.selected_group)
-        || isGraphGroupLike(groupControlState.nativeGroupHover?.group)
-        || isGraphGroupLike(groupControlState.hoverScale?.group)
-        || isGraphGroupLike(groupControlState.hoverToggle?.group)
-        || isGraphGroupLike(groupControlState.hoverProxy?.group)
+        (canvas?.selectedItems instanceof Set && [...canvas.selectedItems].some(isGraphGroupLike))
+        || (Array.isArray(canvas?.selected_items) && canvas.selected_items.some(isGraphGroupLike))
         || isGraphGroupLike(resizeState.hover?.group)
         || isGraphGroupLike(resizeState.active?.group)
+        || isGraphGroupLike(groupDragState.active?.group)
     );
 }
 
@@ -2473,6 +3202,17 @@ function installGroupReplacementStyles() {
         }
     `;
     document.head.appendChild(style);
+    if (!document[GROUP_REPLACEMENT_EVENT_FLAG]) {
+        document.addEventListener("pointerdown", (event) => {
+            // Vue Nodes 2.0 renders nodes in a DOM layer above the canvas.
+            // Leaving a group selected/hovered must not keep the official node
+            // toolbox hidden after the pointer enters that layer.
+            if (event.target?.closest?.(".lg-node, [data-node-id]")) {
+                document.body?.classList.remove("gg-group-styler-force-groups");
+            }
+        }, true);
+        document[GROUP_REPLACEMENT_EVENT_FLAG] = true;
+    }
 }
 
 function startGroupResizeFromEvent(canvas, event) {
@@ -2650,16 +3390,59 @@ function cancelActiveResize(canvas) {
     }
 }
 
-function writeSubworkflowProxyRect(group, rect) {
-    const state = readGroupScaleState(group);
-    if (!state) return;
-    writeGroupScaleState(group, {
+function moveHiddenScaleLayout(group, state, dx, dy, canvas = app.canvas) {
+    if (!group || !state || (!dx && !dy)) return state;
+    const graph = getGroupGraph(group, canvas);
+    const nodes = (state.nodes ?? []).map((snapshot) => {
+        const normalized = normalizeScaleSnapshot(snapshot);
+        if (!normalized) return null;
+        const next = {
+            ...normalized,
+            pos: [normalized.pos[0] + dx, normalized.pos[1] + dy],
+        };
+        const node = findNodeById(graph, normalized.id);
+        if (node && state.preserveLayout !== false) {
+            setNodeRect(node, {
+                x: next.pos[0],
+                y: next.pos[1],
+                w: next.size[0],
+                h: next.size[1],
+            });
+        }
+        return next;
+    }).filter(Boolean);
+
+    const usedGroups = new Set();
+    const groups = (state.groups ?? []).map((snapshot) => {
+        const normalized = normalizeScaleGroupSnapshot(snapshot);
+        if (!normalized) return null;
+        const next = {
+            ...normalized,
+            pos: [normalized.pos[0] + dx, normalized.pos[1] + dy],
+        };
+        const childGroup = findGroupForScaleSnapshot(group, normalized, canvas, usedGroups);
+        if (childGroup) {
+            usedGroups.add(childGroup);
+            setGroupRect(childGroup, {
+                x: next.pos[0],
+                y: next.pos[1],
+                w: next.size[0],
+                h: next.size[1],
+            });
+        }
+        return next;
+    }).filter(Boolean);
+
+    const originalGroupRect = normalizeScaleRect(state.groupRect);
+    return {
         ...state,
-        hidden: true,
-        phase: state.phase === "hiding" ? "hiding" : "hidden",
-        compactGroupRect: rect,
+        nodes,
+        groups,
+        groupRect: originalGroupRect
+            ? { ...originalGroupRect, x: originalGroupRect.x + dx, y: originalGroupRect.y + dy }
+            : originalGroupRect,
         updatedAt: Date.now(),
-    });
+    };
 }
 
 function startSubworkflowProxyDragFromEvent(canvas, event) {
@@ -2680,6 +3463,7 @@ function startSubworkflowProxyDragFromEvent(canvas, event) {
         canvas,
         group: hit.group,
         startMouse: hit.graphPos,
+        lastMouse: hit.graphPos,
         coordMode: hit.coordMode,
         startRect: hit.rect,
         pointerId: event?.pointerId,
@@ -2710,6 +3494,8 @@ function updateActiveSubworkflowProxyDrag(canvas, event) {
         clearNativePointerAction(canvas);
         const dx = graphPos[0] - active.startMouse[0];
         const dy = graphPos[1] - active.startMouse[1];
+        const stepDx = graphPos[0] - (active.lastMouse?.[0] ?? active.startMouse[0]);
+        const stepDy = graphPos[1] - (active.lastMouse?.[1] ?? active.startMouse[1]);
         if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) active.moved = true;
         const nextRect = {
             ...active.startRect,
@@ -2717,7 +3503,17 @@ function updateActiveSubworkflowProxyDrag(canvas, event) {
             y: active.startRect.y + dy,
         };
         setGroupRect(active.group, nextRect);
-        writeSubworkflowProxyRect(active.group, nextRect);
+        const state = readGroupScaleState(active.group);
+        const movedState = moveHiddenScaleLayout(active.group, state, stepDx, stepDy, canvas);
+        if (movedState) {
+            writeGroupScaleState(active.group, {
+                ...movedState,
+                hidden: true,
+                phase: movedState.phase === "hiding" ? "hiding" : "hidden",
+                compactGroupRect: nextRect,
+            });
+        }
+        active.lastMouse = graphPos;
         if (canvas.canvas?.style) canvas.canvas.style.cursor = active.moved ? "grabbing" : "grab";
         markCanvasDirty();
     }
@@ -3548,6 +4344,10 @@ function installGroupResizeInteractions(proto) {
             if (handleGroupToggleEvent(this, event)) {
                 return true;
             }
+
+            if (startGroupTitleDragFromEvent(this, event)) {
+                return true;
+            }
         }
 
         const result = originalMouseDown?.call(this, event, ...args);
@@ -3563,6 +4363,10 @@ function installGroupResizeInteractions(proto) {
         }
 
         if (updateActiveResize(this, event)) {
+            return true;
+        }
+
+        if (updateActiveGroupTitleDrag(this, event)) {
             return true;
         }
 
@@ -3589,6 +4393,10 @@ function installGroupResizeInteractions(proto) {
         }
 
         if (finishActiveResize(this, event)) {
+            return true;
+        }
+
+        if (finishActiveGroupTitleDrag(this, event)) {
             return true;
         }
 
@@ -3622,7 +4430,8 @@ function installCanvasPointerCapture(canvas = app.canvas) {
         if (startSubworkflowProxyDragFromEvent(canvas, event)) return;
         if (startGroupResizeFromEvent(canvas, event)) return;
         if (handleGroupScaleEvent(canvas, event)) return;
-        handleGroupToggleEvent(canvas, event);
+        if (handleGroupToggleEvent(canvas, event)) return;
+        if (startGroupTitleDragFromEvent(canvas, event)) return;
     };
 
     const onPointerDown = (event) => {
@@ -3632,9 +4441,11 @@ function installCanvasPointerCapture(canvas = app.canvas) {
         handlePointerDown(event);
     };
     const onPointerMove = (event) => {
+        if (updateActiveGroupTitleDrag(canvas, event)) return;
         if (isCanvasEventTarget(element, event)) updateGroupHoverFromEvent(canvas, event);
     };
     const onMouseMove = (event) => {
+        if (updateActiveGroupTitleDrag(canvas, event)) return;
         if (isCanvasEventTarget(element, event)) updateGroupHoverFromEvent(canvas, event);
     };
     const onDoubleClick = (event) => {
@@ -3930,7 +4741,7 @@ function hydrateScaleHiddenGroups(canvas = app.canvas) {
     if (!graph) return false;
 
     let found = false;
-    let changed = false;
+    let changed = recoverLegacyCompactGroups(canvas);
     for (const group of getGraphGroups(graph)) {
         const savedState = readGroupScaleState(group);
         const expiredState = savedState && isScaleStateExpired(savedState)
@@ -4011,7 +4822,19 @@ function installGroupStylerWatchdog(proto) {
         if (!isEnabled()) return;
         patchGroupDrawMethod(proto);
         installGroupResizeInteractions(proto);
+        installGroupSelectionHook(app.canvas);
     }, 1000);
+}
+
+function installGroupSelectionHook(canvas = app.canvas) {
+    if (!canvas || canvas[GROUP_SELECTION_HOOK_FLAG] || typeof canvas.onSelectionChange !== "function") return;
+    const original = canvas.onSelectionChange;
+    canvas.onSelectionChange = function (...args) {
+        const result = original.apply(this, args);
+        syncTopScaleButton();
+        return result;
+    };
+    canvas[GROUP_SELECTION_HOOK_FLAG] = true;
 }
 
 function installGroupStyler() {
@@ -4022,14 +4845,20 @@ function installGroupStyler() {
     patchGroupDrawMethod(proto);
     installGroupStylerWatchdog(proto);
     installGroupResizeInteractions(proto);
+    installGroupSelectionHook(app.canvas);
     proto[INSTALL_FLAG] = true;
 }
 
 function getScaleTargetGroup(canvas = app.canvas) {
     const graph = getActiveGraph(canvas);
     const groups = new Set(getGraphGroups(graph));
+    const selectedItems = canvas?.selected_items ?? canvas?.selectedItems;
+    const selectedGroups = (selectedItems instanceof Set || Array.isArray(selectedItems))
+        ? [...selectedItems].filter((item) => isGraphGroupLike(item))
+        : [];
     const candidates = [
         canvas?.selected_group,
+        ...selectedGroups,
         groupControlState.hoverScale?.group,
         groupControlState.hoverToggle?.group,
         resizeState.hover?.group,
@@ -4355,12 +5184,14 @@ app.registerExtension({
     loadedGraphNode() {
         noticeSubworkflowIndicatorGraph(app.canvas);
         syncSubworkflowIndicators(app.canvas);
+        scheduleHiddenNodeDomSync(app.canvas);
         scheduleHydrateScaleHiddenGroups();
     },
 
     async afterConfigureGraph() {
         noticeSubworkflowIndicatorGraph(app.canvas);
         syncSubworkflowIndicators(app.canvas);
+        scheduleHiddenNodeDomSync(app.canvas);
         hydrateScaleHiddenGroupsWhenReady();
     },
 
@@ -4373,6 +5204,7 @@ app.registerExtension({
         installGroupStyler();
         installHiddenNodePatchesWhenReady();
         installHiddenConnectionsPatchWhenReady();
+        installHiddenNodeDomObserver();
         installCanvasPointerCaptureWhenReady();
         installSubworkflowIndicators();
         hydrateScaleHiddenGroupsWhenReady();

@@ -14,14 +14,34 @@ function isGGNode(node) {
 }
 
 function getNodeCategory(node) {
-    const ctor = app.graph.getNodeType(node.type);
+    const graph = app.graph || app.canvas?.graph;
+    const ctor = graph?.getNodeType?.(node.type);
     if (ctor && ctor.category) return ctor.category;
     return "";
 }
 
+function isNodeSelected(node) {
+    const canvas = app.canvas;
+    if (node?.selected) return true;
+    if (canvas?.selected_nodes?.[node?.id] !== undefined) return true;
+    const selectedItems = canvas?.selectedItems ?? canvas?.selected_items;
+    return selectedItems instanceof Set
+        ? selectedItems.has(node)
+        : Array.isArray(selectedItems) && selectedItems.includes(node);
+}
+
+function getNodeDomElement(node) {
+    const direct = node?.domElement ?? node?.element ?? node?.dom_element;
+    if (direct) return direct;
+    const id = node?.id == null ? null : String(node.id);
+    if (id == null || typeof document === "undefined") return null;
+    return [...document.querySelectorAll?.(".lg-node[data-node-id], [data-node-id].lg-node") ?? []]
+        .find((element) => String(element.dataset?.nodeId) === id) ?? null;
+}
+
 function applyNodeTheme(node) {
     if (!node || !isGGNode(node) || NODES_STYLED.has(node)) return;
-    const el = node.domElement;
+    const el = getNodeDomElement(node);
     if (!el) return;
 
     const category = getNodeCategory(node);
@@ -72,7 +92,7 @@ function applyNodeTheme(node) {
 function updateNodeVisualState(node) {
     const data = NODES_STYLED.get(node);
     if (!data || !data.borderEl) return;
-    const isSelected = app.canvas.selected_nodes?.[node.id] !== undefined;
+    const isSelected = isNodeSelected(node);
     data.borderEl.style.opacity = isSelected ? "1" : "0.55";
 }
 
@@ -85,9 +105,16 @@ function setupMutationObserver() {
                     requestAnimationFrame(() => styleAllExistingNodes());
                     break;
                 }
-                if (added.nodeType === 1 && added.classList?.contains("comfyui-node")) {
-                    const nodeId = added.id?.replace("COMFYGUI_", "");
-                    const node = app.graph.getNodeById(Number(nodeId));
+                if (added.nodeType === 1 && (
+                    added.classList?.contains("comfyui-node")
+                    || added.classList?.contains("lg-node")
+                    || added.hasAttribute?.("data-node-id")
+                )) {
+                    const nodeId = added.dataset?.nodeId
+                        ?? added.id?.replace("COMFYGUI_", "");
+                    const graph = app.graph || app.canvas?.graph;
+                    const node = graph?.getNodeById?.(nodeId)
+                        ?? graph?.getNodeById?.(Number(nodeId));
                     if (isGGNode(node)) applyNodeTheme(node);
                 }
             }
@@ -173,7 +200,7 @@ function hookNodeAdded() {
         if (isGGNode(node)) {
             requestAnimationFrame(() => {
                 applyNodeTheme(node);
-                const el = node.domElement;
+                const el = getNodeDomElement(node);
                 if (el) {
                     el.classList.add("gg-node-new");
                     setTimeout(() => el.classList.remove("gg-node-new"), 300);
@@ -207,6 +234,30 @@ function hookSelectionChange() {
             if (isGGNode(node)) updateNodeVisualState(node);
             return result;
         };
+    }
+
+    if (typeof canvas.onSelectionChange === "function" && !canvas._ggThemeSelectionHooked) {
+        const originalSelectionChange = canvas.onSelectionChange;
+        canvas.onSelectionChange = function (...args) {
+            const result = originalSelectionChange.apply(this, args);
+            const selectedItems = this.selectedItems;
+            if (selectedItems instanceof Set) {
+                for (const node of selectedItems) {
+                    if (isGGNode(node)) updateNodeVisualState(node);
+                }
+            }
+            for (const node of Object.values(this.selected_nodes || {})) {
+                if (isGGNode(node)) updateNodeVisualState(node);
+            }
+            // Nodes 2.0 stores selection in a Set and does not guarantee that
+            // the previously selected node receives a separate deselect hook.
+            // Refresh every themed node so stale highlighted borders disappear.
+            for (const node of this.graph?._nodes ?? app.graph?._nodes ?? []) {
+                if (isGGNode(node)) updateNodeVisualState(node);
+            }
+            return result;
+        };
+        canvas._ggThemeSelectionHooked = true;
     }
 }
 

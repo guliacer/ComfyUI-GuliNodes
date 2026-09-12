@@ -15,11 +15,14 @@ except Exception:
 
 
 NOTIFY_ROUTE = "/guli/taprelay/notify"
+TASK_LOG_ROUTE = "/guli/taprelay/task-log"
 TAPRELAY_ENDPOINT = "http://127.0.0.1:1122/send"
+TAPRELAY_TASK_LOG_ENDPOINT = "http://127.0.0.1:1122/task-log"
 DEFAULT_SOURCE = "comfyui"
 DEFAULT_STATUS = "completed"
 REQUEST_TIMEOUT_SECONDS = 3
 MAX_MESSAGE_LENGTH = 500
+MAX_PROMPT_LENGTH = 50000
 MAX_TASK_ID_LENGTH = 200
 MAX_CWD_LENGTH = 240
 MAX_SOURCE_LENGTH = 40
@@ -66,6 +69,7 @@ def _normalize_notify_payload(payload):
         "taskId": _normalize_string(payload.get("taskId"), max_length=MAX_TASK_ID_LENGTH),
         "cwd": _normalize_string(payload.get("cwd"), max_length=MAX_CWD_LENGTH),
         "durationMs": duration_ms,
+        "prompt": _normalize_string(payload.get("prompt"), max_length=MAX_PROMPT_LENGTH),
     }
 
 
@@ -95,6 +99,28 @@ def _post_to_taprelay(payload):
         raise RuntimeError("连接 TapRelay 失败，请确认 TapRelay 已启动。") from exc
 
 
+def _post_task_log_to_taprelay(payload):
+    """向 TapRelay 发送任务日志（采样进度等）。"""
+    request_body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    request = urllib.request.Request(
+        TAPRELAY_TASK_LOG_ENDPOINT,
+        data=request_body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with _DIRECT_OPENER.open(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+            response.read(4096)
+            return response.status
+    except Exception:
+        # 任务日志为可选功能，静默失败
+        return 0
+
+
 def _register_taprelay_route():
     global _ROUTES_REGISTERED
     if (
@@ -119,6 +145,21 @@ def _register_taprelay_route():
             status_code = await asyncio.to_thread(_post_to_taprelay, normalized_payload)
         except RuntimeError as exc:
             return web.json_response({"ok": False, "error": str(exc)}, status=502)
+
+        return web.json_response({"ok": True, "status": "sent", "taprelayStatus": status_code})
+
+    @PromptServer.instance.routes.post(TASK_LOG_ROUTE)
+    async def guli_taprelay_task_log(request):
+        """接收前端发送的任务日志（采样进度等），转发到 TapRelay。"""
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "日志数据必须是有效的 JSON。"}, status=400)
+
+        try:
+            status_code = await asyncio.to_thread(_post_task_log_to_taprelay, payload)
+        except Exception:
+            return web.json_response({"ok": False, "error": "转发日志失败。"}, status=502)
 
         return web.json_response({"ok": True, "status": "sent", "taprelayStatus": status_code})
 

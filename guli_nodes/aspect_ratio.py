@@ -1,3 +1,5 @@
+import math
+
 import torch
 
 try:
@@ -23,6 +25,69 @@ ASPECT_PRESETS = {
 }
 SIDE_TYPES = ["最长边", "最短边"]
 ORIENTATION_TYPES = ["横屏", "竖屏"]
+RESOLUTION_OPTIONS = ["自定义", "1K", "2K", "3K", "4K"]
+RESOLUTION_SCALES = {resolution: index for index, resolution in enumerate(RESOLUTION_OPTIONS) if index}
+
+# These are the reference 1K dimensions. Larger presets scale both sides evenly.
+REFERENCE_RESOLUTION_BASES = {
+    "1:1": (1024, 1024),
+    "3:4": (864, 1152),
+    "4:3": (1152, 864),
+    "16:9": (1312, 736),
+    "9:16": (736, 1312),
+    "2:3": (832, 1248),
+    "3:2": (1248, 832),
+    "21:9": (1568, 672),
+}
+
+
+def _preset_dimensions(
+    width_ratio: int,
+    height_ratio: int,
+    resolution: str,
+    align_to_eight,
+) -> tuple[int, int] | None:
+    scale = RESOLUTION_SCALES.get(resolution)
+    if scale is None:
+        return None
+
+    base = REFERENCE_RESOLUTION_BASES.get(f"{width_ratio}:{height_ratio}")
+    if base is not None:
+        return align_to_eight(base[0] * scale), align_to_eight(base[1] * scale)
+
+    # Keep less common ratios useful too, using approximately 1MP per 1K.
+    target_area = (1024 * scale) ** 2
+    width = round(math.sqrt(target_area * width_ratio / height_ratio))
+    height = round(math.sqrt(target_area * height_ratio / width_ratio))
+    return align_to_eight(width), align_to_eight(height)
+
+
+def _calculate_latent_dimensions(
+    宽高比例: str,
+    边长: int,
+    边长类型: str,
+    画面方向: str,
+    分辨率: str,
+    apply_orientation,
+    align_to_eight,
+) -> tuple[int, int]:
+    wr, hr = ASPECT_PRESETS[宽高比例]
+    wr, hr = apply_orientation(wr, hr, 画面方向)
+
+    preset = _preset_dimensions(wr, hr, 分辨率, align_to_eight)
+    if preset is not None:
+        expected_edge = max(preset) if 边长类型 == "最长边" else min(preset)
+        # A manually edited edge switches the node to custom-size behavior.
+        if int(边长) == expected_edge:
+            return preset
+
+    if 边长类型 == "最长边":
+        width = 边长 if wr > hr else int(边长 * wr / hr)
+        height = int(边长 * hr / wr) if wr > hr else 边长
+    else:
+        height = 边长 if wr > hr else int(边长 * hr / wr)
+        width = int(边长 * wr / hr) if wr > hr else 边长
+    return align_to_eight(width), align_to_eight(height)
 
 
 if io is not None:
@@ -102,6 +167,7 @@ if io is not None:
                     io.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边", tooltip="指定边长是最长边还是最短边。"),
                     io.Int.Input("批量大小", default=1, min=1, max=64, tooltip="生成的Latent数量。"),
                     io.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏", tooltip="强制指定画面方向。"),
+                    io.Combo.Input("分辨率", options=RESOLUTION_OPTIONS, default="自定义", tooltip="选择1K-4K预设；手动修改边长后以自定义尺寸为准。"),
                 ],
                 outputs=[
                     io.Latent.Output(display_name="Latent", tooltip="生成的空Latent。"),
@@ -109,17 +175,16 @@ if io is not None:
             )
 
         @classmethod
-        def execute(cls, 宽高比例, 边长, 边长类型, 批量大小, 画面方向="横屏"):
-            wr, hr = ASPECT_PRESETS[宽高比例]
-            wr, hr = cls._apply_orientation(wr, hr, 画面方向)
-            if 边长类型 == "最长边":
-                width = 边长 if wr > hr else int(边长 * wr / hr)
-                height = int(边长 * hr / wr) if wr > hr else 边长
-            else:
-                height = 边长 if wr > hr else int(边长 * hr / wr)
-                width = int(边长 * wr / hr) if wr > hr else 边长
-            width = cls._align_to_eight(width)
-            height = cls._align_to_eight(height)
+        def execute(cls, 宽高比例, 边长, 边长类型, 批量大小, 画面方向="横屏", 分辨率="自定义"):
+            width, height = _calculate_latent_dimensions(
+                宽高比例,
+                边长,
+                边长类型,
+                画面方向,
+                分辨率,
+                cls._apply_orientation,
+                cls._align_to_eight,
+            )
             latent = torch.zeros([批量大小, 4, height // 8, width // 8])
             return io.NodeOutput({"samples": latent})
 
@@ -345,6 +410,7 @@ else:
                     "边长类型": (SIDE_TYPES, {"default": "最长边"}),
                     "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
                     "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
+                    "分辨率": (RESOLUTION_OPTIONS, {"default": "自定义"}),
                 }
             }
 
@@ -352,17 +418,16 @@ else:
         FUNCTION = "generate"
         CATEGORY = "GuliNodes/潜空间"
 
-        def generate(self, 宽高比例: str, 边长: int, 边长类型: str, 批量大小: int, 画面方向: str = "横屏") -> tuple:
-            wr, hr = ASPECT_PRESETS[宽高比例]
-            wr, hr = self._apply_orientation(wr, hr, 画面方向)
-            if 边长类型 == "最长边":
-                width = 边长 if wr > hr else int(边长 * wr / hr)
-                height = int(边长 * hr / wr) if wr > hr else 边长
-            else:
-                height = 边长 if wr > hr else int(边长 * hr / wr)
-                width = int(边长 * wr / hr) if wr > hr else 边长
-            width = self._align_to_eight(width)
-            height = self._align_to_eight(height)
+        def generate(self, 宽高比例: str, 边长: int, 边长类型: str, 批量大小: int, 画面方向: str = "横屏", 分辨率: str = "自定义") -> tuple:
+            width, height = _calculate_latent_dimensions(
+                宽高比例,
+                边长,
+                边长类型,
+                画面方向,
+                分辨率,
+                self._apply_orientation,
+                self._align_to_eight,
+            )
             latent = torch.zeros([批量大小, 4, height // 8, width // 8])
             return ({"samples": latent},)
 

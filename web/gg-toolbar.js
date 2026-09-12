@@ -1319,6 +1319,68 @@ app.registerExtension({
             ctx.closePath();
         }
 
+        function isNodes20Mode(canvas = app.canvas) {
+            return !!(
+                globalThis.LiteGraph?.vueNodesMode
+                || canvas?.vueNodesMode
+                || app?.vueNodesMode
+            );
+        }
+
+        function syncDomColorOverlay(node, overlay) {
+            let element = node?.domElement ?? node?.element ?? node?.dom_element;
+            if (!element && node?.id != null && typeof document !== "undefined") {
+                const id = String(node.id);
+                element = [...document.querySelectorAll?.(".lg-node[data-node-id], [data-node-id].lg-node") ?? []]
+                    .find((candidate) => String(candidate.dataset?.nodeId) === id);
+            }
+            if (!isNodes20Mode() || !element?.style) return;
+
+            let host = element.querySelector?.(":scope > .gg-toolbar-dom-color-overlay");
+            if (!overlay || (!overlay.bodyColor && !overlay.titleColor)) {
+                host?.remove();
+                return;
+            }
+            if (!host) {
+                host = document.createElement("div");
+                host.className = "gg-toolbar-dom-color-overlay";
+                Object.assign(host.style, {
+                    position: "absolute",
+                    inset: "0",
+                    pointerEvents: "none",
+                    zIndex: "0",
+                    borderRadius: "inherit",
+                    overflow: "hidden",
+                });
+                element.append(host);
+            }
+            if (!element.style.position || element.style.position === "static") element.style.position = "relative";
+            host.replaceChildren();
+            if (overlay.bodyColor) {
+                const body = document.createElement("div");
+                Object.assign(body.style, {
+                    position: "absolute",
+                    inset: "0",
+                    background: overlay.bodyColor,
+                    opacity: String(overlay.bodyAlpha ?? 0.32),
+                });
+                host.append(body);
+            }
+            if (overlay.titleColor) {
+                const title = document.createElement("div");
+                Object.assign(title.style, {
+                    position: "absolute",
+                    left: "0",
+                    right: "0",
+                    top: "0",
+                    height: "30px",
+                    background: overlay.titleColor,
+                    opacity: "0.42",
+                });
+                host.append(title);
+            }
+        }
+
         function ensureColorOverlay(node) {
             if (node._ggColorOverlayInstalled) return;
             const originalOnDrawForeground = node.onDrawForeground;
@@ -1358,6 +1420,7 @@ app.registerExtension({
                 ctx.restore();
             };
             node._ggColorOverlayInstalled = true;
+            syncDomColorOverlay(node, node._ggColorOverlay);
         }
 
         function setColorOverlay(node, option) {
@@ -1374,10 +1437,12 @@ app.registerExtension({
                 overlay.titleColor = option.color || option.bgcolor;
             }
             node._ggColorOverlay = overlay;
+            syncDomColorOverlay(node, overlay);
         }
 
         function clearColorOverlay(node) {
             delete node._ggColorOverlay;
+            syncDomColorOverlay(node, null);
         }
 
         function cloneColorState(state) {
@@ -1537,6 +1602,7 @@ app.registerExtension({
 
             ensureColorOverlay(target);
             target._ggColorOverlay = nodeState;
+            syncDomColorOverlay(target, nodeState);
             persistColorState(target);
             target._ggRestoredColorStateHash = JSON.stringify(getPersistedColorState(target));
             target.setDirtyCanvas?.(true, true);
@@ -1735,6 +1801,7 @@ app.registerExtension({
             }
             ensureColorOverlay(target);
             target._ggColorOverlay = cloneColorState(state);
+            syncDomColorOverlay(target, target._ggColorOverlay);
             target._ggRestoredColorStateHash = stateHash;
             target.setDirtyCanvas?.(true, true);
         }

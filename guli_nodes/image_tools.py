@@ -7,6 +7,7 @@ from nodes import PreviewImage, SaveImage
 from comfy.cli_args import args
 import comfy.utils
 import folder_paths
+import base64
 import json
 import os
 import tempfile
@@ -239,7 +240,11 @@ def concatenate_images_horizontally(images: list, labels: list = None, font_size
             img = _resize_image(img, target_height, target_width, "bilinear")
         resized.append(img)
     if spacing > 0:
-        gap = torch.ones((1, target_height, spacing, 3), dtype=torch.float32, device=images[0].device)
+        gap = torch.ones(
+            (images[0].shape[0], target_height, spacing, 3),
+            dtype=images[0].dtype,
+            device=images[0].device,
+        )
         final_list = []
         for i, img in enumerate(resized):
             final_list.append(img)
@@ -662,6 +667,158 @@ def _tensor_image_to_pil(image: torch.Tensor) -> Image.Image:
     return Image.fromarray(array[..., :4], mode="RGBA")
 
 
+def _gg_metadata_json(prompt=None, extra_pnginfo=None) -> str:
+    payload = {}
+    if prompt is not None:
+        payload.setdefault("prompt", prompt)
+    if extra_pnginfo is not None:
+        for key in extra_pnginfo:
+            if key != "prompt" and key not in payload:
+                payload[key] = extra_pnginfo[key]
+    try:
+        return json.dumps(payload, ensure_ascii=False, allow_nan=False)
+    except Exception:
+        return ""
+
+
+_GG_METADATA_TAG = b"GGMETA1"
+
+
+def _webp_metadata_bytes(prompt=None, extra_pnginfo=None) -> bytes | None:
+    """WEBP 元数据：JSON 载荷以 EXIF 块直通写入（Pillow 实测支持大载荷）。
+
+    无条件（无 prompt/extra）时不写，避免目标大小探测的临时文件被打上空元数据。
+    """
+    if args.disable_metadata:
+        return None
+    if prompt is None and extra_pnginfo is None:
+        return None
+    metadata = _gg_metadata_json(prompt, extra_pnginfo)
+    if not metadata:
+        return None
+    payload_bytes = metadata.encode("utf-8")
+    if len(payload_bytes) > 6 * 1024 * 1024:
+        return None
+    return b"EXIF" + payload_bytes
+
+
+def _png_metadata_info(prompt=None, extra_pnginfo=None) -> PngInfo | None:
+    if args.disable_metadata:
+        return None
+    metadata = PngInfo()
+    if prompt is not None:
+        metadata.add_text("prompt", json.dumps(prompt))
+    if extra_pnginfo is not None:
+        for key in extra_pnginfo:
+            metadata.add_text(key, json.dumps(extra_pnginfo[key]))
+    return metadata
+
+
+def _embed_gg_metadata_jpeg(output_path: str, prompt=None, extra_pnginfo=None) -> None:
+    if args.disable_metadata:
+        return
+    if prompt is None and extra_pnginfo is None:
+        return
+    metadata = _gg_metadata_json(prompt, extra_pnginfo)
+    if metadata:
+        _attach_gg_metadata_jpeg(output_path, metadata)
+
+
+def _attach_gg_metadata_jpeg(
+    output_path: str,
+    data: bytes,
+) -> None:
+    """把 JSON 元数据写进 JPEG COM 段。
+
+    - 载荷不超段上限时：写入单个未加前缀的 COM 段，普通查看器(Pillow/浏览器等)
+      读回的 comment 就是完整 JSON。
+    - 载荷超限时：拆成多个 ≤60000 字节的 COM 段，每段以 _GG_METADATA_TAG 标记，
+      用 _load_gg_metadata 读取全部段即可还原完整 JSON。
+    """
+    if not data:
+        return
+    if isinstance(data, str):
+        text = data
+    else:
+        try:
+            text = data.decode("utf-8")
+        except Exception:
+            return
+    if not text:
+        return
+
+    with open(output_path, "rb") as handle:
+        jpeg = handle.read()
+    sos_index = jpeg.find(b"\xff\xda")
+    if sos_index < 0:
+        return
+    # 确保末尾只有一个 EOI（部分优化编码会提前截断重写流）
+    eoi_index = jpeg.rfind(b"\xff\xd9")
+    if eoi_index > sos_index:
+        jpeg = jpeg[:eoi_index] + b"\xff\xd9"
+    elif jpeg.endswith(b"\xff\xd9"):
+        jpeg = jpeg[:-2] + b"\xff\xd9"
+
+    text_bytes = text.encode("utf-8")
+    if len(text_bytes) <= 60000:
+        com_markers = b"\xff\xfe" + (len(text_bytes) + 2).to_bytes(2, "big") + text_bytes
+    else:
+        # base64 保证跨段切分安全（60000 是 4 的整数倍），第一段带标记
+        base64_text = _GG_METADATA_TAG + base64.b64encode(text_bytes)
+        chunks = [base64_text[offset : offset + 60000] for offset in range(0, len(base64_text), 60000)]
+        com_markers = b"".join(
+            b"\xff\xfe" + (len(chunk) + 2).to_bytes(2, "big") + chunk for chunk in chunks
+        )
+    jpeg = jpeg[:sos_index] + com_markers + jpeg[sos_index:]
+    with open(output_path, "wb") as handle:
+        handle.write(jpeg)
+
+
+def _load_gg_metadata(file_path: str) -> str | None:
+    """读取 GG JPEG 保存的完整 JSON 元数据；普通 JPEG/Pillow 读回单段时也直接返回。"""
+    try:
+        with open(file_path, "rb") as handle:
+            data = handle.read()
+    except Exception:
+        return None
+
+    # 依次解析 JPEG 标记，收集 SOS(0xFFDA) 前的全部 COM 段文本
+    index = 2
+    payloads: list[bytes] = []
+    while index + 3 < len(data):
+        if data[index] != 0xFF:
+            index += 1
+            continue
+        marker = data[index + 1]
+        if marker == 0xDA:  # SOS: 图像数据开始，元数据段到此为止
+            break
+        if marker == 0xD9:  # EOI
+            break
+        if marker == 0xD8 or 0xC0 <= marker <= 0xCF or marker in (0x01, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7):
+            index += 2
+            continue
+        if index + 4 > len(data):
+            break
+        length = int.from_bytes(data[index + 2 : index + 4], "big")
+        if length < 2:
+            break
+        seg_start = index + 2
+        seg_end = min(seg_start + length, len(data))
+        if marker == 0xFE:  # COM 段
+            payloads.append(data[seg_start + 2 : seg_end])
+        index = seg_end if seg_end > index else index + 1
+
+    if not payloads:
+        return None
+    if payloads[0].startswith(_GG_METADATA_TAG):
+        encoded = b"".join(payloads)[len(_GG_METADATA_TAG) :]
+        try:
+            return base64.b64decode(encoded).decode("utf-8")
+        except Exception:
+            return None
+    return payloads[0].decode("utf-8", errors="replace")
+
+
 def _prepare_pil_for_format(pil_image: Image.Image, format_name: str) -> Image.Image:
     if format_name == "JPEG":
         if pil_image.mode in ("RGBA", "LA") or (pil_image.mode == "P" and "transparency" in pil_image.info):
@@ -778,15 +935,7 @@ class GGSaveImage(SaveImage):
 
     @staticmethod
     def _png_metadata(prompt=None, extra_pnginfo=None) -> PngInfo | None:
-        if args.disable_metadata:
-            return None
-        metadata = PngInfo()
-        if prompt is not None:
-            metadata.add_text("prompt", json.dumps(prompt))
-        if extra_pnginfo is not None:
-            for key in extra_pnginfo:
-                metadata.add_text(key, json.dumps(extra_pnginfo[key]))
-        return metadata
+        return _png_metadata_info(prompt, extra_pnginfo)
 
     def _save_encoded_image(
         self,
@@ -799,7 +948,7 @@ class GGSaveImage(SaveImage):
         extra_pnginfo=None,
     ) -> None:
         if target_size_kb > 0 and format_name in ("JPEG", "WEBP"):
-            self._save_target_size(pil_image, output_path, format_name, quality, target_size_kb)
+            self._save_target_size(pil_image, output_path, format_name, quality, target_size_kb, prompt, extra_pnginfo)
             return
 
         save_image = _prepare_pil_for_format(pil_image, format_name)
@@ -811,7 +960,15 @@ class GGSaveImage(SaveImage):
                 compress_level=self.compress_level,
             )
         elif format_name == "WEBP":
-            save_image.save(output_path, format="WEBP", quality=quality, method=6, optimize=True)
+            exif = self._gg_metadata_exif(prompt, extra_pnginfo)
+            save_image.save(
+                output_path,
+                format="WEBP",
+                quality=quality,
+                method=6,
+                optimize=True,
+                exif=exif,
+            )
         else:
             save_image.save(
                 output_path,
@@ -821,6 +978,11 @@ class GGSaveImage(SaveImage):
                 progressive=True,
                 subsampling=0 if quality >= 90 else "4:2:0",
             )
+            _embed_gg_metadata_jpeg(output_path, prompt, extra_pnginfo)
+
+    @staticmethod
+    def _gg_metadata_exif(prompt=None, extra_pnginfo=None) -> bytes | None:
+        return _webp_metadata_bytes(prompt, extra_pnginfo)
 
     def _save_target_size(
         self,
@@ -829,11 +991,16 @@ class GGSaveImage(SaveImage):
         format_name: str,
         quality: int,
         target_size_kb: int,
+        prompt=None,
+        extra_pnginfo=None,
     ) -> None:
         target_bytes = max(1, int(target_size_kb)) * 1024
 
         def save_once(path: str, current_quality: int) -> None:
-            self._save_encoded_image(pil_image, path, format_name, current_quality, 0)
+            # 探测临时文件带元数据写，选中质量后字节会包含 COM/exif；
+            # 最终文件归档后对 JPEG 再补一次（幂等，_load_gg_metadata 优先取第一个段，
+            # 即探测时写入的完整 JSON）。
+            self._save_encoded_image(pil_image, path, format_name, current_quality, 0, prompt, extra_pnginfo)
 
         _save_target_size_by_quality(
             output_path,
@@ -949,6 +1116,8 @@ class GGImageCompressSave(GGSaveImage):
                 quality,
                 target_size_kb,
                 method,
+                prompt=prompt,
+                extra_pnginfo=extra_pnginfo,
             )
             results.append({
                 "filename": file,
@@ -1061,13 +1230,15 @@ class GGImageCompress:
         quality: int,
         target_size_kb: int,
         method: str,
+        prompt=None,
+        extra_pnginfo=None,
     ) -> None:
         if method == "caesium":
-            self._save_caesium_style(pil_image, output_path, format_name, quality, target_size_kb)
+            self._save_caesium_style(pil_image, output_path, format_name, quality, target_size_kb, prompt, extra_pnginfo)
         elif method == "meowtec":
-            self._save_meowtec_style(pil_image, output_path, format_name, quality, target_size_kb)
+            self._save_meowtec_style(pil_image, output_path, format_name, quality, target_size_kb, prompt, extra_pnginfo)
         else:
-            self._save_civilblur_style(pil_image, output_path, format_name, quality, target_size_kb)
+            self._save_civilblur_style(pil_image, output_path, format_name, quality, target_size_kb, prompt, extra_pnginfo)
 
     def _save_meowtec_style(
         self,
@@ -1076,6 +1247,8 @@ class GGImageCompress:
         format_name: str,
         quality: int,
         target_size_kb: int,
+        prompt=None,
+        extra_pnginfo=None,
     ) -> None:
         pil_image.info.clear()
         if target_size_kb > 0 and format_name in ("JPEG", "WEBP"):
@@ -1085,11 +1258,11 @@ class GGImageCompress:
                 format_name,
                 target_bytes,
                 quality,
-                lambda path, current_quality: self._save_meowtec_style(pil_image, path, format_name, current_quality, 0),
+                lambda path, current_quality: self._save_meowtec_style(pil_image, path, format_name, current_quality, 0, prompt, extra_pnginfo),
                 iterations=7,
             )
             return
-        self._save_single_pass(pil_image, output_path, format_name, quality)
+        self._save_single_pass(pil_image, output_path, format_name, quality, prompt, extra_pnginfo)
 
     def _save_caesium_style(
         self,
@@ -1098,6 +1271,8 @@ class GGImageCompress:
         format_name: str,
         quality: int,
         target_size_kb: int,
+        prompt=None,
+        extra_pnginfo=None,
     ) -> None:
         pil_image.info.clear()
         if target_size_kb > 0 and format_name in ("JPEG", "WEBP"):
@@ -1107,7 +1282,7 @@ class GGImageCompress:
                 format_name,
                 target_bytes,
                 quality,
-                lambda path, current_quality: self._save_caesium_style(pil_image, path, format_name, current_quality, 0),
+                lambda path, current_quality: self._save_caesium_style(pil_image, path, format_name, current_quality, 0, prompt, extra_pnginfo),
                 iterations=7,
             )
             return
@@ -1121,9 +1296,10 @@ class GGImageCompress:
                 progressive=True,
                 subsampling=0 if quality >= 90 else "4:2:0",
             )
+            _embed_gg_metadata_jpeg(output_path, prompt, extra_pnginfo)
             return
 
-        self._save_single_pass(pil_image, output_path, format_name, quality)
+        self._save_single_pass(pil_image, output_path, format_name, quality, prompt, extra_pnginfo)
 
     def _save_civilblur_style(
         self,
@@ -1132,6 +1308,8 @@ class GGImageCompress:
         format_name: str,
         quality: int,
         target_size_kb: int,
+        prompt=None,
+        extra_pnginfo=None,
     ) -> None:
         pil_image.info.clear()
         if target_size_kb > 0 and format_name in ("WEBP", "JPEG"):
@@ -1141,19 +1319,40 @@ class GGImageCompress:
                 format_name,
                 target_bytes,
                 quality,
-                lambda path, current_quality: self._save_single_pass(pil_image, path, format_name, current_quality),
+                lambda path, current_quality: self._save_single_pass(pil_image, path, format_name, current_quality, prompt, extra_pnginfo),
                 iterations=8,
             )
             return
 
-        self._save_single_pass(pil_image, output_path, format_name, quality)
+        self._save_single_pass(pil_image, output_path, format_name, quality, prompt, extra_pnginfo)
 
-    def _save_single_pass(self, pil_image: Image.Image, output_path: str, format_name: str, quality: int) -> None:
+    def _save_single_pass(
+        self,
+        pil_image: Image.Image,
+        output_path: str,
+        format_name: str,
+        quality: int,
+        prompt=None,
+        extra_pnginfo=None,
+    ) -> None:
         save_image = _prepare_pil_for_format(pil_image, format_name)
         if format_name == "WEBP":
-            save_image.save(output_path, format="WEBP", quality=quality, method=6, optimize=True)
+            save_image.save(
+                output_path,
+                format="WEBP",
+                quality=quality,
+                method=6,
+                optimize=True,
+                exif=_webp_metadata_bytes(prompt, extra_pnginfo),
+            )
         elif format_name == "PNG":
-            save_image.save(output_path, format="PNG", optimize=True, compress_level=9)
+            save_image.save(
+                output_path,
+                format="PNG",
+                optimize=True,
+                compress_level=9,
+                pnginfo=_png_metadata_info(prompt, extra_pnginfo),
+            )
         else:
             save_image.convert("RGB").save(
                 output_path,
@@ -1163,6 +1362,7 @@ class GGImageCompress:
                 progressive=True,
                 subsampling=0 if quality >= 90 else "4:2:0",
             )
+            _embed_gg_metadata_jpeg(output_path, prompt, extra_pnginfo)
 
     def _compress_with_tempfile(self, source_image: torch.Tensor, format_name: str, save_callback) -> torch.Tensor:
         suffix = "." + self._extension(format_name)
@@ -1180,7 +1380,7 @@ class GGImageCompress:
             return _pil_to_tensor(saved_image, device=source_image.device, dtype=source_image.dtype)
 
 
-class ImageComparerBase:
+class ImageComparerBase(PreviewImage):
     @classmethod
     def get_default_inputs(cls):
         return {
@@ -1203,70 +1403,12 @@ class ImageComparerBase:
             labels[f"标签_{char}"] = ("STRING", {"default": f"图像 {char}"})
         return inputs, labels
 
-
-class GGImageComparer4(ImageComparerBase):
     @classmethod
-    def INPUT_TYPES(s):
-        inputs, labels = s.create_image_inputs(4)
-        base_inputs = s.get_default_inputs()
-        base_inputs["optional"].update(inputs)
-        base_inputs["optional"].update(labels)
-        return base_inputs
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("对比结果",)
-    FUNCTION = "compare"
-    CATEGORY = "GuliNodes/图像"
-
-    def compare(self, 图像_A: torch.Tensor = None, 图像_B: torch.Tensor = None, 图像_C: torch.Tensor = None, 图像_D: torch.Tensor = None,
-                标签_A: str = "图像 A", 标签_B: str = "图像 B", 标签_C: str = "图像 C", 标签_D: str = "图像 D",
-                字体大小: int = 40, 边框宽度: int = 32, 标签高度: int = 80, 图像间距: int = 20, **kwargs) -> tuple:
-        image_pairs = [
-            (图像_A, 标签_A),
-            (图像_B, 标签_B),
-            (图像_C, 标签_C),
-            (图像_D, 标签_D),
-        ]
-        image_pairs = [(image, label) for image, label in image_pairs if image is not None]
-        if not image_pairs:
-            raise RuntimeError("请至少连接一张图像用于对比。")
-        images = [image for image, _ in image_pairs]
-        labels = [label for _, label in image_pairs]
-        if len(images) == 1:
-            return (images[0],)
-        return (concatenate_images_horizontally(images, labels, 字体大小, 边框宽度, 标签高度, 图像间距),)
-
-
-class GGImageComparer2(PreviewImage):
-    @classmethod
-    def INPUT_TYPES(s):
+    def get_hidden_inputs(cls):
         return {
-            "required": {
-                "图像_A": ("IMAGE",),
-                "图像_B": ("IMAGE",),
-            },
-            "hidden": {
-                "prompt": "PROMPT",
-                "extra_pnginfo": "EXTRA_PNGINFO"
-            }
+            "prompt": "PROMPT",
+            "extra_pnginfo": "EXTRA_PNGINFO",
         }
-
-    FUNCTION = "compare"
-    CATEGORY = "GuliNodes/图像"
-
-    def compare(self, 图像_A: torch.Tensor, 图像_B: torch.Tensor,
-                filename_prefix="GG.compare.",
-                prompt=None, extra_pnginfo=None) -> dict:
-        result = {"ui": {"a_images": [], "b_images": []}, "result": (图像_A,)}
-        if 图像_A is not None and len(图像_A) > 0:
-            result["ui"]["a_images"] = self._save_compare_images(
-                图像_A, f"{filename_prefix}a_", "JPEG", prompt, extra_pnginfo
-            )
-        if 图像_B is not None and len(图像_B) > 0:
-            result["ui"]["b_images"] = self._save_compare_images(
-                图像_B, f"{filename_prefix}b_", "JPEG", prompt, extra_pnginfo
-            )
-        return result
 
     def _save_compare_images(
         self,
@@ -1276,6 +1418,7 @@ class GGImageComparer2(PreviewImage):
         prompt=None,
         extra_pnginfo=None,
     ) -> list[dict[str, str]]:
+        """保存对比输入图像，供前端预览和外部联动功能读取。"""
         resolved_prefix = _resolve_output_prefix(filename_prefix) + self.prefix_append
         full_output_folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
             resolved_prefix,
@@ -1361,7 +1504,14 @@ class GGImageComparer2(PreviewImage):
                 compress_level=self.compress_level,
             )
         elif format_name == "WEBP":
-            save_image.save(output_path, format="WEBP", quality=quality, method=6, optimize=True)
+            save_image.save(
+                output_path,
+                format="WEBP",
+                quality=quality,
+                method=6,
+                optimize=True,
+                exif=_webp_metadata_bytes(prompt, extra_pnginfo),
+            )
         else:
             save_image.save(
                 output_path,
@@ -1371,7 +1521,90 @@ class GGImageComparer2(PreviewImage):
                 progressive=True,
                 subsampling=0 if quality >= 90 else "4:2:0",
             )
+            _embed_gg_metadata_jpeg(output_path, prompt, extra_pnginfo)
 
+
+class GGImageComparer4(ImageComparerBase):
+    @classmethod
+    def INPUT_TYPES(s):
+        inputs, labels = s.create_image_inputs(4)
+        base_inputs = s.get_default_inputs()
+        base_inputs["optional"].update(inputs)
+        base_inputs["optional"].update(labels)
+        base_inputs["hidden"] = s.get_hidden_inputs()
+        return base_inputs
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("对比结果",)
+    FUNCTION = "compare"
+    CATEGORY = "GuliNodes/图像"
+
+    def compare(self, 图像_A: torch.Tensor = None, 图像_B: torch.Tensor = None, 图像_C: torch.Tensor = None, 图像_D: torch.Tensor = None,
+                标签_A: str = "图像 A", 标签_B: str = "图像 B", 标签_C: str = "图像 C", 标签_D: str = "图像 D",
+                字体大小: int = 40, 边框宽度: int = 32, 标签高度: int = 80, 图像间距: int = 20,
+                prompt=None, extra_pnginfo=None, **kwargs) -> dict:
+        image_pairs = [
+            (图像_A, 标签_A),
+            (图像_B, 标签_B),
+            (图像_C, 标签_C),
+            (图像_D, 标签_D),
+        ]
+        image_pairs = [(image, label) for image, label in image_pairs if image is not None]
+        if not image_pairs:
+            raise RuntimeError("请至少连接一张图像用于对比。")
+        images = [image for image, _ in image_pairs]
+        labels = [label for _, label in image_pairs]
+        preview_images = []
+        for index, image in enumerate(images):
+            if len(image) > 0:
+                preview_images.extend(
+                    self._save_compare_images(
+                        image,
+                        f"GG.compare4.{chr(65 + index)}_",
+                        "JPEG",
+                        prompt,
+                        extra_pnginfo,
+                    )
+                )
+        comparison = images[0] if len(images) == 1 else concatenate_images_horizontally(
+            images, labels, 字体大小, 边框宽度, 标签高度, 图像间距
+        )
+        return {
+            "ui": {"a_images": preview_images, "b_images": []},
+            "result": (comparison,),
+        }
+
+
+class GGImageComparer2(ImageComparerBase):
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "图像_A": ("IMAGE",),
+                "图像_B": ("IMAGE",),
+            },
+            "hidden": {
+                "prompt": "PROMPT",
+                "extra_pnginfo": "EXTRA_PNGINFO"
+            }
+        }
+
+    FUNCTION = "compare"
+    CATEGORY = "GuliNodes/图像"
+
+    def compare(self, 图像_A: torch.Tensor, 图像_B: torch.Tensor,
+                filename_prefix="GG.compare.",
+                prompt=None, extra_pnginfo=None) -> dict:
+        result = {"ui": {"a_images": [], "b_images": []}, "result": (图像_A,)}
+        if 图像_A is not None and len(图像_A) > 0:
+            result["ui"]["a_images"] = self._save_compare_images(
+                图像_A, f"{filename_prefix}a_", "JPEG", prompt, extra_pnginfo
+            )
+        if 图像_B is not None and len(图像_B) > 0:
+            result["ui"]["b_images"] = self._save_compare_images(
+                图像_B, f"{filename_prefix}b_", "JPEG", prompt, extra_pnginfo
+            )
+        return result
 
 class GGImageComparer8(ImageComparerBase):
     @classmethod
@@ -1380,6 +1613,7 @@ class GGImageComparer8(ImageComparerBase):
         base_inputs = s.get_default_inputs()
         base_inputs["optional"].update(inputs)
         base_inputs["optional"].update(labels)
+        base_inputs["hidden"] = s.get_hidden_inputs()
         return base_inputs
 
     RETURN_TYPES = ("IMAGE",)
@@ -1387,7 +1621,7 @@ class GGImageComparer8(ImageComparerBase):
     FUNCTION = "compare"
     CATEGORY = "GuliNodes/图像"
 
-    def compare(self, **kwargs) -> tuple:
+    def compare(self, prompt=None, extra_pnginfo=None, **kwargs) -> dict:
         image_pairs = [
             (
                 kwargs.get(f"图像_{chr(65 + index)}"),
@@ -1400,13 +1634,29 @@ class GGImageComparer8(ImageComparerBase):
             raise RuntimeError("请至少连接一张图像用于对比。")
         images = [image for image, _ in image_pairs]
         labels = [label for _, label in image_pairs]
+        preview_images = []
+        for index, image in enumerate(images):
+            if len(image) > 0:
+                preview_images.extend(
+                    self._save_compare_images(
+                        image,
+                        f"GG.compare8.{chr(65 + index)}_",
+                        "JPEG",
+                        prompt,
+                        extra_pnginfo,
+                    )
+                )
         font_size = kwargs.get("字体大小", 40)
         border = kwargs.get("边框宽度", 32)
         label_height = kwargs.get("标签高度", 80)
         spacing = kwargs.get("图像间距", 20)
-        if len(images) == 1:
-            return (images[0],)
-        return (concatenate_images_horizontally(images, labels, font_size, border, label_height, spacing),)
+        comparison = images[0] if len(images) == 1 else concatenate_images_horizontally(
+            images, labels, font_size, border, label_height, spacing
+        )
+        return {
+            "ui": {"a_images": preview_images, "b_images": []},
+            "result": (comparison,),
+        }
 
 
 _缩放方法选项 = ["nearest-exact", "bilinear", "lanczos", "area", "bicubic"]

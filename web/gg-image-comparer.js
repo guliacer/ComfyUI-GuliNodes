@@ -1,6 +1,14 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
+function isNodes20Mode(canvas = app.canvas) {
+    return !!(
+        globalThis.LiteGraph?.vueNodesMode
+        || canvas?.vueNodesMode
+        || app?.vueNodesMode
+    );
+}
+
 // 工具函数：将图像数据转换为预览URL
 function imageDataToUrl(data) {
     return api.apiURL(`/view?filename=${encodeURIComponent(data.filename)}&type=${data.type}&subfolder=${data.subfolder || ""}${app.getPreviewFormatParam()}${app.getRandParam()}`);
@@ -14,10 +22,12 @@ class GGImageComparerNode {
         this.isPointerOver = false; // 鼠标是否悬停在节点上
         this.pointerPos = [0, 0]; // 鼠标位置
         this.comparerMode = "Slide"; // 默认对比模式：滑动
+        this.domPreview = null;
 
         this.initProperties(); // 初始化节点属性
         this.setupEvents(); // 绑定鼠标事件
         this.addModeToggle(); // 添加模式切换开关
+        this.setupDomPreview();
     }
 
     // 添加模式切换开关（Slide/Click）
@@ -28,6 +38,7 @@ class GGImageComparerNode {
             this.comparerMode === "Click",
             (value) => {
                 this.comparerMode = value ? "Click" : "Slide";
+                this.renderDomPreview();
                 this.node.setDirtyCanvas(true, false); // 刷新画布
             },
             { 
@@ -45,6 +56,128 @@ class GGImageComparerNode {
             "Click 模式：鼠标按住图像区域 → 显示 Image B，松开立即恢复 Image A";
     }
 
+    setupDomPreview() {
+        if (!isNodes20Mode() || typeof this.node.addDOMWidget !== "function") return;
+
+        const host = document.createElement("div");
+        host.className = "gg-image-comparer-dom";
+        Object.assign(host.style, {
+            position: "relative",
+            width: "100%",
+            minHeight: "260px",
+            height: "100%",
+            overflow: "hidden",
+            borderRadius: "10px",
+            background: "#111827",
+            userSelect: "none",
+            touchAction: "none",
+        });
+
+        const imageA = document.createElement("img");
+        const imageB = document.createElement("img");
+        const empty = document.createElement("div");
+        const divider = document.createElement("div");
+        imageA.className = "gg-image-comparer-dom-a";
+        imageB.className = "gg-image-comparer-dom-b";
+        empty.className = "gg-image-comparer-dom-empty";
+        divider.className = "gg-image-comparer-dom-divider";
+        for (const image of [imageA, imageB]) {
+            Object.assign(image.style, {
+                position: "absolute",
+                inset: "0",
+                width: "100%",
+                height: "100%",
+                objectFit: "contain",
+                pointerEvents: "none",
+            });
+        }
+        Object.assign(imageB.style, { clipPath: "inset(0 0 0 50%)" });
+        Object.assign(empty.style, {
+            position: "absolute",
+            inset: "0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "#cbd5e1",
+            fontSize: "13px",
+            pointerEvents: "none",
+        });
+        Object.assign(divider.style, {
+            position: "absolute",
+            top: "0",
+            bottom: "0",
+            left: "50%",
+            width: "2px",
+            transform: "translateX(-1px)",
+            background: "rgba(255,255,255,0.9)",
+            boxShadow: "0 0 0 1px rgba(0,0,0,0.24)",
+            pointerEvents: "none",
+        });
+        host.append(imageA, imageB, empty, divider);
+
+        const widget = this.node.addDOMWidget("gg_image_comparer_preview", "gg_image_comparer", host, {
+            serialize: false,
+            getValue: () => "",
+            setValue: () => {},
+        });
+        widget.computeSize = (width) => [Math.max(Number(width) || 520, 360), 300];
+        widget.inputEl = host;
+        this.domPreview = { host, imageA, imageB, empty, divider, pressed: false };
+
+        const updatePointer = (event) => {
+            const rect = host.getBoundingClientRect();
+            if (!rect.width) return;
+            const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+            this.domPreview.ratio = ratio;
+            this.renderDomPreview();
+        };
+        host.addEventListener("pointermove", updatePointer);
+        host.addEventListener("pointerdown", (event) => {
+            this.domPreview.pressed = true;
+            updatePointer(event);
+            host.setPointerCapture?.(event.pointerId);
+            this.renderDomPreview();
+        });
+        const release = () => {
+            this.domPreview.pressed = false;
+            this.renderDomPreview();
+        };
+        host.addEventListener("pointerup", release);
+        host.addEventListener("pointercancel", release);
+        this.renderDomPreview();
+    }
+
+    renderDomPreview() {
+        const preview = this.domPreview;
+        if (!preview) return;
+        const hasA = !!this.imgs[0]?.src;
+        const hasB = !!this.imgs[1]?.src;
+        preview.empty.textContent = hasA ? "" : "执行后显示图像对比";
+        preview.empty.style.display = hasA ? "none" : "flex";
+        preview.imageA.style.display = hasA ? "block" : "none";
+        preview.imageB.style.display = hasB ? "block" : "none";
+        if (hasA && preview.imageA.src !== this.imgs[0].src) preview.imageA.src = this.imgs[0].src;
+        if (hasB && preview.imageB.src !== this.imgs[1].src) preview.imageB.src = this.imgs[1].src;
+
+        const ratio = this.comparerMode === "Click" && !preview.pressed
+            ? 1
+            : Number.isFinite(preview.ratio) ? preview.ratio : 0.5;
+        if (this.comparerMode === "Click") {
+            // Keep Click mode identical to the legacy canvas renderer:
+            // pointer down shows the complete B image, release restores A.
+            preview.imageA.style.display = hasA && !preview.pressed ? "block" : "none";
+            preview.imageB.style.display = hasB && preview.pressed ? "block" : "none";
+            preview.imageB.style.clipPath = "inset(0 0 0 0%)";
+            preview.divider.style.display = "none";
+        } else {
+            preview.imageA.style.display = hasA ? "block" : "none";
+            preview.imageB.style.display = hasB ? "block" : "none";
+            preview.imageB.style.clipPath = `inset(0 0 0 ${Math.round(ratio * 100)}%)`;
+            preview.divider.style.left = `${ratio * 100}%`;
+            preview.divider.style.display = hasA && hasB ? "block" : "none";
+        }
+    }
+
     // 初始化节点属性（兼容旧版数据）
     initProperties() {
         const node = this.node;
@@ -55,11 +188,13 @@ class GGImageComparerNode {
         // 重写setProperty方法，监听模式变化
         const originalSetProperty = node.setProperty;
         node.setProperty = (name, value) => {
-            originalSetProperty.call(node, name, value);
+            const result = originalSetProperty?.call(node, name, value);
             if (name === "comparer_mode") {
                 this.comparerMode = value;
+                this.renderDomPreview();
                 node.setDirtyCanvas(true, false);
             }
+            return result;
         };
     }
 
@@ -90,16 +225,23 @@ class GGImageComparerNode {
         if (output.a_images?.[0]) {
             const imgA = new Image();
             imgA.src = imageDataToUrl(output.a_images[0]);
-            imgA.onload = () => this.node.setDirtyCanvas(true, false);
             this.imgs[0] = imgA;
+            imgA.onload = () => {
+                this.renderDomPreview();
+                this.node.setDirtyCanvas(true, false);
+            };
         }
         // 加载图像B
         if (output.b_images?.[0]) {
             const imgB = new Image();
             imgB.src = imageDataToUrl(output.b_images[0]);
-            imgB.onload = () => this.node.setDirtyCanvas(true, false);
             this.imgs[1] = imgB;
+            imgB.onload = () => {
+                this.renderDomPreview();
+                this.node.setDirtyCanvas(true, false);
+            };
         }
+        this.renderDomPreview();
     }
 
     // 绘制图像对比界面

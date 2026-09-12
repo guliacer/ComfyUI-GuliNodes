@@ -32,8 +32,9 @@ pip install -r requirements.txt
 - 顶部工具栏：节点/分组上色、取色粘贴、节点尺寸复制粘贴、对齐、等宽等高、自动间距、批量整理。
 - 连线样式：颜色、宽度、透明度、发光和流动效果可调。
 - 完成通知：工作流成功执行后，可通过本机同源后端适配自动通知 TapRelay，默认开启，并可在设置页或顶部铃铛按钮中关闭。
+- 发送到素言：顶部菜单区「发送到素言」图标按钮（与内存清理、TapRelay 等同排，使用素言应用图标），默认隐藏，需在 设置 → GuliNodes → 素言联动 中开启后显示。将非跳过状态的图像保存节点（最新一张）、图像对比节点（最新一组）与关联正面提示词推送到素言本地收件服务（`http://127.0.0.1:9477`），落入素言素材库；提示词按“执行完成后的服务端 `/history/{prompt_id}` → 队列/执行开始时的前端快照 → 图片内嵌元数据”顺序回退，沿采样器图像血缘和正面 Conditioning 分支追踪，支持 `easy positive`、开关节点和中间文本链，避免读取已连接 CLIP 节点残留的旧文本；图片按提示词分组，提示词相同的图片归入同一提示词组。
 - 标题节点：画布标题和分区标注。
-- 组增强：选中节点可直接新建为组，组名可改，标题随画布缩放保持清晰，支持四角和四边缘拖拽缩放；可在标题栏快速显示/隐藏整组以跳过组内节点，也可将分组折叠为同名子工作流小节点；折叠小节点支持拖动和双击改名，通过右下角彩色圆点或顶部快捷开关按快照还原原始位置和尺寸。
+- 组增强：选中节点可直接新建为组，组名可改，标题随画布缩放保持清晰，支持四角和四边缘拖拽缩放；可在标题栏快速显示/隐藏整组以跳过组内节点，也可将分组折叠为同名子工作流小节点；折叠时保留组内节点原始布局并只显示代理小节点，支持拖动和双击改名，通过右下角彩色圆点或顶部快捷开关按快照还原原始位置和尺寸。
 - 文本与输入体验：文本复制展示、密钥输入、种子生成、简单数学计算、CLIP 文本编码一体化。
 
 ### 图像与 Latent
@@ -42,7 +43,7 @@ pip install -r requirements.txt
 - 风格参考：使用纯 PyTorch 统计迁移和纹理混合实现，不依赖 OpenCV。
 - 图像保存与压缩：预览、保存、压缩保存、独立压缩，支持 JPEG/PNG/WEBP。
 - 图像对比：2/4/8 图拼接预览，适合参数对比和 A/B 测试。
-- Latent 尺寸：比例预设、图像转 Latent、Latent 缩放、尺寸读取、VAE 编码/解码缓存。
+- Latent 尺寸：比例预设、GG Latent 的 1K-4K 分辨率档位与自定义边长、图像转 Latent、Latent 缩放、尺寸读取、VAE 编码/解码缓存。
 
 ### 模型、LoRA、采样与视频
 
@@ -61,7 +62,7 @@ pip install -r requirements.txt
 | 节点 | 用途 |
 | --- | --- |
 | `GG 图像宽高` | 按比例、边长和方向计算宽高。 |
-| `GG Latent` | 按预设比例生成空 Latent。 |
+| `GG Latent` | 按预设比例和 1K-4K 分辨率档位生成空 Latent，也支持自定义边长。 |
 | `GG Latent2` | 增强版空 Latent，适合输出尺寸参数。 |
 | `GG 图像-Latent` | 根据图像尺寸生成匹配 Latent。 |
 | `GG 图像尺寸缩放` | 按模型预设或边长缩放图像尺寸。 |
@@ -128,15 +129,16 @@ pip install -r requirements.txt
 
 | 涉及功能/节点 | 致谢对象 | 说明 |
 | --- | --- | --- |
-| 全部节点与前端工具 | ComfyUI、ComfyUI_frontend、LiteGraph | 本项目运行在 ComfyUI 自定义节点和前端扩展机制之上，画布、节点、连线、分组绘制等能力依赖这些基础 API。 |
+| 全部节点与前端工具 | ComfyUI、ComfyUI_frontend、LiteGraph | 本项目运行在 ComfyUI 自定义节点和前端扩展机制之上，画布、节点、连线、分组绘制等能力依赖这些基础 API；Nodes 2.0 适配遵循官方 Vue DOM 节点由前端负责布局、LiteGraph 继续负责画布分组与连线的边界。 |
 | `GG 色彩校正` | ColorCorrect 类色彩校正功能 | 参数设计和功能目标参考 ColorCorrect 的温度、色调、明度、对比度、饱和度、伽马调节思路；当前实现改写为 torch 张量批处理，不依赖额外 OpenCV/kornia 包。 |
 | `GG 图像对比 2张` | ComfyUI-KJNodes、[ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes) | 双图对比节点的交互形态和使用场景参考了 KJNodes 与 JosiaNodes 的相关实现；本项目按 GuliNodes 的预览、保存和前端交互方式重新整理。 |
 | 文本框悬浮按钮 | [ComfyUI-Prompt-Assistant](https://github.com/yawiii/ComfyUI-Prompt-Assistant) | 文本框悬浮复制、粘贴、清空按钮的交互灵感来源于 Prompt Assistant；本项目按 GuliNodes 的全局文本框识别、设置开关和前端按钮样式重新实现。 |
 | `GG 标题` | rgthree、Anything Everywhere、Reroute 等社区常见工作流形态 | 这些节点借鉴了社区里“画布标注”的交互思路，但前后端逻辑按 GuliNodes 的中文体验和序列化方式重写。 |
 | `GG 简单数学` | ComfyUI_essentials 的 SimpleMathDual+ 节点形态 | 节点输入结构和常用表达式场景参考 SimpleMathDual+；当前实现按 GuliNodes 中文命名重新实现，并使用 AST 白名单求值避免直接执行任意代码。 |
-| 分组前端增强 | [Josia-doit/ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes)、ComfyUI 原生 Group 与社区分组管理/样式插件 | 标题栏显示/隐藏按钮和组内节点识别机制沿用本项目之前单组/多组控制节点的思路，使用 `mode=2/0` 控制执行禁用/启用，并兼容旧的 `mode=4` 跳过状态。子工作流折叠为本项目前端交互增强，会保存组内节点位置和尺寸快照，仅影响分组内节点的画布显示与命中，并提供可拖动/改名的画布折叠小节点和右下角圆点恢复入口。 |
+| `GG Latent` 分辨率档位 | 用户提供的比例/尺寸参考表 | 1K-4K 的常用比例尺寸和“分辨率预设联动边长、手动边长优先”交互参考该表；当前后端与前端逻辑在本项目内独立实现。 |
+| 分组前端增强 | [Josia-doit/ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes)、ComfyUI 原生 Group 与社区分组管理/样式插件 | 标题栏显示/隐藏按钮和组内节点识别机制沿用本项目之前单组/多组控制节点的思路；当前跳过操作直接使用官方分组菜单的 `mode=4` Bypass 语义，保存并恢复每个节点原有模式，不改写用户设置的 `mode=2` Never。子工作流折叠为本项目前端交互增强，会保存组内节点位置和尺寸快照，仅影响分组内节点的画布显示与命中，并提供可拖动/改名的画布折叠小节点和右下角圆点恢复入口；组查找严格限定当前 LiteGraph 图，避免根图子图注册表串组，隐藏时不再把节点压缩到同一位置。 |
 | `GG 视频加载`、`GG 视频路径加载`、`GG 视频合成`、`GG 视频压缩`、`GG 视频保存` | ffmpeg/ffprobe 与 ComfyUI 视频工作流生态 | 视频封装、压缩和探测依赖 ffmpeg/ffprobe；节点形态面向 ComfyUI 常见 IMAGE/AUDIO/VIDEO 串联工作流重新封装。 |
-| `web/gg-group-styler.js` | ComfyUI-Group-Styler 的“前端扩展 + LiteGraph Group 绘制”路线 | 新增分组样式增强参考了该类前端实现路线，但没有复制其源码；当前文件在本项目内独立包装 `drawGroups`，带设置开关和原生绘制回退，并扩展标题栏按钮、顶部快捷开关、子工作流折叠动画、隐藏节点过滤与右下角圆点恢复指示器。 |
+| `web/gg-group-styler.js` | ComfyUI-Group-Styler 的“前端扩展 + LiteGraph Group 绘制”路线 | 新增分组样式增强参考了该类前端实现路线，但没有复制其源码；当前文件在本项目内独立包装 `drawGroups`，带设置开关和原生绘制回退，并扩展标题栏按钮、顶部快捷开关、子工作流折叠动画、隐藏节点过滤与右下角圆点恢复指示器。当前图与根图子图注册表严格隔离，折叠代理只收缩外层组，组内节点保持原始位置以兼容不同 ComfyUI 绘制路径。 |
 | TapRelay 完成通知 | `W:\TapRelay` 的 HTTP/WebSocket 通知协议 | 适配 TapRelay PC 端固定的 `POST http://127.0.0.1:1122/send` 接收协议，发送 `message`、`source`、`status`、`taskId` 和 `durationMs`；GuliNodes 只做协议桥接，不复制 TapRelay 的接收或广播实现。 |
 
 ## 依赖与兼容
@@ -145,8 +147,11 @@ pip install -r requirements.txt
 | --- | --- | --- |
 | 主插件节点 | 无额外 Python 包 | 仅依赖 ComfyUI 自带 Python 环境中的常规库。 |
 | 图像处理 | ComfyUI 环境内的 `torch`、`PIL`、`numpy` | 不需要 `cv2`、`mediapipe`、`kornia` 或 `color-matcher`。 |
+| 发送到素言 | ComfyUI 前端 API + 素言本地收件服务 | 需要素言监听 `http://127.0.0.1:9477/guli/suyan/import`；提示词按服务端执行历史、队列快照、图片元数据顺序回退，不增加 Python 依赖。 |
+| GG Latent 分辨率联动 | ComfyUI 前端扩展 API | 1K-4K 预设和自定义边长均不增加 Python 依赖；前端扩展不可用时，后端仍按保存的分辨率/边长规则计算。 |
 | 视频加载/压缩/保存 | `ffmpeg`，可选 `ffprobe` | 需要系统命令可调用，或把 ffmpeg 放到 PATH。 |
 | TapRelay 完成通知 | TapRelay PC 软件（本机 `1122` 端口） | 可选功能。需要 TapRelay 正在运行；TapRelay 未启动或通知失败时只记录前端警告，不影响 ComfyUI 工作流。 |
+| ComfyUI Nodes 2.0 | ComfyUI 前端的 `Nodes 2.0` 开关 | 已适配节点主题、标题 DOM 工具栏、分组折叠隐藏、节点/分组选择状态、上色显示和 `GG 图像对比` DOM 预览；关闭 Nodes 2.0 时继续使用原有 Canvas 路径。 |
 
 推荐模型目录：
 
@@ -175,6 +180,23 @@ pip install -r requirements.txt
 确认 TapRelay PC 软件正在运行并监听 `1122` 端口，然后在 ComfyUI 设置的 `GuliNodes / TapRelay` 中，或点击顶部铃铛按钮，确认“ComfyUI 完成后通知 TapRelay”已开启。通知由 GuliNodes 后端转发到 `http://127.0.0.1:1122/send`，TapRelay 不可用时不会阻断工作流。
 
 ## 更新记录
+
+### v1.0.14
+
+- `GG Latent` 新增自定义、1K、2K、3K、4K 分辨率档位，按比例自动同步边长；手动修改边长后自动以自定义尺寸为准，并保留旧工作流字段顺序兼容性。
+- 新增「发送到素言」：将非跳过状态的图像保存节点（最新一张）、图像对比节点（最新一组）与关联的 CLIP 文本节点提示词推送到素言本地收件服务（`http://127.0.0.1:9477/guli/suyan/import`），图片落入素言素材库。
+- 素言按钮默认隐藏，需在 设置 → GuliNodes → 素言联动 中开启后显示；按钮位于顶部菜单区，与内存清理、TapRelay 等按钮统一样式，并使用素言应用图标。
+- 修复不同提示词图片被误合到同一提示词组的问题：图片按执行时刻快照的关联提示词分组推送，提示词相同的图片归入同一提示词组，修改过提示词后生成的图片分到不同组。
+- 修复素言提示词来源错误：优先使用执行完成后的服务端 `/history/{prompt_id}`，再回退到队列/执行开始时的前端快照，最后才读取图片元数据；沿采样器正面分支追踪 `easy positive` 等文本源，遵循开关当前分支并跳过负面提示词；发送前输出保存节点、采样器、提示词节点和来源诊断。
+- 将运行记录确认的 `CLIPTextEncode#96` 加入提示词来源黑名单，只忽略该节点自身的文本，仍沿其 `text` 连线追踪实际正面提示词。
+- 图像保存与压缩节点（`GG 图像保存`、`GG 图像压缩保存`、`GG 图像压缩`）统一内嵌提示词与工作流元数据：PNG 写入 tEXt 块、JPEG 写入 COM 段（大载荷自动分段）、WEBP 写入 EXIF 块，便于素言等外部工具解析。
+- 修复分组隐藏状态恢复时使用缓存旧位置导致分组与组内节点错位的问题：恢复时以当前分组/代理矩形的相对位移为基准，仅复用缓存的目标隐藏尺寸。
+- 修复子工作流折叠串用其他子图分组、以及未覆盖绘制路径把节点集中暴露在代理节点上的问题：分组查找限定当前图，折叠时保留组内节点原始布局，仅隐藏节点并收缩代理组。
+- 修复子工作流折叠后重新打开工作流节点掉出分组的问题：折叠快照写入分组序列化 flags，代理拖动同步原始节点布局，并自动迁移旧版本遗留的紧凑空分组。
+- 修复分组跳过/忽略模式不符合官方语义的问题：按官方分组菜单对全部组内节点统一使用 `mode=4` Bypass，恢复时还原每个节点原始模式，不再把 `mode=2` Never 强制改成 Bypass。
+- 修复分组内节点无法显示 ComfyUI 官方节点顶部工具栏的问题：不再把节点的所属分组误判为当前选中的分组。
+- 修复画布缩放或高 DPI 状态下分组标题无法拖拽的问题：标题命中后同步可靠的画布坐标，并校正 LiteGraph 版本差异，确保分组与组内节点同步移动。
+- 适配 ComfyUI Nodes 2.0：分组折叠同步隐藏 Vue 节点 DOM，修复节点/分组选择状态与节点主题展示，并为 `GG 图像对比` 增加 DOM 预览，避免 Nodes 2.0 跳过 Canvas 节点绘制后功能失效。
 
 ### v1.0.13
 

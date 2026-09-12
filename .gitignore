@@ -26,3 +26,7 @@ desktop.ini
 
 # Logs
 *.log
+
+# Local browser/test artifacts
+/.playwright-cli/
+/output/
