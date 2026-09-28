@@ -61,7 +61,7 @@ pip install -r requirements.txt
 
 ## 节点清单
 
-当前版本实际注册 36 个节点。
+当前版本实际注册 37 个节点。
 
 ### 图像、尺寸与 Latent
 
