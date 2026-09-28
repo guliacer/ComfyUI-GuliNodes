@@ -1,20 +1,63 @@
-# ComfyUI-GuliNodes
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/banner-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="assets/banner-light.svg">
+    <img src="assets/banner-dark.svg" alt="ComfyUI-GuliNodes" width="100%">
+  </picture>
+</p>
 
-[![GitHub Stars](https://img.shields.io/github/stars/guliacer/ComfyUI-GuliNodes?style=flat-square&color=ffcb47)](https://github.com/guliacer/ComfyUI-GuliNodes)
-[![GitHub License](https://img.shields.io/github/license/guliacer/ComfyUI-GuliNodes?style=flat-square&color=97ca00)](https://github.com/guliacer/ComfyUI-GuliNodes/blob/main/LICENSE)
-[![Latest Release](https://img.shields.io/github/v/release/guliacer/ComfyUI-GuliNodes?style=flat-square&color=0078ff)](https://github.com/guliacer/ComfyUI-GuliNodes/releases)
+<p align="center">
+  <b>面向中文工作流的轻量 ComfyUI 效率节点与前端增强工具</b><br>
+  <sub>画布整理 · 图像处理 · Latent 尺寸 · 文本输入 · 模型与 LoRA · 采样 · 视频 · 显存清理</sub>
+</p>
 
-ComfyUI-GuliNodes 是一组面向中文工作流的轻量效率节点和前端增强工具，覆盖画布整理、文本输入、数值计算、图像处理、Latent 尺寸、模型/LoRA 管理、采样、视频处理、显存清理和网页 AI 辅助。
+<p align="center">
+  <a href="https://github.com/guliacer/ComfyUI-GuliNodes"><img alt="GitHub Stars" src="https://img.shields.io/github/stars/guliacer/ComfyUI-GuliNodes?style=flat-square&color=ffcb47"></a>
+  <a href="https://github.com/guliacer/ComfyUI-GuliNodes/releases"><img alt="Latest Release" src="https://img.shields.io/github/v/release/guliacer/ComfyUI-GuliNodes?style=flat-square&color=0078ff"></a>
+  <a href="https://github.com/guliacer/ComfyUI-GuliNodes/blob/main/LICENSE"><img alt="License" src="https://img.shields.io/github/license/guliacer/ComfyUI-GuliNodes?style=flat-square&color=97ca00"></a>
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square">
+  <img alt="No Extra Dependencies" src="https://img.shields.io/badge/%E9%A2%9D%E5%A4%96%E4%BE%9D%E8%B5%96-%E6%97%A0-2ea44f?style=flat-square">
+</p>
 
-<details>
-<summary>依赖说明</summary>
+<p align="center">
+  <a href="#特性亮点">特性亮点</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#主要能力">主要能力</a> ·
+  <a href="#节点清单">节点清单</a> ·
+  <a href="#依赖与兼容">依赖与兼容</a> ·
+  <a href="#界面与设置">界面与设置</a> ·
+  <a href="#常见问题">常见问题</a> ·
+  <a href="#更新记录">更新记录</a> ·
+  <a href="#致谢与借鉴说明">致谢与借鉴说明</a> ·
+  <a href="#贡献">贡献</a> ·
+  <a href="#许可证">许可证</a>
+</p>
 
-当前主插件保持零额外 Python 依赖：不需要安装 `cv2`、`mediapipe`、`color-matcher`、`kornia` 等额外包。部分功能会调用外部程序或可选插件，例如视频处理需要系统可调用 `ffmpeg`。仅 `GG 提示词增强qwen2.1` 的「本地LLM」增强方式需要可选依赖 `llama-cpp-python`（按需安装，不用该方式可不装）。
+---
 
-</details>
+## 特性亮点
 
+ComfyUI-GuliNodes 是一组面向中文工作流的轻量效率节点和前端增强工具，覆盖画布整理、文本输入、数值计算、图像处理、Latent 尺寸、模型/LoRA 管理、采样、视频处理、显存清理和网页 AI 辅助。**零额外 Python 依赖**，放进 `custom_nodes` 就能用。
+
+| | 亮点 | 说明 |
+| :--: | --- | --- |
+| 🧩 | **参数按需显示** | 节点只展示当前选择下真正生效的输入与输出，不生效的参数直接隐藏，不做摆设。 |
+| 🎨 | **画布增强** | 上色、对齐、等宽等高、自动间距、批量整理，分组可折叠为同名子工作流小节点。 |
+| ⚡ | **轻量无依赖** | 只用 ComfyUI 环境自带的 `torch` / `PIL` / `numpy`，不引入 `cv2`、`kornia` 等重包。 |
+| 🈶 | **中文优先** | 节点名、参数、选项、错误提示全中文，分类收敛为单级菜单，开箱即用。 |
+| 🎬 | **视频与显存** | 视频加载 / 路径加载 / 合成 / 压缩 / 保存，模型与显存一键清理并输出报告。 |
+| 🤖 | **AI 辅助** | 内置 Qwen Image 2.1 提示词增强与条件编码，支持内嵌网页 AI 平台反向读图。 |
+
+---
 
 ## 快速开始
+
+### 第 1 步 · 安装
+
+| 方式 | 操作 |
+| --- | --- |
+| **ComfyUI Manager**（推荐） | 在 Manager 中搜索 `ComfyUI-GuliNodes`，点击 Install，然后重启 ComfyUI。 |
+| **手动安装** | 在 `ComfyUI/custom_nodes` 下执行下面的命令。 |
 
 ```bash
 cd ComfyUI/custom_nodes
@@ -23,41 +66,98 @@ cd ComfyUI-GuliNodes
 pip install -r requirements.txt
 ```
 
-`requirements.txt` 当前只是兼容声明，主插件没有额外 Python 包依赖。安装后重启 ComfyUI，在右键菜单中查找 `GG` 或 `GuliNodes` 分类即可使用节点；前端工具会自动随插件加载。
+> **说明**：`requirements.txt` 当前只是兼容声明，主插件没有额外 Python 包依赖。
+
+### 第 2 步 · 重启 ComfyUI
+
+重启后前端扩展会随插件自动加载。如果界面还是旧样子，请强制刷新浏览器（`Ctrl` + `F5`）。
+
+### 第 3 步 · 开始使用
+
+在画布空白处右键 → **新建节点** → 找到 **GG** 或 **GuliNodes** 分类，即可看到全部节点。
+
+首次使用建议先打开 **设置 → GuliNodes**，或点击画布顶部的 **GuliNodes 工具** 按钮，看一眼各功能开关。
+
+---
 
 ## 主要能力
 
 ### 画布与前端工具
 
-- 顶部工具栏：节点/分组上色、取色粘贴、节点尺寸复制粘贴、对齐、等宽等高、自动间距、批量整理；画布顶部的 GuliNodes 工具入口采用一级功能列表，普通开关在一级直接切换，连接线和节点光效等需要配置的功能才展开菜单内详细设置；菜单从工具按钮正下方打开并按实际内容收紧宽度，释放模型与深度清理合并为画布外独立按钮，不会被工具菜单收纳。
-- 节点标题栏按钮：可分别开启“输入输出列表隐藏”和“节点折叠”按钮；展开节点显示折叠按钮和端口列表按钮，折叠后只保留最右侧的恢复按钮。两种状态均写入工作流节点数据，切换工作流或重新打开画布后继续保留；按钮悬浮提示对应按钮功能，不会复用节点说明提示。
-- 节点端口显示：可在设置或画布顶部按钮中开启节点输入输出列表隐藏功能，并通过节点标题栏按钮切换显示；隐藏只影响画布显示，不会断开已有连接；隐藏端口后会按可见控件重新布局并锁定紧凑高度，减少节点高度反复变化。
-- 参数按需显示：节点只展示当前选择下真正生效的输入与输出端口，不生效的参数和端口直接隐藏，避免误导。覆盖 `GG Latent`（Latent方式）、`GG 图像裁剪`（模式）、`GG 视频压缩`（分辨率处理）、`GG 种子生成器`（偏移模式）、`GG 图像压缩保存`（PNG 格式）、`GG 网页AI图像反推`（平台）、`GG 文本反推`（是否连接本地模型）、`GG LoRA自定义加载`（LoRA数量）、`GG 提示词增强qwen2.1`（任务模式/增强方式）等节点；`GG 图像对比 N张` 默认显示一个图像槽位，连接后自动增加下一个，最多 20 张，标签控件随已连接图像源同步增减。
-- 节点插件名称显示：可在设置或画布顶部按钮中开启自动隐藏节点右上角插件徽章；选中、点击或悬浮节点时恢复显示，折叠节点同样适用。
-- 节点外部光效：可在设置或画布顶部 GuliNodes 工具菜单中开启；用户选中的节点和工作流当前执行节点会显示外部光效，支持智能、自定义、随机、低/标准/梦幻/沉浸强度及多种光效效果池；光效设置可直接从画布按钮打开。效果只有光、没有光环——不画任何描边几何，粒子直接生成在节点边界并向外随机扩散，扩散范围对齐参考实现的 76px 扩散带并随强度缩放，粒子按节点独立的随机序列生成、同节点同效果的两次会话排布不同，也不额外叠加背景图层。光效配色跟随画布明暗主题切换，浅色主题使用高饱和深色，深色主题使用浅亮色，避免同色相在背景上糊成一片。
-- 连线样式：颜色、宽度、透明度、发光和流动效果可调；新增“虚空”样式，只在输入输出端保留短提示段并隐藏中间路径。
-- 完成通知：工作流成功执行后，可通过本机同源后端适配自动通知 TapRelay，默认开启，并可在设置页或顶部铃铛按钮中关闭。
-- 发送到素言：画布顶部独立的「发送到素言」图标按钮（保持在 GuliNodes 工具菜单外部，使用素言应用图标），默认隐藏，需在 设置 → GuliNodes → 素言联动 中开启后显示。将非跳过状态的图像保存节点（最新一张）、图像对比节点（最新一组）与关联正面提示词推送到素言本地收件服务（`http://127.0.0.1:9477`），落入素言素材库；提示词按“执行完成后的服务端 `/history/{prompt_id}` → 队列/执行开始时的前端快照 → 图片内嵌元数据”顺序回退，沿采样器图像血缘和正面 Conditioning 分支追踪，支持 `easy positive`、开关节点和中间文本链，避免读取已连接 CLIP 节点残留的旧文本；图片按提示词分组，提示词相同的图片归入同一提示词组。
-- 标题节点：画布标题和分区标注。
-- 组增强：选中节点可直接新建为组，组名可改，标题随画布缩放保持清晰，支持四角和四边缘拖拽缩放；可在标题栏快速显示/隐藏整组以跳过组内节点，也可将分组折叠为同名子工作流小节点；折叠时保留组内节点原始布局并只显示代理小节点，支持拖动和双击改名，通过右下角彩色圆点或顶部快捷开关按快照还原原始位置和尺寸。
-- 移动对齐吸附：拖动节点时自动对齐到附近节点的左/中/右、上/中/下边缘（像 PS 移动图层），命中时显示红色参考线并磁吸；可在设置或顶部工具菜单「移动对齐」开关中启用/关闭。
-- 文本与输入体验：文本复制展示、密钥输入、端点/模型/密钥剪贴板粘贴与 API 配置快速导入、端点网址自动提取适配、按端点和密钥获取模型列表、种子生成、整数输入、选项确认、简单数学表达式、CLIP 文本编码和 Qwen Image 2.1 图像提示词增强一体化。
+- **顶部工具栏** — 节点/分组上色、取色粘贴、节点尺寸复制粘贴、对齐、等宽等高、自动间距、批量整理。
+- **节点标题栏按钮** — 可分别开启「输入输出列表隐藏」与「节点折叠/恢复」按钮，状态随工作流持久化。
+- **节点端口显示** — 隐藏端口只影响画布显示，不会断开已有连接，切换工作流或重开画布后继续保留。
+- **参数按需显示** — 只展示当前选择下真正生效的输入与输出，不生效的参数与端口直接隐藏；`GG 图像对比 N张` 的图像槽位随连接自动增减，最多 20 张。
+- **插件名称显示** — 可自动隐藏节点右上角的插件徽章，选中、点击或悬浮节点时恢复显示。
+- **节点外部光效** — 选中节点与正在执行的节点会向外扩散粒子光效，支持多档强度、效果池与 9 种色彩主题。
+- **连线样式** — 颜色、宽度、透明度、发光和流动效果可调，内置「虚空」等样式。
+- **完成通知** — 工作流成功执行后自动通知本机 TapRelay，默认开启。
+- **发送到素言** — 把出图、图像对比与关联提示词推送到素言素材库，默认隐藏，需在设置中开启。
+- **标题与分组** — 画布标题/分区标注；分组可新建、改名、四边缩放、整组跳过，也可折叠为同名子工作流小节点。
+- **移动对齐吸附** — 拖动节点时自动吸附到邻近节点的边缘，手感接近 PS 移动图层。
+- **文本与输入体验** — 文本复制展示、密钥输入、剪贴板导入、模型列表获取、种子生成、整数输入、选项确认、数学表达式、CLIP 文本编码与 Qwen Image 2.1 提示词增强。
+
+<details>
+<summary><b>展开细节：工具栏 / 标题栏按钮 / 光效 / 连线 / 素言联动 / 分组增强</b></summary>
+
+**顶部工具栏**
+节点/分组上色、取色粘贴、节点尺寸复制粘贴、对齐、等宽等高、自动间距、批量整理；画布顶部的 GuliNodes 工具入口采用一级功能列表，普通开关在一级直接切换，连接线和节点光效等需要配置的功能才展开菜单内详细设置；菜单从工具按钮正下方打开并按实际内容收紧宽度，释放模型与深度清理合并为画布外独立按钮，不会被工具菜单收纳。
+
+**节点标题栏按钮**
+可分别开启“输入输出列表隐藏”和“节点折叠”按钮；展开节点显示折叠按钮和端口列表按钮，折叠后只保留最右侧的恢复按钮。两种状态均写入工作流节点数据，切换工作流或重新打开画布后继续保留；按钮悬浮提示对应按钮功能，不会复用节点说明提示。
+
+**节点端口显示**
+可在设置或画布顶部按钮中开启节点输入输出列表隐藏功能，并通过节点标题栏按钮切换显示；隐藏只影响画布显示，不会断开已有连接；隐藏端口后会按可见控件重新布局并锁定紧凑高度，减少节点高度反复变化。
+
+**参数按需显示**
+节点只展示当前选择下真正生效的输入与输出端口，不生效的参数和端口直接隐藏，避免误导。覆盖 `GG Latent`（Latent方式）、`GG 图像裁剪`（模式）、`GG 视频压缩`（分辨率处理）、`GG 种子生成器`（偏移模式）、`GG 图像压缩保存`（PNG 格式）、`GG 网页AI图像反推`（平台）、`GG 文本反推`（是否连接本地模型）、`GG LoRA自定义加载`（LoRA数量）、`GG 提示词增强qwen2.1`（任务模式/增强方式）等节点；`GG 图像对比 N张` 默认显示一个图像槽位，连接后自动增加下一个，最多 20 张，标签控件随已连接图像源同步增减。
+
+**节点插件名称显示**
+可在设置或画布顶部按钮中开启自动隐藏节点右上角插件徽章；选中、点击或悬浮节点时恢复显示，折叠节点同样适用。
+
+**节点外部光效**
+可在设置或画布顶部 GuliNodes 工具菜单中开启；用户选中的节点和工作流当前执行节点会显示外部光效，支持智能、自定义、随机、低/标准/梦幻/沉浸强度及多种光效效果池；光效设置可直接从画布按钮打开。效果只有光、没有光环——不画任何描边几何，粒子直接生成在节点边界并向外随机扩散，扩散范围对齐参考实现的 76px 扩散带并随强度缩放，粒子按节点独立的随机序列生成、同节点同效果的两次会话排布不同，也不额外叠加背景图层。光效配色跟随画布明暗主题切换，浅色主题使用高饱和深色，深色主题使用浅亮色，避免同色相在背景上糊成一片。
+
+**连线样式**
+颜色、宽度、透明度、发光和流动效果可调；新增“虚空”样式，只在输入输出端保留短提示段并隐藏中间路径。
+
+**完成通知**
+工作流成功执行后，可通过本机同源后端适配自动通知 TapRelay，默认开启，并可在设置页或顶部铃铛按钮中关闭。
+
+**发送到素言**
+画布顶部独立的「发送到素言」图标按钮（保持在 GuliNodes 工具菜单外部，使用素言应用图标），默认隐藏，需在 设置 → GuliNodes → 素言联动 中开启后显示。将非跳过状态的图像保存节点（最新一张）、图像对比节点（最新一组）与关联正面提示词推送到素言本地收件服务（`http://127.0.0.1:9477`），落入素言素材库；提示词按“执行完成后的服务端 `/history/{prompt_id}` → 队列/执行开始时的前端快照 → 图片内嵌元数据”顺序回退，沿采样器图像血缘和正面 Conditioning 分支追踪，支持 `easy positive`、开关节点和中间文本链，避免读取已连接 CLIP 节点残留的旧文本；图片按提示词分组，提示词相同的图片归入同一提示词组。
+
+**标题节点**
+画布标题和分区标注。
+
+**组增强**
+选中节点可直接新建为组，组名可改，标题随画布缩放保持清晰，支持四角和四边缘拖拽缩放；可在标题栏快速显示/隐藏整组以跳过组内节点，也可将分组折叠为同名子工作流小节点；折叠时保留组内节点原始布局并只显示代理小节点，支持拖动和双击改名，通过右下角彩色圆点或顶部快捷开关按快照还原原始位置和尺寸。
+
+**移动对齐吸附**
+拖动节点时自动对齐到附近节点的左/中/右、上/中/下边缘（像 PS 移动图层），命中时显示红色参考线并磁吸；可在设置或顶部工具菜单「移动对齐」开关中启用/关闭。
+
+**文本与输入体验**
+文本复制展示、密钥输入、端点/模型/密钥剪贴板粘贴与 API 配置快速导入、端点网址自动提取适配、按端点和密钥获取模型列表、种子生成、整数输入、选项确认、简单数学表达式、CLIP 文本编码和 Qwen Image 2.1 图像提示词增强一体化。
+
+</details>
 
 ### 图像与 Latent
 
-- 基础图像处理：尺寸调整、裁剪、翻转旋转、亮度/对比度/饱和度/锐化/虚化、色彩校正。
-- 风格参考：使用纯 PyTorch 统计迁移和纹理混合实现，不依赖 OpenCV。
-- 图像保存与压缩：预览、保存、压缩保存、独立压缩，支持 JPEG/PNG/WEBP。
-- 图像对比：2 图和最多 20 图拼接预览，适合参数对比和 A/B 测试。
-- Latent 尺寸：GG Latent 支持按边长、按 K 数分辨率、按 Latent 接入、按图像接入四种生成方式；按边长用边长与边长类型做自定义尺寸，按 K 数分辨率含 1K-4K 档位，另有输入尺寸倍率缩放、图像缩放方法与尺寸读取；另提供 Latent 缩放、VAE 编码/解码缓存。
+- **基础图像处理** — 尺寸调整、裁剪、翻转旋转、亮度/对比度/饱和度/锐化/虚化、色彩校正。
+- **风格参考** — 使用纯 PyTorch 统计迁移和纹理混合实现，不依赖 OpenCV。
+- **图像保存与压缩** — 预览、保存、压缩保存、独立压缩，支持 JPEG/PNG/WEBP。
+- **图像对比** — 2 图和最多 20 图拼接预览，适合参数对比和 A/B 测试。
+- **Latent 尺寸** — `GG Latent` 支持按边长、按 K 数分辨率、按 Latent 接入、按图像接入四种生成方式；按边长用边长与边长类型做自定义尺寸，按 K 数分辨率含 1K–4K 档位，另有输入尺寸倍率缩放、图像缩放方法与尺寸读取；另提供 Latent 缩放、VAE 编码/解码缓存。
 
 ### 模型、LoRA、采样与视频
 
-- LoRA：20 槽自定义 LoRA 叠加。
-- 模型加载：VAE 缓存编码/解码。
-- 采样：Z-Image 采样器。
-- 显存清理：卸载 ComfyUI 模型、清理设备缓存、清理 GuliNodes VAE 缓存并输出报告。
-- 视频：视频加载、路径加载、图像音频合成视频、压缩、保存。
+- **LoRA** — 20 槽自定义 LoRA 叠加。
+- **模型加载** — VAE 缓存编码/解码。
+- **采样** — Z-Image 采样器。
+- **显存清理** — 卸载 ComfyUI 模型、清理设备缓存、清理 GuliNodes VAE 缓存并输出报告。
+- **视频** — 视频加载、路径加载、图像音频合成视频、压缩、保存。
+
+---
 
 ## 节点清单
 
@@ -126,37 +226,11 @@ pip install -r requirements.txt
 | `GG 视频压缩` | 使用 ffmpeg 压缩视频并显示进度。 |
 | `GG 视频保存` | 保存或封装视频输出。 |
 
-## 致谢与借鉴说明
-
-本项目会尽量把借鉴、适配和桥接关系写清楚。除下表列出的项目外，其余节点主要是围绕 ComfyUI 原生节点 API、前端扩展 API 和日常中文工作流需求重新实现；如后续发现遗漏来源，会继续补充。
-
-> **强制规则（不可省略）**
-> 1. **只要借鉴或参考了任何外部项目**（桥接 / 适配 / 思路参考 / 算法思路），都必须在本处的致谢表里补上一行，写明来源名称 + 项目地址（URL）+ 实际参考的节点或功能，缺 URL 或缺引用关系都算不合规。
-> 2. **删除节点或功能时，对应致谢行不删除文本**，只用删除线（`~~……~~`）标注失效，保留来源记录，防止致谢信息随功能一起消失。
-
-| 涉及功能/节点 | 致谢对象 | 说明 |
-| --- | --- | --- |
-| 全部节点与前端工具 | ComfyUI、ComfyUI_frontend、LiteGraph | 本项目运行在 ComfyUI 自定义节点和前端扩展机制之上，画布、节点、连线、分组绘制等能力依赖这些基础 API；Nodes 2.0 适配遵循官方 Vue DOM 节点由前端负责布局、LiteGraph 继续负责画布分组与连线的边界。 |
-| 节点外部光效 | `W:\提示词`“视觉生命”卡片外部光效 | 参考其边缘柔光、粒子效果池和效果模式的交互思路；配色参考其 `light_theme` 分支（浅色主题改用高饱和深色、深色主题用浅亮色）；扩散范围沿用其 `EFFECT_BLEED`（76px）扩散带与逐效果参数表（粒子数量上限、生命周期、半径、速度），粒子生成沿用其「按边随机取点 → 向外位移 → 随机相位/速度/生命周期」模型与线性同余随机序列；GuliNodes 按 ComfyUI LiteGraph 的节点局部坐标绘制并随画布缩放换算，去掉其独立叠加画布与内部擦除做法，未复制其源码。 |
-| 节点插件名称自动隐藏 | ComfyUI_frontend、LiteGraph 官方节点徽章 API | 通过官方 `drawBadges` 绘制入口和 Nodes 2.0 节点徽章 DOM 做显示层适配，不修改节点数据或工作流序列化。 |
-| `GG 色彩校正` | ColorCorrect 类色彩校正功能 | 参数设计和功能目标参考 ColorCorrect 的温度、色调、明度、对比度、饱和度、伽马调节思路；当前实现改写为 torch 张量批处理，不依赖额外 OpenCV/kornia 包。 |
-| `GG 图像压缩保存`、`GG 图像压缩` | [civilblur/mazanoke](https://github.com/civilblur/mazanoke)、[Lymphatus/caesium-image-compressor](https://github.com/Lymphatus/caesium-image-compressor)、[meowtec/Imagine](https://github.com/meowtec/Imagine) | 三档压缩模式（civilblur / Caesium / meowtec）的命名与「按质量或目标大小压缩 JPEG/PNG/WEBP」的功能形态分别受这三个开源图像压缩工具启发；GuliNodes 用 ComfyUI 环境自带的 Pillow 重新实现（optimize/progressive/subsampling、WEBP method=6、目标大小二分搜索质量），不调用也不内置这些项目的源码。 |
-| `GG 图像对比 2张` | ComfyUI-KJNodes、[ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes) | 双图对比节点的交互形态和使用场景参考了 KJNodes 与 JosiaNodes 的相关实现；本项目按 GuliNodes 的预览、保存和前端交互方式重新整理。 |
-| 文本框悬浮按钮 | [ComfyUI-Prompt-Assistant](https://github.com/yawiii/ComfyUI-Prompt-Assistant) | 文本框悬浮复制、粘贴、清空按钮的交互灵感来源于 Prompt Assistant；本项目按 GuliNodes 的全局文本框识别、设置开关和前端按钮样式重新实现。 |
-| `GG 标题` | rgthree、Anything Everywhere、Reroute 等社区常见工作流形态 | 这些节点借鉴了社区里“画布标注”的交互思路，但前后端逻辑按 GuliNodes 的中文体验和序列化方式重写。 |
-| `GG 简单数学表达式` | ComfyUI_essentials 的 SimpleMathDual+ 节点形态 | 节点输入结构和常用表达式场景参考 SimpleMathDual+；当前实现按 GuliNodes 中文命名重新实现，并使用 AST 白名单求值避免直接执行任意代码。 |
-| `GG 提示词增强qwen2.1` | TE MAN / QQ / Wysl 的「Qwen Image 2.1 AI提示词增强」节点、Qwen Image 2.1 官方提示词改写规则 | 提示词增强 API 与本地官方 PE 通路的逻辑、以及官方 system prompt 模板（`guli_nodes/qwen_pe_prompts.py`）整段移植自 TE MAN / QQ 的同类节点；本项目按 GuliNodes 命名与结构重写为文生图/图生图两档任务、API/本地PE/本地LLM 三档增强方式、参考图 Autogrow 最多 20 张，并去掉思考模式与最大边长设置。本地LLM 通路（llama-cpp-python 加载 GGUF + mmproj）为本项目按用户要求新增实现。 |
-| `GG 选项确认` | Wysl-MultiPrimitive | 下游控件规格识别、动态输出端口和选项同步的交互思路参考该节点；当前实现按 GuliNodes 的中文节点命名、单输出初始状态和最多 20 个输出源重新实现。 |
-| `GG 提示词优化qwen2.1` | ComfyUI 原生 `Text Encode Qwen Image 2.1`（TextEncodeQwenImageEditPlus） | 适配：把原生的 CLIP 文本编码、VAE 参考图编码与 `reference_latents` 逻辑整合进单个节点，按 GuliNodes 中文命名重写，参考图改用 Autogrow 最多 20 张，去掉 Latent 输出，仅保留供 Conditioning 使用的 VAE 选项。 |
-| `GG Latent` 分辨率档位 | 常见数字影像/电影制作 K 分辨率约定 | 1K/2K/3K/4K 分别以最长边 1024/2048/3072/4096 像素为基准，另一边按宽高比例和画面方向计算并对齐到 8。 |
-| 分组前端增强 | [Josia-doit/ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes)、ComfyUI 原生 Group 与社区分组管理/样式插件 | 标题栏显示/隐藏按钮和组内节点识别机制沿用本项目之前单组/多组控制节点的思路；当前跳过操作直接使用官方分组菜单的 `mode=4` Bypass 语义，保存并恢复每个节点原有模式，不改写用户设置的 `mode=2` Never。子工作流折叠为本项目前端交互增强，会保存组内节点位置和尺寸快照，仅影响分组内节点的画布显示与命中，并提供可拖动/改名的画布折叠小节点和右下角圆点恢复入口；组查找严格限定当前 LiteGraph 图，避免根图子图注册表串组，隐藏时不再把节点压缩到同一位置。 |
-| `GG 多组控制`、`GG 单组控制` | [rgthree-comfy](https://github.com/rgthree/rgthree-comfy) 的 Fast Groups Bypasser | 编组批量/单组跳过启用的交互思路参考该节点；跳过与启用的模式语义与其对齐（Bypass `mode=4` / `ALWAYS` `mode=0`），组内节点识别与整体绘制、命中、跳转按 GuliNodes 独立实现。 |
-| `GG 视频加载`、`GG 视频路径加载`、`GG 视频合成`、`GG 视频压缩`、`GG 视频保存` | ffmpeg/ffprobe 与 ComfyUI 视频工作流生态 | 视频封装、压缩和探测依赖 ffmpeg/ffprobe；节点形态面向 ComfyUI 常见 IMAGE/AUDIO/VIDEO 串联工作流重新封装。 |
-| `GG 视频压缩` 编码器与压制形态 | [小丸工具箱 / Maruko's Toolbox](https://github.com/wzxjohn/marukotoolbox) | 编码器选项命名（`x264_64-8bit.exe`、`x265-8bit\gcc[cpu].exe` 等 8/10/12bit x264/x265 档位）与「选编码器 + 调 CRF 压制」的交互形态参考小丸工具箱；GuliNodes 内部实际由 ffmpeg（libx264/libx265）编码，不打包也不调用其二进制。 |
-| `web/gg-group-styler.js` | ComfyUI-Group-Styler 的“前端扩展 + LiteGraph Group 绘制”路线 | 新增分组样式增强参考了该类前端实现路线，但没有复制其源码；当前文件在本项目内独立包装 `drawGroups`，带设置开关和原生绘制回退，并扩展标题栏按钮、顶部快捷开关、子工作流折叠动画、隐藏节点过滤与右下角圆点恢复指示器。当前图与根图子图注册表严格隔离，折叠代理只收缩外层组，组内节点保持原始位置以兼容不同 ComfyUI 绘制路径。 |
-| TapRelay 完成通知 | `W:\TapRelay` 的 HTTP/WebSocket 通知协议 | 适配 TapRelay PC 端固定的 `POST http://127.0.0.1:1122/send` 接收协议，发送 `message`、`source`、`status`、`taskId` 和 `durationMs`；GuliNodes 只做协议桥接，不复制 TapRelay 的接收或广播实现。 |
+---
 
 ## 依赖与兼容
+
+主插件保持**零额外 Python 依赖**：不需要安装 `cv2`、`mediapipe`、`color-matcher`、`kornia` 等额外包。部分功能会调用外部程序或可选插件，例如视频处理需要系统可调用 `ffmpeg`。
 
 | 功能 | 依赖 | 说明 |
 | --- | --- | --- |
@@ -170,13 +244,41 @@ pip install -r requirements.txt
 | `GG 提示词增强qwen2.1` 本地LLM 方式 | 可选依赖 `llama-cpp-python` + GGUF 主模型（图生图另需 mmproj） | 仅「本地LLM」增强方式需要，按需手动安装（按平台/CUDA 选 wheel）；未安装时该方式给中文提示，API / 本地PE 方式不受影响。API 方式需服务商 OpenAI 兼容接口；本地PE 方式用 ComfyUI 文本编码器栈加载官方 PE safetensors（models/text_encoders）。 |
 | ComfyUI Nodes 2.0 | ComfyUI 前端的 `Nodes 2.0` 开关 | 已适配标题 DOM 工具栏、分组折叠隐藏、节点/分组选择状态、上色显示和 `GG 图像对比` DOM 预览；关闭 Nodes 2.0 时继续使用原有 Canvas 路径。 |
 
-推荐模型目录：
+**推荐模型目录**
 
 | 资源类型 | 推荐目录 |
 | --- | --- |
 | VAE | `ComfyUI/models/vae/` |
 | CLIP / text encoder | `ComfyUI/models/text_encoders/` |
 | LoRA | `ComfyUI/models/loras/` |
+
+---
+
+## 界面与设置
+
+所有开关改完立即生效、无需重启。入口有三处：
+
+| 入口 | 位置 | 适用 |
+| --- | --- | --- |
+| 设置页 | **设置 → `GuliNodes`**，含「节点显示」「TapRelay」「素言联动」等分组 | 全部开关与配置 |
+| 画布顶部 | **GuliNodes 工具** 按钮 | 日常高频开关 |
+| 节点标题栏 | 节点右上角的折叠 / 输入输出列表按钮 | 单个节点 |
+
+常用开关注释：
+
+| 开关 | 作用 | 备注 |
+| --- | --- | --- |
+| 节点光效 | 选中与执行节点显示外部粒子光效 | 强度、效果池、配色可在同处设置 |
+| 连线样式 | 连接线颜色、宽度、透明度、发光与流动 | 含「虚空」等样式 |
+| 界面翻译 | 前端界面中文化 | — |
+| 分组样式 | 接管官方 Group 绘制与交互 | 启用后分组支持折叠为子工作流 |
+| 输入输出列表 | 隐藏节点端口列表，只影响显示 | 状态写入节点数据 |
+| 节点折叠 | 标题栏折叠/恢复按钮 | 折叠宽度可调（60–400，默认 150） |
+| 移动对齐吸附 | 拖动节点时吸附到邻近节点边缘 | 默认开启 |
+| 完成通知 | 执行完成后通知 TapRelay | 默认开启，需 TapRelay 在运行 |
+| 素言联动 | 显示「发送到素言」按钮 | 默认关闭 |
+
+---
 
 ## 常见问题
 
@@ -195,6 +297,8 @@ pip install -r requirements.txt
 ### TapRelay 没有收到 ComfyUI 完成通知？
 
 确认 TapRelay PC 软件正在运行并监听 `1122` 端口，然后在 ComfyUI 设置的 `GuliNodes / TapRelay` 中，或点击顶部铃铛按钮，确认“ComfyUI 完成后通知 TapRelay”已开启。通知由 GuliNodes 后端转发到 `http://127.0.0.1:1122/send`，TapRelay 不可用时不会阻断工作流。
+
+---
 
 ## 更新记录
 
@@ -586,6 +690,52 @@ pip install -r requirements.txt
 
 </details>
 
+---
+
+## 致谢与借鉴说明
+
+本项目会尽量把借鉴、适配和桥接关系写清楚。除下表列出的项目外，其余节点主要是围绕 ComfyUI 原生节点 API、前端扩展 API 和日常中文工作流需求重新实现；如后续发现遗漏来源，会继续补充。
+
+> **强制规则（不可省略）**
+> 1. **只要借鉴或参考了任何外部项目**（桥接 / 适配 / 思路参考 / 算法思路），都必须在本处的致谢表里补上一行，写明来源名称 + 项目地址（URL）+ 实际参考的节点或功能，缺 URL 或缺引用关系都算不合规。
+> 2. **删除节点或功能时，对应致谢行不删除文本**，只用删除线（`~~……~~`）标注失效，保留来源记录，防止致谢信息随功能一起消失。
+
+| 涉及功能/节点 | 致谢对象 | 说明 |
+| --- | --- | --- |
+| 全部节点与前端工具 | ComfyUI、ComfyUI_frontend、LiteGraph | 本项目运行在 ComfyUI 自定义节点和前端扩展机制之上，画布、节点、连线、分组绘制等能力依赖这些基础 API；Nodes 2.0 适配遵循官方 Vue DOM 节点由前端负责布局、LiteGraph 继续负责画布分组与连线的边界。 |
+| 节点外部光效 | `W:\提示词`“视觉生命”卡片外部光效 | 参考其边缘柔光、粒子效果池和效果模式的交互思路；配色参考其 `light_theme` 分支（浅色主题改用高饱和深色、深色主题用浅亮色）；扩散范围沿用其 `EFFECT_BLEED`（76px）扩散带与逐效果参数表（粒子数量上限、生命周期、半径、速度），粒子生成沿用其「按边随机取点 → 向外位移 → 随机相位/速度/生命周期」模型与线性同余随机序列；GuliNodes 按 ComfyUI LiteGraph 的节点局部坐标绘制并随画布缩放换算，去掉其独立叠加画布与内部擦除做法，未复制其源码。 |
+| 节点插件名称自动隐藏 | ComfyUI_frontend、LiteGraph 官方节点徽章 API | 通过官方 `drawBadges` 绘制入口和 Nodes 2.0 节点徽章 DOM 做显示层适配，不修改节点数据或工作流序列化。 |
+| `GG 色彩校正` | ColorCorrect 类色彩校正功能 | 参数设计和功能目标参考 ColorCorrect 的温度、色调、明度、对比度、饱和度、伽马调节思路；当前实现改写为 torch 张量批处理，不依赖额外 OpenCV/kornia 包。 |
+| `GG 图像压缩保存`、`GG 图像压缩` | [civilblur/mazanoke](https://github.com/civilblur/mazanoke)、[Lymphatus/caesium-image-compressor](https://github.com/Lymphatus/caesium-image-compressor)、[meowtec/Imagine](https://github.com/meowtec/Imagine) | 三档压缩模式（civilblur / Caesium / meowtec）的命名与「按质量或目标大小压缩 JPEG/PNG/WEBP」的功能形态分别受这三个开源图像压缩工具启发；GuliNodes 用 ComfyUI 环境自带的 Pillow 重新实现（optimize/progressive/subsampling、WEBP method=6、目标大小二分搜索质量），不调用也不内置这些项目的源码。 |
+| `GG 图像对比 2张` | ComfyUI-KJNodes、[ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes) | 双图对比节点的交互形态和使用场景参考了 KJNodes 与 JosiaNodes 的相关实现；本项目按 GuliNodes 的预览、保存和前端交互方式重新整理。 |
+| 文本框悬浮按钮 | [ComfyUI-Prompt-Assistant](https://github.com/yawiii/ComfyUI-Prompt-Assistant) | 文本框悬浮复制、粘贴、清空按钮的交互灵感来源于 Prompt Assistant；本项目按 GuliNodes 的全局文本框识别、设置开关和前端按钮样式重新实现。 |
+| `GG 标题` | rgthree、Anything Everywhere、Reroute 等社区常见工作流形态 | 这些节点借鉴了社区里“画布标注”的交互思路，但前后端逻辑按 GuliNodes 的中文体验和序列化方式重写。 |
+| `GG 简单数学表达式` | ComfyUI_essentials 的 SimpleMathDual+ 节点形态 | 节点输入结构和常用表达式场景参考 SimpleMathDual+；当前实现按 GuliNodes 中文命名重新实现，并使用 AST 白名单求值避免直接执行任意代码。 |
+| `GG 提示词增强qwen2.1` | TE MAN / QQ / Wysl 的「Qwen Image 2.1 AI提示词增强」节点、Qwen Image 2.1 官方提示词改写规则 | 提示词增强 API 与本地官方 PE 通路的逻辑、以及官方 system prompt 模板（`guli_nodes/qwen_pe_prompts.py`）整段移植自 TE MAN / QQ 的同类节点；本项目按 GuliNodes 命名与结构重写为文生图/图生图两档任务、API/本地PE/本地LLM 三档增强方式、参考图 Autogrow 最多 20 张，并去掉思考模式与最大边长设置。本地LLM 通路（llama-cpp-python 加载 GGUF + mmproj）为本项目按用户要求新增实现。 |
+| `GG 选项确认` | Wysl-MultiPrimitive | 下游控件规格识别、动态输出端口和选项同步的交互思路参考该节点；当前实现按 GuliNodes 的中文节点命名、单输出初始状态和最多 20 个输出源重新实现。 |
+| `GG 提示词优化qwen2.1` | ComfyUI 原生 `Text Encode Qwen Image 2.1`（TextEncodeQwenImageEditPlus） | 适配：把原生的 CLIP 文本编码、VAE 参考图编码与 `reference_latents` 逻辑整合进单个节点，按 GuliNodes 中文命名重写，参考图改用 Autogrow 最多 20 张，去掉 Latent 输出，仅保留供 Conditioning 使用的 VAE 选项。 |
+| `GG Latent` 分辨率档位 | 常见数字影像/电影制作 K 分辨率约定 | 1K/2K/3K/4K 分别以最长边 1024/2048/3072/4096 像素为基准，另一边按宽高比例和画面方向计算并对齐到 8。 |
+| 分组前端增强 | [Josia-doit/ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes)、ComfyUI 原生 Group 与社区分组管理/样式插件 | 标题栏显示/隐藏按钮和组内节点识别机制沿用本项目之前单组/多组控制节点的思路；当前跳过操作直接使用官方分组菜单的 `mode=4` Bypass 语义，保存并恢复每个节点原有模式，不改写用户设置的 `mode=2` Never。子工作流折叠为本项目前端交互增强，会保存组内节点位置和尺寸快照，仅影响分组内节点的画布显示与命中，并提供可拖动/改名的画布折叠小节点和右下角圆点恢复入口；组查找严格限定当前 LiteGraph 图，避免根图子图注册表串组，隐藏时不再把节点压缩到同一位置。 |
+| `GG 多组控制`、`GG 单组控制` | [rgthree-comfy](https://github.com/rgthree/rgthree-comfy) 的 Fast Groups Bypasser | 编组批量/单组跳过启用的交互思路参考该节点；跳过与启用的模式语义与其对齐（Bypass `mode=4` / `ALWAYS` `mode=0`），组内节点识别与整体绘制、命中、跳转按 GuliNodes 独立实现。 |
+| `GG 视频加载`、`GG 视频路径加载`、`GG 视频合成`、`GG 视频压缩`、`GG 视频保存` | ffmpeg/ffprobe 与 ComfyUI 视频工作流生态 | 视频封装、压缩和探测依赖 ffmpeg/ffprobe；节点形态面向 ComfyUI 常见 IMAGE/AUDIO/VIDEO 串联工作流重新封装。 |
+| `GG 视频压缩` 编码器与压制形态 | [小丸工具箱 / Maruko's Toolbox](https://github.com/wzxjohn/marukotoolbox) | 编码器选项命名（`x264_64-8bit.exe`、`x265-8bit\gcc[cpu].exe` 等 8/10/12bit x264/x265 档位）与「选编码器 + 调 CRF 压制」的交互形态参考小丸工具箱；GuliNodes 内部实际由 ffmpeg（libx264/libx265）编码，不打包也不调用其二进制。 |
+| `web/gg-group-styler.js` | ComfyUI-Group-Styler 的“前端扩展 + LiteGraph Group 绘制”路线 | 新增分组样式增强参考了该类前端实现路线，但没有复制其源码；当前文件在本项目内独立包装 `drawGroups`，带设置开关和原生绘制回退，并扩展标题栏按钮、顶部快捷开关、子工作流折叠动画、隐藏节点过滤与右下角圆点恢复指示器。当前图与根图子图注册表严格隔离，折叠代理只收缩外层组，组内节点保持原始位置以兼容不同 ComfyUI 绘制路径。 |
+| TapRelay 完成通知 | `W:\TapRelay` 的 HTTP/WebSocket 通知协议 | 适配 TapRelay PC 端固定的 `POST http://127.0.0.1:1122/send` 接收协议，发送 `message`、`source`、`status`、`taskId` 和 `durationMs`；GuliNodes 只做协议桥接，不复制 TapRelay 的接收或广播实现。 |
+
+---
+
+## 贡献
+
+欢迎通过 [Issue](https://github.com/guliacer/ComfyUI-GuliNodes/issues) 反馈问题、提出需求，或用 Pull Request 提交改进。
+
+提交代码前建议先扫一眼 [`AGENTS.md`](AGENTS.md)：里面记录了本项目的目录落位、节点命名规范、前端扩展红线和文档同步要求，按它来能省掉大部分返工。
+
+也特别欢迎补充「致谢与借鉴说明」——如果某个功能实际上参考了某个项目而上面没写，请直接告诉我们。
+
+---
+
 ## 许可证
 
 本项目基于 MIT 许可证开源，详见 [LICENSE](LICENSE)。
+
+Copyright © 2026 Guli

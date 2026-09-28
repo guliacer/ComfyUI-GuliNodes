@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" width="1280" height="300" role="img" aria-label="ComfyUI-GuliNodes 面向中文工作流的轻量 ComfyUI 效率节点与前端增强工具">
+  <defs>
+    <linearGradient id="glBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="48%" stop-color="#f4f2ff"/>
+      <stop offset="100%" stop-color="#eef4ff"/>
+    </linearGradient>
+    <radialGradient id="glPurple" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.26"/>
+      <stop offset="60%" stop-color="#8b5cf6" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glCyan" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.20"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glAmber" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.14"/>
+      <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="glTitle" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#1e1b4b"/>
+      <stop offset="55%" stop-color="#4c1d95"/>
+      <stop offset="100%" stop-color="#4338ca"/>
+    </linearGradient>
+    <linearGradient id="glRule" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#06b6d4" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="glDots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1" fill="#6d28d9" fill-opacity="0.13"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="300" fill="url(#glBg)"/>
+  <rect width="1280" height="300" fill="url(#glDots)"/>
+  <ellipse cx="196" cy="26" rx="430" ry="240" fill="url(#glPurple)"/>
+  <ellipse cx="1092" cy="284" rx="400" ry="215" fill="url(#glCyan)"/>
+  <ellipse cx="640" cy="300" rx="520" ry="150" fill="url(#glAmber)"/>
+
+  <g stroke="#7c3aed" stroke-opacity="0.32" stroke-width="1.4" fill="none">
+    <path d="M96 84 H182 Q196 84 196 98 V126 Q196 140 210 140 H286"/>
+    <path d="M96 216 H150 Q164 216 164 202 V172 Q164 158 178 158 H286"/>
+  </g>
+  <g fill="#ffffff" stroke="#8b5cf6" stroke-opacity="0.60" stroke-width="1.4">
+    <rect x="46" y="70" width="52" height="28" rx="8"/>
+    <rect x="46" y="202" width="52" height="28" rx="8"/>
+    <rect x="286" y="126" width="52" height="28" rx="8"/>
+  </g>
+  <g fill="#7c3aed" fill-opacity="0.70">
+    <circle cx="62" cy="84" r="3"/>
+    <circle cx="62" cy="216" r="3"/>
+  </g>
+  <g stroke="#0891b2" stroke-opacity="0.32" stroke-width="1.4" fill="none">
+    <path d="M1184 84 H1108 Q1094 84 1094 98 V126 Q1094 140 1080 140 H1004"/>
+    <path d="M1184 216 H1130 Q1116 216 1116 202 V172 Q1116 158 1102 158 H1004"/>
+  </g>
+  <g fill="#ffffff" stroke="#06b6d4" stroke-opacity="0.55" stroke-width="1.4">
+    <rect x="1184" y="70" width="52" height="28" rx="8"/>
+    <rect x="1184" y="202" width="52" height="28" rx="8"/>
+    <rect x="952" y="126" width="52" height="28" rx="8"/>
+  </g>
+  <g fill="#0e7490" fill-opacity="0.65">
+    <circle cx="1218" cy="84" r="3"/>
+    <circle cx="1218" cy="216" r="3"/>
+  </g>
+
+  <text x="640" y="120" text-anchor="middle" font-family="'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,-apple-system,sans-serif" font-size="58" font-weight="700" letter-spacing="-1.2" fill="url(#glTitle)">ComfyUI-GuliNodes</text>
+
+  <text x="640" y="163" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,-apple-system,sans-serif" font-size="21" font-weight="500" fill="#4b5563" letter-spacing="0.6">面向中文工作流的轻量 ComfyUI 效率节点与前端增强工具</text>
+
+  <rect x="0" y="184" width="1280" height="1.6" fill="url(#glRule)"/>
+
+  <g font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,-apple-system,sans-serif" font-size="15.5" font-weight="500">
+    <rect x="428" y="207" width="98" height="38" rx="19" fill="#ffffff" fill-opacity="0.92" stroke="#c4b5fd" stroke-opacity="0.95"/>
+    <text x="477" y="232" text-anchor="middle" fill="#5b21b6">中文优先</text>
+
+    <rect x="540" y="207" width="174" height="38" rx="19" fill="#ffffff" fill-opacity="0.92" stroke="#c4b5fd" stroke-opacity="0.95"/>
+    <text x="627" y="232" text-anchor="middle" fill="#5b21b6">零额外 Python 依赖</text>
+
+    <rect x="728" y="207" width="124" height="38" rx="19" fill="#ffffff" fill-opacity="0.92" stroke="#c4b5fd" stroke-opacity="0.95"/>
+    <text x="790" y="232" text-anchor="middle" fill="#5b21b6">MIT License</text>
+  </g>
+</svg>

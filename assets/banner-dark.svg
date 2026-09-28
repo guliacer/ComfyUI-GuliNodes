@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 300" width="1280" height="300" role="img" aria-label="ComfyUI-GuliNodes 面向中文工作流的轻量 ComfyUI 效率节点与前端增强工具">
+  <defs>
+    <linearGradient id="gdBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#080a16"/>
+      <stop offset="48%" stop-color="#151238"/>
+      <stop offset="100%" stop-color="#0a0918"/>
+    </linearGradient>
+    <radialGradient id="gdPurple" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0.48"/>
+      <stop offset="55%" stop-color="#7c3aed" stop-opacity="0.16"/>
+      <stop offset="100%" stop-color="#7c3aed" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gdCyan" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.32"/>
+      <stop offset="60%" stop-color="#22d3ee" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gdAmber" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fbbf24" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="#fbbf24" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gdTitle" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="42%" stop-color="#e9d5ff"/>
+      <stop offset="100%" stop-color="#a5b4fc"/>
+    </linearGradient>
+    <linearGradient id="gdRule" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8b5cf6" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#a78bfa" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#22d3ee" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="gdDots" width="26" height="26" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1" fill="#c4b5fd" fill-opacity="0.10"/>
+    </pattern>
+  </defs>
+
+  <rect width="1280" height="300" fill="url(#gdBg)"/>
+  <rect width="1280" height="300" fill="url(#gdDots)"/>
+  <ellipse cx="196" cy="26" rx="430" ry="240" fill="url(#gdPurple)"/>
+  <ellipse cx="1092" cy="284" rx="400" ry="215" fill="url(#gdCyan)"/>
+  <ellipse cx="640" cy="300" rx="520" ry="150" fill="url(#gdAmber)"/>
+
+  <g stroke="#a78bfa" stroke-opacity="0.30" stroke-width="1.4" fill="none">
+    <path d="M96 84 H182 Q196 84 196 98 V126 Q196 140 210 140 H286"/>
+    <path d="M96 216 H150 Q164 216 164 202 V172 Q164 158 178 158 H286"/>
+  </g>
+  <g fill="#1c1a3c" stroke="#8b5cf6" stroke-opacity="0.55" stroke-width="1.4">
+    <rect x="46" y="70" width="52" height="28" rx="8"/>
+    <rect x="46" y="202" width="52" height="28" rx="8"/>
+    <rect x="286" y="126" width="52" height="28" rx="8"/>
+    <rect x="286" y="144" width="52" height="28" rx="8" opacity="0"/>
+  </g>
+  <g fill="#c4b5fd" fill-opacity="0.75">
+    <circle cx="62" cy="84" r="3"/>
+    <circle cx="62" cy="216" r="3"/>
+  </g>
+  <g stroke="#22d3ee" stroke-opacity="0.28" stroke-width="1.4" fill="none">
+    <path d="M1184 84 H1108 Q1094 84 1094 98 V126 Q1094 140 1080 140 H1004"/>
+    <path d="M1184 216 H1130 Q1116 216 1116 202 V172 Q1116 158 1102 158 H1004"/>
+  </g>
+  <g fill="#132435" stroke="#22d3ee" stroke-opacity="0.50" stroke-width="1.4">
+    <rect x="1184" y="70" width="52" height="28" rx="8"/>
+    <rect x="1184" y="202" width="52" height="28" rx="8"/>
+    <rect x="952" y="126" width="52" height="28" rx="8"/>
+  </g>
+  <g fill="#67e8f9" fill-opacity="0.70">
+    <circle cx="1218" cy="84" r="3"/>
+    <circle cx="1218" cy="216" r="3"/>
+  </g>
+
+  <text x="640" y="120" text-anchor="middle" font-family="'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,-apple-system,sans-serif" font-size="58" font-weight="700" letter-spacing="-1.2" fill="url(#gdTitle)">ComfyUI-GuliNodes</text>
+
+  <text x="640" y="163" text-anchor="middle" font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,-apple-system,sans-serif" font-size="21" font-weight="500" fill="#b9bce6" letter-spacing="0.6">面向中文工作流的轻量 ComfyUI 效率节点与前端增强工具</text>
+
+  <rect x="0" y="184" width="1280" height="1.6" fill="url(#gdRule)"/>
+
+  <g font-family="'PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,-apple-system,sans-serif" font-size="15.5" font-weight="500">
+    <rect x="428" y="207" width="98" height="38" rx="19" fill="#ffffff" fill-opacity="0.07" stroke="#c4b5fd" stroke-opacity="0.35"/>
+    <text x="477" y="232" text-anchor="middle" fill="#ddd6fe">中文优先</text>
+
+    <rect x="540" y="207" width="174" height="38" rx="19" fill="#ffffff" fill-opacity="0.07" stroke="#c4b5fd" stroke-opacity="0.35"/>
+    <text x="627" y="232" text-anchor="middle" fill="#ddd6fe">零额外 Python 依赖</text>
+
+    <rect x="728" y="207" width="124" height="38" rx="19" fill="#ffffff" fill-opacity="0.07" stroke="#c4b5fd" stroke-opacity="0.35"/>
+    <text x="790" y="232" text-anchor="middle" fill="#ddd6fe">MIT License</text>
+  </g>
+</svg>
