@@ -7,7 +7,7 @@ const TITLE_PADDING = 38;
 const WIDGET_LABEL_PADDING = 68;
 const SLOT_PADDING = 48;
 const HIDDEN_WIDGET_PREFIX = "ggHiddenLoRA";
-const AUTOFIT_EXCLUDED_NODE_NAMES = new Set(["GGTitleNode"]);
+const AUTOFIT_EXCLUDED_NODE_NAMES = new Set(["GGTitleNode", "GGGroupControllerM", "GGGroupControllerS", "GGPromptEnhancer"]);
 
 let measureContext = null;
 const scheduledNodes = new WeakSet();
@@ -143,8 +143,68 @@ function constrainedComputedSize(node) {
     ];
 }
 
+function isNodeHeightOwnedByPortLayout(node) {
+    if (!node) {
+        return false;
+    }
+
+    // A collapsed node has a native title-only height.  A port-list-managed
+    // node has either the compact height or the user's manually enlarged
+    // height.  In both cases the generic autofit pass must leave height alone;
+    // it may still keep the width compact.
+    const collapsed = node.flags?.collapsed === true || node.collapsed === true;
+    const hiddenPorts = node._ggPortListHidden === true
+        || node.properties?._gg_port_list_hidden === true;
+    const portLayoutOwnsHeight = node._ggPortListAutoSized === true
+        || node._ggPortListManualSizeObserved === true
+        || Array.isArray(node._ggPortListCompactSize)
+        || node._ggPortListDrawingHidden === true;
+
+    return collapsed || (hiddenPorts && portLayoutOwnsHeight);
+}
+
+function isKeyInputManagedHeight(node) {
+    return node?.comfyClass === "GGKeyInput" || node?.type === "GGKeyInput";
+}
+
+function isCompressSaveSizeLocked(node) {
+    return (node?.comfyClass === "GGImageCompressSave" || node?.type === "GGImageCompressSave")
+        && node?._ggCompressSaveSizeLocked === true;
+}
+
+function hasMultilineTextWidget(node) {
+    return (node?.widgets ?? []).some((widget) => {
+        if (!widget || widget.hidden) return false;
+        const type = String(widget.type ?? "").toLowerCase();
+        if (type === "customtext" || type === "textarea") return true;
+        if (widget.options?.multiline === true) return true;
+        const el = widget.element || widget.inputEl;
+        if (el && (el.tagName === "TEXTAREA" || el.querySelector?.("textarea"))) return true;
+        return false;
+    });
+}
+
 function fitNode(node, options = {}) {
     if (!isGuliNode(node) || !node.size) {
+        return;
+    }
+
+    // 含多行文本框的节点，高度必须交给用户/原生自由调节：autofit 一旦按内容定高，
+    // 多行框的最小高度会把节点卡在“只能拉高、无法压低”。这类节点整体跳过 autofit
+    // （宽度也交回原生），确保用户能自己拉伸高度。
+    if (hasMultilineTextWidget(node)) {
+        return;
+    }
+
+    // 折叠节点的宽度由折叠按钮按标题贴合（见 gg-port-list-toggle.js）。
+    // autofit 若继续按内容宽度调整，会把折叠节点重新撑宽，这里直接跳过。
+    if (node.flags?.collapsed === true || node.collapsed === true) {
+        return;
+    }
+
+    // GG 图像压缩保存自己记住工作流尺寸。加载后若再按内容收缩，
+    // 切换工作流时节点高度会变。
+    if (isCompressSaveSizeLocked(node)) {
         return;
     }
 
@@ -159,10 +219,18 @@ function fitNode(node, options = {}) {
     const currentWidth = Number(node.size[0]) || 0;
     const currentHeight = Number(node.size[1]) || 0;
     const minimumWidth = Number(computed[0]) || MIN_NODE_WIDTH;
-    const minimumHeight = Math.max(MIN_NODE_HEIGHT, Number(computed[1]) || 0);
+    const heightOwnedByPortLayout = isNodeHeightOwnedByPortLayout(node);
+    const customHeight = isKeyInputManagedHeight(node);
+    const minimumHeight = heightOwnedByPortLayout || customHeight
+        ? currentHeight
+        : Math.max(MIN_NODE_HEIGHT, Number(computed[1]) || 0);
     const allowShrink = options.allowShrink !== false;
     let width = allowShrink ? minimumWidth : Math.max(currentWidth, minimumWidth);
-    let height = heightLocked
+    let height = heightOwnedByPortLayout
+        ? currentHeight
+        : customHeight
+        ? currentHeight
+        : heightLocked
         ? computed[1]
         : allowShrink ? minimumHeight : Math.max(currentHeight, minimumHeight);
 
@@ -242,7 +310,8 @@ app.registerExtension({
         const originalComputeSize = nodeType.prototype.computeSize;
         nodeType.prototype.computeSize = function (...args) {
             const size = originalComputeSize?.apply(this, args) ?? [this.size?.[0] ?? MIN_NODE_WIDTH, this.size?.[1] ?? MIN_NODE_HEIGHT];
-            if (!isGuliNode(this)) {
+            if (!isGuliNode(this) || hasMultilineTextWidget(this)) {
+                // 含多行文本框的节点交回原生尺寸，保持可自由压低高度。
                 return size;
             }
             const originalWidth = Number(size[0]) || MIN_NODE_WIDTH;

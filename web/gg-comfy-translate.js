@@ -9,6 +9,7 @@ const SETTINGS = {
 
 const ORIGINAL_KEY = "__ggComfyTranslateOriginal";
 const PATCHED_KEY = "__ggComfyTranslatePatched";
+const DYNAMIC_CALLBACK_PATCHED = Symbol("ggComfyTranslateDynamicCallbackPatched");
 const NODE_DEFS = new Set();
 const VISUAL_TEXT_TRANSLATIONS = new Map();
 
@@ -677,13 +678,17 @@ function translateOpenMenuValues(root = document.body) {
 let menuObserver = null;
 function startMenuValueObserver() {
     if (menuObserver) return;
+    let scanTimer = null;
+    const scheduleMenuScan = () => {
+        if (scanTimer) clearTimeout(scanTimer);
+        scanTimer = setTimeout(() => {
+            scanTimer = null;
+            translateOpenMenuValues(document.body);
+        }, 150);
+    };
     menuObserver = new MutationObserver((mutations) => {
         for (const mutation of mutations) {
-            mutation.addedNodes?.forEach((node) => {
-                if (node.nodeType !== Node.ELEMENT_NODE) return;
-                translateMenuElementText(node);
-                translateOpenMenuValues(node);
-            });
+            if (mutation.addedNodes?.length) { scheduleMenuScan(); return; }
         }
     });
     menuObserver.observe(document.body, { childList: true, subtree: true });
@@ -863,17 +868,142 @@ function originalNodeTitle(node) {
     return node?.title;
 }
 
-function ensureNodeOriginal(node) {
-    if (!node || node[ORIGINAL_KEY]) return;
-    node[ORIGINAL_KEY] = {
-        title: originalNodeTitle(node),
-        inputs: (node.inputs || []).map((slot) => slot?.name),
-        inputLabels: (node.inputs || []).map((slot) => slot?.label),
-        outputs: (node.outputs || []).map((slot) => slot?.name),
-        outputLabels: (node.outputs || []).map((slot) => slot?.label),
-        widgets: (node.widgets || []).map((widget) => widget?.name),
-        widgetLabels: (node.widgets || []).map((widget) => widget?.label),
+function hasOwn(object, key) {
+    return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function ensureNamedVisualMap(original, key) {
+    if (!original[key] || typeof original[key] !== "object") original[key] = Object.create(null);
+    return original[key];
+}
+
+function dynamicInputSourceLabel(node, name) {
+    if (typeof name !== "string") return undefined;
+    const separator = name.indexOf(".");
+    if (separator <= 0) return undefined;
+
+    const groupName = name.slice(0, separator);
+    const nestedName = name.slice(separator + 1);
+    const inputGroups = nodeDataForNode(node)?.input || {};
+    for (const group of Object.values(inputGroups)) {
+        const dynamicSpec = group?.[groupName];
+        const options = dynamicSpec?.[1]?.options;
+        if (!Array.isArray(options)) continue;
+        for (const option of options) {
+            for (const nestedGroup of Object.values(option?.inputs || {})) {
+                const nestedSpec = nestedGroup?.[nestedName];
+                if (nestedSpec === undefined) continue;
+                const metadata = Array.isArray(nestedSpec) ? nestedSpec[1] : null;
+                return metadata?.display_name || metadata?.label || nestedName;
+            }
+        }
+    }
+    return undefined;
+}
+
+function rememberNamedVisualEntry(map, item, node) {
+    const name = item?.name;
+    if (typeof name !== "string" || !name) return;
+    if (!hasOwn(map, name)) map[name] = dynamicInputSourceLabel(node, name) ?? item?.label;
+}
+
+function rememberNodeVisualEntries(node, original) {
+    const inputLabels = ensureNamedVisualMap(original, "inputLabelsByName");
+    const widgetLabels = ensureNamedVisualMap(original, "widgetLabelsByName");
+    // Migrate the first-load index snapshots used by older versions. The
+    // name maps remain authoritative for all later DynamicCombo branches.
+    for (let index = 0; index < (original.inputs || []).length; index++) {
+        const name = original.inputs[index];
+        if (typeof name === "string" && !hasOwn(inputLabels, name)) {
+            inputLabels[name] = original.inputLabels?.[index];
+        }
+    }
+    for (let index = 0; index < (original.widgets || []).length; index++) {
+        const name = original.widgets[index];
+        if (typeof name === "string" && !hasOwn(widgetLabels, name)) {
+            widgetLabels[name] = original.widgetLabels?.[index];
+        }
+    }
+    for (const slot of node.inputs || []) rememberNamedVisualEntry(inputLabels, slot, node);
+    for (const widget of node.widgets || []) rememberNamedVisualEntry(widgetLabels, widget, node);
+}
+
+function originalNamedLabel(original, collection, name, fallback) {
+    const labels = original?.[collection];
+    if (labels && typeof name === "string" && hasOwn(labels, name)) return labels[name];
+    return fallback;
+}
+
+function isDynamicComboWidget(node, widget) {
+    const nodeData = nodeDataForNode(node);
+    const inputGroups = nodeData?.input || {};
+    for (const group of Object.values(inputGroups)) {
+        const spec = group?.[widget?.name];
+        if (Array.isArray(spec) && spec[0] === "COMFY_DYNAMICCOMBO_V3") return true;
+    }
+    return false;
+}
+
+function scheduleDynamicTranslation(node) {
+    if (!isTranslateEnabled()) return;
+    const refresh = () => {
+        if (isTranslateEnabled()) applyNodeTranslation(node, true);
     };
+    if (typeof globalThis.requestAnimationFrame === "function") {
+        globalThis.requestAnimationFrame(refresh);
+    } else {
+        globalThis.setTimeout(refresh, 0);
+    }
+}
+
+function patchDynamicWidgetCallbacks(node) {
+    if (!node?.widgets) return;
+    for (const widget of node.widgets) {
+        if (!isDynamicComboWidget(node, widget)) continue;
+        const original = widget.callback;
+        if (typeof original !== "function" || original[DYNAMIC_CALLBACK_PATCHED]) continue;
+
+        const wrapped = function (...args) {
+            let result;
+            try {
+                result = original.apply(this, args);
+            } catch (error) {
+                scheduleDynamicTranslation(node);
+                throw error;
+            }
+            if (result && typeof result.then === "function") {
+                const finish = () => scheduleDynamicTranslation(node);
+                return typeof result.finally === "function"
+                    ? result.finally(finish)
+                    : Promise.resolve(result).finally(finish);
+            }
+            scheduleDynamicTranslation(node);
+            return result;
+        };
+        wrapped[DYNAMIC_CALLBACK_PATCHED] = true;
+        widget.callback = wrapped;
+    }
+}
+
+function ensureNodeOriginal(node) {
+    if (!node) return;
+    if (!node[ORIGINAL_KEY]) {
+        node[ORIGINAL_KEY] = {
+            title: originalNodeTitle(node),
+            inputs: (node.inputs || []).map((slot) => slot?.name),
+            inputLabels: (node.inputs || []).map((slot) => slot?.label),
+            outputs: (node.outputs || []).map((slot) => slot?.name),
+            outputLabels: (node.outputs || []).map((slot) => slot?.label),
+            widgets: (node.widgets || []).map((widget) => widget?.name),
+            widgetLabels: (node.widgets || []).map((widget) => widget?.label),
+            inputLabelsByName: Object.create(null),
+            widgetLabelsByName: Object.create(null),
+        };
+    }
+    // DynamicCombo replaces its branch slots when the selector changes. Keep
+    // the source label beside the input name so a new branch never inherits
+    // the label of the old slot at the same array index.
+    rememberNodeVisualEntries(node, node[ORIGINAL_KEY]);
 }
 
 function displaySource(label, name) {
@@ -881,12 +1011,12 @@ function displaySource(label, name) {
     return name;
 }
 
-function applyNodeTranslation(node, enabled = isTranslateEnabled()) {
+function applyNodeTranslation(node, enabled = isTranslateEnabled(), invalidate = true) {
     if (!node) return;
     restoreTranslatedInternalNames(node);
     ensureNodeOriginal(node);
     if (!enabled) {
-        restoreNodeTranslation(node);
+        restoreNodeTranslation(node, invalidate);
         return;
     }
 
@@ -897,12 +1027,15 @@ function applyNodeTranslation(node, enabled = isTranslateEnabled()) {
         node.title = translateText(node.title);
     }
 
-    (node.inputs || []).forEach((slot, index) => {
+    (node.inputs || []).forEach((slot) => {
         if (!slot) return;
-        const source = displaySource(original.inputLabels[index], original.inputs[index] ?? slot.name);
+        const source = displaySource(
+            originalNamedLabel(original, "inputLabelsByName", slot.name, slot.label),
+            slot.name,
+        );
         const translated = translateText(source);
         slot.label = translated;
-        rememberVisualTranslation(original.inputs[index] ?? slot.name, translated);
+        rememberVisualTranslation(slot.name, translated);
         rememberVisualTranslation(source, translated);
     });
 
@@ -915,28 +1048,32 @@ function applyNodeTranslation(node, enabled = isTranslateEnabled()) {
         rememberVisualTranslation(source, translated);
     });
 
-    (node.widgets || []).forEach((widget, index) => {
+    (node.widgets || []).forEach((widget) => {
         if (!widget) return;
-        const source = displaySource(original.widgetLabels[index], original.widgets[index] ?? widget.name);
+        const source = displaySource(
+            originalNamedLabel(original, "widgetLabelsByName", widget.name, widget.label),
+            widget.name,
+        );
         const translated = translateText(source);
         widget.label = translated;
-        rememberVisualTranslation(original.widgets[index] ?? widget.name, translated);
+        rememberVisualTranslation(widget.name, translated);
         rememberVisualTranslation(source, translated);
     });
 
-    node.setDirtyCanvas?.(true, true);
+    patchDynamicWidgetCallbacks(node);
+    if (invalidate) node.setDirtyCanvas?.(true, true);
 }
 
-function restoreNodeTranslation(node) {
+function restoreNodeTranslation(node, invalidate = true) {
     const original = node?.[ORIGINAL_KEY];
     if (!node || !original) return;
 
     node.title = original.title;
-    (node.inputs || []).forEach((slot, index) => {
+    (node.inputs || []).forEach((slot) => {
         if (!slot) return;
-        if (original.inputs[index] !== undefined) slot.name = original.inputs[index];
-        if (original.inputLabels[index] === undefined) delete slot.label;
-        else slot.label = original.inputLabels[index];
+        const label = originalNamedLabel(original, "inputLabelsByName", slot.name, slot.label);
+        if (label === undefined) delete slot.label;
+        else slot.label = label;
     });
     (node.outputs || []).forEach((slot, index) => {
         if (!slot) return;
@@ -944,13 +1081,13 @@ function restoreNodeTranslation(node) {
         if (original.outputLabels[index] === undefined) delete slot.label;
         else slot.label = original.outputLabels[index];
     });
-    (node.widgets || []).forEach((widget, index) => {
+    (node.widgets || []).forEach((widget) => {
         if (!widget) return;
-        if (original.widgets[index] !== undefined) widget.name = original.widgets[index];
-        if (original.widgetLabels[index] === undefined) delete widget.label;
-        else widget.label = original.widgetLabels[index];
+        const label = originalNamedLabel(original, "widgetLabelsByName", widget.name, widget.label);
+        if (label === undefined) delete widget.label;
+        else widget.label = label;
     });
-    node.setDirtyCanvas?.(true, true);
+    if (invalidate) node.setDirtyCanvas?.(true, true);
 }
 
 function graphNodes() {
@@ -968,27 +1105,34 @@ function markDirty() {
     app.graph?.setDirtyCanvas?.(true, true);
 }
 
-function applyAllTranslations(enabled = isTranslateEnabled()) {
+function applyAllTranslations(enabled = isTranslateEnabled(), invalidate = true) {
     for (const nodeData of NODE_DEFS) applyNodeDefTranslation(nodeData, enabled);
-    for (const node of graphNodes()) applyNodeTranslation(node, enabled);
-    markDirty();
+    for (const node of graphNodes()) applyNodeTranslation(node, enabled, invalidate);
+    if (invalidate) markDirty();
     syncTopControls();
 }
 
-function restoreAllTranslations() {
-    for (const node of graphNodes()) restoreNodeTranslation(node);
-    markDirty();
+function restoreAllTranslations(invalidate = true) {
+    for (const node of graphNodes()) restoreNodeTranslation(node, invalidate);
+    if (invalidate) markDirty();
+}
+
+function scheduleTranslationReapply() {
+    if (translationReapplyFrame != null) return;
+    const request = globalThis.requestAnimationFrame || ((callback) => globalThis.setTimeout(callback, 0));
+    translationReapplyFrame = request(() => {
+        translationReapplyFrame = null;
+        applyAllTranslations(isTranslateEnabled(), false);
+        markDirty();
+    });
 }
 
 function withOriginalLabels(callback) {
     const enabled = isTranslateEnabled();
-    if (enabled) restoreAllTranslations();
-    let reapplyScheduled = false;
+    if (enabled) restoreAllTranslations(false);
     let waitsForPromise = false;
     const scheduleReapply = () => {
-        if (!enabled || reapplyScheduled) return;
-        reapplyScheduled = true;
-        requestAnimationFrame(() => applyAllTranslations(true));
+        if (enabled) scheduleTranslationReapply();
     };
     try {
         const result = callback();
@@ -1034,6 +1178,7 @@ function patchNodeType(nodeType) {
 
 let topControls = null;
 let quickTimer = null;
+let translationReapplyFrame = null;
 
 function createTopButton(title, icon, action) {
     const button = document.createElement("button");
@@ -1082,9 +1227,9 @@ function installTopControlStyles() {
             padding: 0 !important;
             margin: 0 !important;
             border-radius: 8px;
-            border: 1px solid var(--gg-ui-accent-border) !important;
-            background: var(--gg-ui-accent-soft) !important;
-            color: var(--gg-ui-accent) !important;
+            border: 1px solid rgba(148,163,184,0.28) !important;
+            background: rgba(148,163,184,0.10) !important;
+            color: var(--gg-ui-muted, #64748b) !important;
             box-shadow: none !important;
             appearance: none;
             display: inline-flex !important;
@@ -1097,12 +1242,18 @@ function installTopControlStyles() {
             transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
         }
         #gg-comfy-translate-buttons .gg-comfy-translate-btn:hover,
-        #gg-comfy-translate-buttons .gg-comfy-translate-btn:focus-visible,
+        #gg-comfy-translate-buttons .gg-comfy-translate-btn:focus-visible {
+            background: rgba(148,163,184,0.18) !important;
+            transform: scale(1.06);
+        }
         #gg-comfy-translate-buttons .gg-comfy-translate-btn.active {
             color: var(--gg-ui-accent) !important;
             background: rgba(59, 130, 246, 0.17) !important;
             border-color: var(--gg-ui-accent-border) !important;
-            transform: scale(1.08);
+            transform: scale(1.06);
+        }
+        #gg-comfy-translate-buttons .gg-comfy-translate-btn.active:hover {
+            background: rgba(59, 130, 246, 0.26) !important;
         }
         #gg-comfy-translate-buttons .gg-comfy-translate-btn .gg-ui-icon {
             width: 18px;
@@ -1127,7 +1278,7 @@ async function setupTopControls() {
 
     installTopControlStyles();
 
-    const toggleButton = createTopButton("开启 ComfyUI 中文翻译", "floatingText", async () => {
+    const toggleButton = createTopButton("开启 ComfyUI 中文翻译", "translate", async () => {
         const next = !isTranslateEnabled();
         await setSettingValue(SETTINGS.enabled, next);
         onTranslateSettingChanged(next);
@@ -1141,6 +1292,7 @@ async function setupTopControls() {
     topControls = { groupEl, toggleButton };
 
     const placeGroup = () => {
+        if (window.__ggMountTopGroup?.(groupEl)) return true;
         groupEl.classList.remove("gg-translate-menu-host", "gg-translate-legacy-host", "gg-translate-floating-host");
 
         const settingsGroup = app.menu?.settingsGroup?.element;

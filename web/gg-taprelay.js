@@ -764,6 +764,7 @@ app.registerExtension({
         document.head.appendChild(style);
 
         const placeToggleHost = () => {
+            if (window.__ggMountTopGroup?.(toggleHost)) return true;
             toggleHost.classList.remove("gg-taprelay-menu-host", "gg-taprelay-legacy-host", "gg-taprelay-floating-host");
 
             const settingsGroup = app.menu?.settingsGroup?.element;

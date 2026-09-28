@@ -1,6 +1,8 @@
 import math
 
 import torch
+import torch.nn.functional as torch_F
+import comfy.utils
 
 try:
     from comfy_api.latest import io
@@ -25,69 +27,322 @@ ASPECT_PRESETS = {
 }
 SIDE_TYPES = ["最长边", "最短边"]
 ORIENTATION_TYPES = ["横屏", "竖屏"]
-RESOLUTION_OPTIONS = ["自定义", "1K", "2K", "3K", "4K"]
-RESOLUTION_SCALES = {resolution: index for index, resolution in enumerate(RESOLUTION_OPTIONS) if index}
-
-# These are the reference 1K dimensions. Larger presets scale both sides evenly.
-REFERENCE_RESOLUTION_BASES = {
-    "1:1": (1024, 1024),
-    "3:4": (864, 1152),
-    "4:3": (1152, 864),
-    "16:9": (1312, 736),
-    "9:16": (736, 1312),
-    "2:3": (832, 1248),
-    "3:2": (1248, 832),
-    "21:9": (1568, 672),
+RESOLUTION_OPTIONS = ["1K", "2K", "3K", "4K"]
+RESOLUTION_EDGE_LENGTHS = {
+    "1K": 1024,
+    "2K": 2048,
+    "3K": 3072,
+    "4K": 4096,
 }
+LATENT_MODE_OPTIONS = ["按边长", "按K数分辨率", "按Latent接入", "按图像接入"]
+IMAGE_RESIZE_METHODS = ["nearest-exact", "bilinear", "lanczos", "area", "bicubic"]
 
+# GG 图像宽高 与 GG Latent 共用同一套接入方式，只是输出不同（宽高 vs Latent）。
+ADAPTER_MODE_OPTIONS = list(LATENT_MODE_OPTIONS)
+ADAPTER_MODE_INPUT = "宽高方式"
+# 宽高节点保留原有的 3:2/16:9/21:9 等横向比例，同时补齐 Latent 侧的 1:2/5:7/10:16。
+ADAPTER_ASPECT_RATIOS = list(dict.fromkeys([*ASPECT_RATIOS, *LATENT_ASPECT_RATIOS]))
 
 def _preset_dimensions(
     width_ratio: int,
     height_ratio: int,
     resolution: str,
     align_to_eight,
-) -> tuple[int, int] | None:
-    scale = RESOLUTION_SCALES.get(resolution)
-    if scale is None:
-        return None
+) -> tuple[int, int]:
+    long_edge = RESOLUTION_EDGE_LENGTHS[resolution]
 
-    base = REFERENCE_RESOLUTION_BASES.get(f"{width_ratio}:{height_ratio}")
-    if base is not None:
-        return align_to_eight(base[0] * scale), align_to_eight(base[1] * scale)
-
-    # Keep less common ratios useful too, using approximately 1MP per 1K.
-    target_area = (1024 * scale) ** 2
-    width = round(math.sqrt(target_area * width_ratio / height_ratio))
-    height = round(math.sqrt(target_area * height_ratio / width_ratio))
+    # Use the common digital/cinema K convention: K denotes the long edge.
+    short_edge = round(long_edge * min(width_ratio, height_ratio) / max(width_ratio, height_ratio))
+    if width_ratio >= height_ratio:
+        width, height = long_edge, short_edge
+    else:
+        width, height = short_edge, long_edge
     return align_to_eight(width), align_to_eight(height)
 
 
-def _calculate_latent_dimensions(
-    宽高比例: str,
-    边长: int,
-    边长类型: str,
-    画面方向: str,
-    分辨率: str,
-    apply_orientation,
+def _dimensions_from_edge(
+    width_ratio: int,
+    height_ratio: int,
+    edge: int,
+    edge_type: str,
     align_to_eight,
 ) -> tuple[int, int]:
-    wr, hr = ASPECT_PRESETS[宽高比例]
-    wr, hr = apply_orientation(wr, hr, 画面方向)
-
-    preset = _preset_dimensions(wr, hr, 分辨率, align_to_eight)
-    if preset is not None:
-        expected_edge = max(preset) if 边长类型 == "最长边" else min(preset)
-        # A manually edited edge switches the node to custom-size behavior.
-        if int(边长) == expected_edge:
-            return preset
-
-    if 边长类型 == "最长边":
-        width = 边长 if wr > hr else int(边长 * wr / hr)
-        height = int(边长 * hr / wr) if wr > hr else 边长
+    """Calculate dimensions from the explicitly selected long or short edge."""
+    edge = int(edge)
+    if edge_type == "最短边":
+        short_edge = edge
+        long_edge = int(edge * max(width_ratio, height_ratio) / min(width_ratio, height_ratio))
     else:
-        height = 边长 if wr > hr else int(边长 * hr / wr)
-        width = int(边长 * wr / hr) if wr > hr else 边长
+        # Only an explicit "最短边" selects short-edge mode.  This keeps
+        # legacy or malformed workflow values from silently reversing the behavior.
+        long_edge = edge
+        short_edge = int(edge * min(width_ratio, height_ratio) / max(width_ratio, height_ratio))
+
+    if width_ratio >= height_ratio:
+        width, height = long_edge, short_edge
+    else:
+        width, height = short_edge, long_edge
     return align_to_eight(width), align_to_eight(height)
+
+
+def _positive_scale(value: float, name: str = "缩放倍率") -> float:
+    try:
+        scale = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}必须是有效数字。") from exc
+    if not math.isfinite(scale) or scale <= 0:
+        raise ValueError(f"{name}必须大于 0。")
+    return scale
+
+
+def _empty_latent(batch_size: int, width: int, height: int, device=None, dtype=torch.float32) -> dict:
+    return {
+        "samples": torch.zeros(
+            [max(1, int(batch_size)), 4, max(1, int(height)) // 8, max(1, int(width)) // 8],
+            device=device,
+            dtype=dtype,
+        )
+    }
+
+
+def _resize_input_latent(latent: dict, scale: float) -> dict:
+    if not isinstance(latent, dict) or not isinstance(latent.get("samples"), torch.Tensor):
+        raise ValueError("按Latent接入模式必须连接有效的 LATENT 输入。")
+
+    samples = latent["samples"]
+    if samples.ndim != 4:
+        raise ValueError("LATENT 的 samples 必须是四维张量（批量、通道、高度、宽度）。")
+
+    scale = _positive_scale(scale)
+    target_height = max(1, round(samples.shape[-2] * scale))
+    target_width = max(1, round(samples.shape[-1] * scale))
+    if (target_height, target_width) == tuple(samples.shape[-2:]):
+        resized = samples.clone()
+    else:
+        resized = torch_F.interpolate(
+            samples,
+            size=(target_height, target_width),
+            mode="bilinear",
+            align_corners=False,
+        )
+
+    result = dict(latent)
+    result["samples"] = resized
+    return result
+
+
+def _latent_from_input_image(image: torch.Tensor, method: str, scale: float, align_to_eight) -> dict:
+    if not isinstance(image, torch.Tensor) or image.ndim != 4:
+        raise ValueError("按图像接入模式必须连接有效的 IMAGE 输入（批量、高度、宽度、通道）。")
+    if method not in IMAGE_RESIZE_METHODS:
+        raise ValueError(f"不支持的缩放方法「{method}」。")
+
+    scale = _positive_scale(scale)
+    _, source_height, source_width, _ = image.shape
+    target_height = max(1, round(source_height * scale))
+    target_width = max(1, round(source_width * scale))
+    # The output remains an empty LATENT, but perform the requested pixel resize
+    # so the method and multiplier are applied to the connected image data.
+    resized = comfy.utils.common_upscale(
+        image.movedim(-1, 1),
+        target_width,
+        target_height,
+        method,
+        "disabled",
+    ).movedim(1, -1)
+    width = align_to_eight(resized.shape[2])
+    height = align_to_eight(resized.shape[1])
+    return _empty_latent(resized.shape[0], width, height, device=resized.device, dtype=resized.dtype)
+
+
+def _unpack_mode(value, mode_key: str):
+    """拆开 DynamicCombo 的嵌套取值：返回 (方式, 该方式下的输入字典)。"""
+    if isinstance(value, dict):
+        nested = value.get(mode_key)
+        if isinstance(nested, dict):
+            mode = nested.get(mode_key, "按边长")
+            return mode, nested
+        return nested or "按边长", value
+    return value or "按边长", {}
+
+
+def _unpack_latent_mode(value):
+    return _unpack_mode(value, "Latent方式")
+
+
+def _generate_latent_by_mode(mode_value, align_to_eight, apply_orientation) -> dict:
+    mode, values = _unpack_latent_mode(mode_value)
+    if mode not in LATENT_MODE_OPTIONS:
+        raise ValueError(f"不支持的 Latent 方式「{mode}」。")
+
+    if mode == "按Latent接入":
+        return _resize_input_latent(values.get("Latent"), values.get("缩放倍率", 1.0))
+
+    if mode == "按图像接入":
+        return _latent_from_input_image(
+            values.get("图像"),
+            values.get("缩放方法", "lanczos"),
+            values.get("缩放倍率", 1.0),
+            align_to_eight,
+        )
+
+    ratio = values.get("宽高比例", "9:16")
+    batch_size = values.get("批量大小", 1)
+    orientation = values.get("画面方向", "横屏")
+    wr, hr = ASPECT_PRESETS[ratio]
+    wr, hr = apply_orientation(wr, hr, orientation)
+
+    if mode == "按K数分辨率":
+        resolution = values.get("分辨率", "1K")
+        if resolution not in RESOLUTION_EDGE_LENGTHS:
+            resolution = "1K"
+        width, height = _preset_dimensions(wr, hr, resolution, align_to_eight)
+    else:
+        width, height = _dimensions_from_edge(
+            wr, hr, values.get("边长", 1024), values.get("边长类型", "最长边"), align_to_eight
+        )
+    return _empty_latent(batch_size, width, height)
+
+
+def _latent_mode_inputs(io_module):
+    return io_module.DynamicCombo.Input("Latent方式", options=[
+        io_module.DynamicCombo.Option(key="按边长", inputs=[
+            io_module.Combo.Input("宽高比例", options=LATENT_ASPECT_RATIOS, default="9:16"),
+            io_module.Int.Input("边长", default=1024, min=64, max=8192, step=8),
+            io_module.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边"),
+            io_module.Int.Input("批量大小", default=1, min=1, max=64),
+            io_module.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏"),
+        ]),
+        io_module.DynamicCombo.Option(key="按K数分辨率", inputs=[
+            io_module.Combo.Input("宽高比例", options=LATENT_ASPECT_RATIOS, default="9:16"),
+            io_module.Int.Input("批量大小", default=1, min=1, max=64),
+            io_module.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏"),
+            io_module.Combo.Input("分辨率", options=RESOLUTION_OPTIONS, default="1K"),
+        ]),
+        io_module.DynamicCombo.Option(key="按Latent接入", inputs=[
+            io_module.Latent.Input("Latent", tooltip="按输入 Latent 的空间尺寸和缩放倍率生成输出。"),
+            io_module.Float.Input("缩放倍率", default=1.0, min=0.1, max=100.0, step=0.05),
+        ]),
+        io_module.DynamicCombo.Option(key="按图像接入", inputs=[
+            io_module.Image.Input("图像", tooltip="按输入图像的实际宽高和缩放倍率生成输出 Latent。"),
+            io_module.Combo.Input("缩放方法", options=IMAGE_RESIZE_METHODS, default="lanczos"),
+            io_module.Float.Input("缩放倍率", default=1.0, min=0.1, max=100.0, step=0.05),
+        ]),
+    ])
+
+
+def _legacy_latent_mode_inputs():
+    return {
+        "Latent方式": (LATENT_MODE_OPTIONS, {"default": "按边长"}),
+        "宽高比例": (LATENT_ASPECT_RATIOS, {"default": "9:16"}),
+        "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
+        "边长类型": (SIDE_TYPES, {"default": "最长边"}),
+        "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
+        "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
+        "分辨率": (RESOLUTION_OPTIONS, {"default": "1K"}),
+        "Latent": ("LATENT",),
+        "图像": ("IMAGE",),
+        "缩放方法": (IMAGE_RESIZE_METHODS, {"default": "lanczos"}),
+        "缩放倍率": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 100.0, "step": 0.05}),
+    }
+
+
+def _dimensions_from_latent(latent, scale: float, align_to_eight) -> tuple[int, int]:
+    """按输入 Latent 的空间尺寸 ×8 换算成像素宽高（与 GG Latent 的按Latent接入一致）。"""
+    if not isinstance(latent, dict) or not isinstance(latent.get("samples"), torch.Tensor):
+        raise ValueError("按Latent接入模式必须连接有效的 LATENT 输入。")
+    samples = latent["samples"]
+    if samples.ndim != 4:
+        raise ValueError("LATENT 的 samples 必须是四维张量（批量、通道、高度、宽度）。")
+
+    scale = _positive_scale(scale)
+    width = align_to_eight(max(1, round(samples.shape[-1] * scale)) * 8)
+    height = align_to_eight(max(1, round(samples.shape[-2] * scale)) * 8)
+    return width, height
+
+
+def _dimensions_from_image(image, scale: float, align_to_eight) -> tuple[int, int]:
+    """按输入图像的原始宽高 ×缩放倍率 得到像素宽高（与 GG Latent 的按图像接入一致）。
+
+    这里只做尺寸推算，不实际重采样像素：缩放方法不改变目标尺寸，
+    因此宽高节点在该方式下不展示「缩放方法」。
+    """
+    if not isinstance(image, torch.Tensor) or image.ndim != 4:
+        raise ValueError("按图像接入模式必须连接有效的 IMAGE 输入（批量、高度、宽度、通道）。")
+
+    scale = _positive_scale(scale)
+    _, source_height, source_width, _ = image.shape
+    width = align_to_eight(max(1, round(source_width * scale)))
+    height = align_to_eight(max(1, round(source_height * scale)))
+    return width, height
+
+
+def _dimensions_by_mode(mode_value, align_to_eight, apply_orientation) -> tuple[int, int]:
+    mode, values = _unpack_mode(mode_value, ADAPTER_MODE_INPUT)
+    if mode not in ADAPTER_MODE_OPTIONS:
+        raise ValueError(f"不支持的宽高方式「{mode}」。")
+
+    if mode == "按Latent接入":
+        return _dimensions_from_latent(values.get("Latent"), values.get("缩放倍率", 1.0), align_to_eight)
+
+    if mode == "按图像接入":
+        return _dimensions_from_image(values.get("图像"), values.get("缩放倍率", 1.0), align_to_eight)
+
+    ratio = values.get("宽高比例", "16:9")
+    if ratio not in ASPECT_PRESETS:
+        raise ValueError(f"不支持的宽高比例「{ratio}」。")
+    orientation = values.get("画面方向", "横屏")
+    wr, hr = ASPECT_PRESETS[ratio]
+    wr, hr = apply_orientation(wr, hr, orientation)
+
+    if mode == "按K数分辨率":
+        resolution = values.get("分辨率", "1K")
+        if resolution not in RESOLUTION_EDGE_LENGTHS:
+            resolution = "1K"
+        return _preset_dimensions(wr, hr, resolution, align_to_eight)
+
+    return _dimensions_from_edge(
+        wr, hr, values.get("边长", 1024), values.get("边长类型", "最长边"), align_to_eight
+    )
+
+
+def _adapter_mode_inputs(io_module):
+    return io_module.DynamicCombo.Input(ADAPTER_MODE_INPUT, options=[
+        io_module.DynamicCombo.Option(key="按边长", inputs=[
+            io_module.Combo.Input("宽高比例", options=ADAPTER_ASPECT_RATIOS, default="16:9"),
+            io_module.Int.Input("边长", default=1024, min=64, max=8192, step=8),
+            io_module.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边"),
+            io_module.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏"),
+        ]),
+        io_module.DynamicCombo.Option(key="按K数分辨率", inputs=[
+            io_module.Combo.Input("宽高比例", options=ADAPTER_ASPECT_RATIOS, default="16:9"),
+            io_module.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏"),
+            io_module.Combo.Input("分辨率", options=RESOLUTION_OPTIONS, default="1K"),
+        ]),
+        io_module.DynamicCombo.Option(key="按Latent接入", inputs=[
+            io_module.Latent.Input("Latent", tooltip="按输入 Latent 的空间尺寸和缩放倍率输出宽高。"),
+            io_module.Float.Input("缩放倍率", default=1.0, min=0.1, max=100.0, step=0.05),
+        ]),
+        io_module.DynamicCombo.Option(key="按图像接入", inputs=[
+            io_module.Image.Input("图像", tooltip="按输入图像的实际宽高和缩放倍率输出宽高。"),
+            io_module.Float.Input("缩放倍率", default=1.0, min=0.1, max=100.0, step=0.05),
+        ]),
+    ])
+
+
+def _legacy_adapter_mode_inputs():
+    # 方式选择器只在上面的 INPUT_TYPES["required"] 里声明一次，这里不重复，
+    # 否则 /object_info 会把同名键同时放进 required 和 optional，前端可能建出两个同名控件。
+    return {
+        "宽高比例": (ADAPTER_ASPECT_RATIOS, {"default": "16:9"}),
+        "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
+        "边长类型": (SIDE_TYPES, {"default": "最长边"}),
+        "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
+        "分辨率": (RESOLUTION_OPTIONS, {"default": "1K"}),
+        "Latent": ("LATENT",),
+        "图像": ("IMAGE",),
+        "缩放倍率": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 100.0, "step": 0.05}),
+    }
 
 
 if io is not None:
@@ -111,12 +366,9 @@ if io is not None:
                 node_id="GGAspectRatioAdapter",
                 display_name="GG 图像宽高",
                 category="GuliNodes/图像",
-                description="按预设宽高比自动计算尺寸并规范对齐。",
+                description="按边长、K数分辨率、Latent 或图像接入方式计算宽高（已对齐到8的倍数）。",
                 inputs=[
-                    io.Combo.Input("宽高比例", options=ASPECT_RATIOS, default="16:9", tooltip="预设的宽高比例。"),
-                    io.Int.Input("边长", default=1024, min=64, max=8192, step=8, tooltip="边长（最长边或最短边）。"),
-                    io.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边", tooltip="指定边长是最长边还是最短边。"),
-                    io.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏", tooltip="强制指定画面方向。"),
+                    _adapter_mode_inputs(io),
                 ],
                 outputs=[
                     io.Int.Output(display_name="宽度", tooltip="计算后的宽度（已对齐到8的倍数）。"),
@@ -125,17 +377,8 @@ if io is not None:
             )
 
         @classmethod
-        def execute(cls, 宽高比例, 边长, 边长类型, 画面方向="横屏"):
-            wr, hr = ASPECT_PRESETS[宽高比例]
-            wr, hr = cls._apply_orientation(wr, hr, 画面方向)
-            if 边长类型 == "最长边":
-                width = 边长 if wr > hr else int(边长 * wr / hr)
-                height = int(边长 * hr / wr) if wr > hr else 边长
-            else:
-                height = 边长 if wr > hr else int(边长 * hr / wr)
-                width = int(边长 * wr / hr) if wr > hr else 边长
-            width = cls._align_to_eight(width)
-            height = cls._align_to_eight(height)
+        def execute(cls, 宽高方式):
+            width, height = _dimensions_by_mode(宽高方式, cls._align_to_eight, cls._apply_orientation)
             return io.NodeOutput(width, height)
 
     GGAspectRatioAdapter = GGAspectRatioAdapter
@@ -160,14 +403,9 @@ if io is not None:
                 node_id="GGAspectRatioLatent",
                 display_name="GG Latent",
                 category="GuliNodes/潜空间",
-                description="生成指定比例和尺寸的空Latent。",
+                description="按边长、K数分辨率、Latent 或图像接入方式生成 Latent。",
                 inputs=[
-                    io.Combo.Input("宽高比例", options=LATENT_ASPECT_RATIOS, default="9:16", tooltip="预设的宽高比例。"),
-                    io.Int.Input("边长", default=1024, min=64, max=8192, step=8, tooltip="边长（最长边或最短边）。"),
-                    io.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边", tooltip="指定边长是最长边还是最短边。"),
-                    io.Int.Input("批量大小", default=1, min=1, max=64, tooltip="生成的Latent数量。"),
-                    io.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏", tooltip="强制指定画面方向。"),
-                    io.Combo.Input("分辨率", options=RESOLUTION_OPTIONS, default="自定义", tooltip="选择1K-4K预设；手动修改边长后以自定义尺寸为准。"),
+                    _latent_mode_inputs(io),
                 ],
                 outputs=[
                     io.Latent.Output(display_name="Latent", tooltip="生成的空Latent。"),
@@ -175,170 +413,10 @@ if io is not None:
             )
 
         @classmethod
-        def execute(cls, 宽高比例, 边长, 边长类型, 批量大小, 画面方向="横屏", 分辨率="自定义"):
-            width, height = _calculate_latent_dimensions(
-                宽高比例,
-                边长,
-                边长类型,
-                画面方向,
-                分辨率,
-                cls._apply_orientation,
-                cls._align_to_eight,
-            )
-            latent = torch.zeros([批量大小, 4, height // 8, width // 8])
-            return io.NodeOutput({"samples": latent})
+        def execute(cls, Latent方式):
+            return io.NodeOutput(_generate_latent_by_mode(Latent方式, cls._align_to_eight, cls._apply_orientation))
 
     GGAspectRatioLatent = GGAspectRatioLatent
-
-
-    class GGAspectRatioLatent2(io.ComfyNode):
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @staticmethod
-        def _apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
-            if 画面方向 == "横屏" and width < height:
-                return height, width
-            if 画面方向 == "竖屏" and width > height:
-                return height, width
-            return width, height
-
-        @classmethod
-        def define_schema(cls):
-            return io.Schema(
-                node_id="GGAspectRatioLatent2",
-                display_name="GG Latent2",
-                category="GuliNodes/潜空间",
-                description="生成指定比例和尺寸的空Latent，并输出宽度和高度。",
-                inputs=[
-                    io.Combo.Input("宽高比例", options=LATENT_ASPECT_RATIOS, default="9:16", tooltip="预设的宽高比例。"),
-                    io.Int.Input("边长", default=1024, min=64, max=8192, step=8, tooltip="边长（最长边或最短边）。"),
-                    io.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边", tooltip="指定边长是最长边还是最短边。"),
-                    io.Int.Input("批量大小", default=1, min=1, max=64, tooltip="生成的Latent数量。"),
-                    io.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏", tooltip="强制指定画面方向。"),
-                ],
-                outputs=[
-                    io.Latent.Output(display_name="Latent", tooltip="生成的空Latent。"),
-                    io.Int.Output(display_name="宽度", tooltip="计算后的宽度。"),
-                    io.Int.Output(display_name="高度", tooltip="计算后的高度。"),
-                ],
-            )
-
-        @classmethod
-        def execute(cls, 宽高比例, 边长, 边长类型, 批量大小, 画面方向="横屏"):
-            wr, hr = ASPECT_PRESETS[宽高比例]
-            wr, hr = cls._apply_orientation(wr, hr, 画面方向)
-            if 边长类型 == "最长边":
-                width = 边长 if wr > hr else int(边长 * wr / hr)
-                height = int(边长 * hr / wr) if wr > hr else 边长
-            else:
-                height = 边长 if wr > hr else int(边长 * hr / wr)
-                width = int(边长 * wr / hr) if wr > hr else 边长
-            width = cls._align_to_eight(width)
-            height = cls._align_to_eight(height)
-            latent = torch.zeros([批量大小, 4, height // 8, width // 8])
-            return io.NodeOutput({"samples": latent}, width, height)
-
-    GGAspectRatioLatent2 = GGAspectRatioLatent2
-
-
-    class GGImageToLatent(io.ComfyNode):
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @staticmethod
-        def _apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
-            if 画面方向 == "横屏" and width < height:
-                return height, width
-            if 画面方向 == "竖屏" and width > height:
-                return height, width
-            return width, height
-
-        @classmethod
-        def define_schema(cls):
-            return io.Schema(
-                node_id="GGImageToLatent",
-                display_name="GG 图像-Latent",
-                category="GuliNodes/潜空间",
-                description="手动或参考图像尺寸生成Latent。",
-                inputs=[
-                    io.Combo.Input("模式", options=["手动", "参考图像"], default="手动", tooltip="选择手动设置或参考图像尺寸。"),
-                    io.Combo.Input("宽高比例", options=LATENT_ASPECT_RATIOS, default="9:16", tooltip="手动模式：预设的宽高比例。"),
-                    io.Int.Input("边长", default=1024, min=64, max=8192, step=8, tooltip="手动模式：边长（最长边或最短边）。"),
-                    io.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边", tooltip="手动模式：指定边长是最长边还是最短边。"),
-                    io.Int.Input("批量大小", default=1, min=1, max=64, tooltip="生成的Latent数量。"),
-                    io.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏", tooltip="强制指定画面方向。"),
-                    io.Image.Input("图像", optional=True, tooltip="参考图像模式：用于获取尺寸的图像。"),
-                ],
-                outputs=[
-                    io.Latent.Output(display_name="Latent", tooltip="生成的空Latent。"),
-                ],
-            )
-
-        @classmethod
-        def execute(cls, 模式, 宽高比例="9:16", 边长=1024, 边长类型="最长边", 批量大小=1, 图像=None, 画面方向="横屏"):
-            if 模式 == "参考图像":
-                if 图像 is None:
-                    raise ValueError("模式设置为「参考图像」时，必须连接图像输入。")
-                if len(图像.shape) == 4:
-                    h, w = 图像.shape[1], 图像.shape[2]
-                else:
-                    h, w = 图像.shape[0], 图像.shape[1]
-                w, h = cls._apply_orientation(int(w), int(h), 画面方向)
-                height = cls._align_to_eight(int(h))
-                width = cls._align_to_eight(int(w))
-                return io.NodeOutput({"samples": torch.zeros([批量大小, 4, height // 8, width // 8])})
-            else:
-                wr, hr = ASPECT_PRESETS[宽高比例]
-                wr, hr = cls._apply_orientation(wr, hr, 画面方向)
-                if 边长类型 == "最长边":
-                    width = 边长 if wr > hr else int(边长 * wr / hr)
-                    height = int(边长 * hr / wr) if wr > hr else 边长
-                else:
-                    height = 边长 if wr > hr else int(边长 * hr / wr)
-                    width = int(边长 * wr / hr) if wr > hr else 边长
-                width = cls._align_to_eight(width)
-                height = cls._align_to_eight(height)
-                return io.NodeOutput({"samples": torch.zeros([批量大小, 4, height // 8, width // 8])})
-
-    GGImageToLatent = GGImageToLatent
-
-
-    class GGImageSizeScale(io.ComfyNode):
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @classmethod
-        def define_schema(cls):
-            return io.Schema(
-                node_id="GGImageSizeScale",
-                display_name="GG 图像尺寸缩放",
-                category="GuliNodes/图像",
-                description="基于输入图像尺寸，按自定义缩放系数计算宽度和高度。",
-                inputs=[
-                    io.Image.Input("图像", tooltip="用于获取原始尺寸的图像。"),
-                    io.Float.Input("缩放系数", default=1.0, min=0.1, max=10.0, step=0.05, tooltip="缩放比例系数，1.0表示保持原始尺寸。"),
-                ],
-                outputs=[
-                    io.Int.Output(display_name="宽度", tooltip="计算后的图像宽度（已对齐到8的倍数）。"),
-                    io.Int.Output(display_name="高度", tooltip="计算后的图像高度（已对齐到8的倍数）。"),
-                ],
-            )
-
-        @classmethod
-        def execute(cls, 图像, 缩放系数=1.0):
-            if len(图像.shape) == 4:
-                h, w = 图像.shape[1], 图像.shape[2]
-            else:
-                h, w = 图像.shape[0], 图像.shape[1]
-            width = cls._align_to_eight(int(w * 缩放系数))
-            height = cls._align_to_eight(int(h * 缩放系数))
-            return io.NodeOutput(width, height)
-
-    GGImageSizeScale = GGImageSizeScale
 
 
 else:
@@ -360,13 +438,9 @@ else:
         def INPUT_TYPES(s):
             return {
                 "required": {
-                    "宽高比例": (ASPECT_RATIOS, {"default": "16:9"}),
-                    "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                    "边长类型": (SIDE_TYPES, {"default": "最长边"}),
+                    ADAPTER_MODE_INPUT: (ADAPTER_MODE_OPTIONS, {"default": "按边长"}),
                 },
-                "optional": {
-                    "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
-                }
+                "optional": _legacy_adapter_mode_inputs(),
             }
 
         RETURN_TYPES = ("INT", "INT")
@@ -374,18 +448,9 @@ else:
         FUNCTION = "calculate"
         CATEGORY = "GuliNodes/图像"
 
-        def calculate(self, 宽高比例: str, 边长: int, 边长类型: str, 画面方向: str = "横屏") -> tuple:
-            wr, hr = ASPECT_PRESETS[宽高比例]
-            wr, hr = self._apply_orientation(wr, hr, 画面方向)
-            if 边长类型 == "最长边":
-                width = 边长 if wr > hr else int(边长 * wr / hr)
-                height = int(边长 * hr / wr) if wr > hr else 边长
-            else:
-                height = 边长 if wr > hr else int(边长 * hr / wr)
-                width = int(边长 * wr / hr) if wr > hr else 边长
-            width = self._align_to_eight(width)
-            height = self._align_to_eight(height)
-            return (width, height)
+        def calculate(self, 宽高方式: str = "按边长", **kwargs) -> tuple:
+            kwargs[ADAPTER_MODE_INPUT] = 宽高方式
+            return _dimensions_by_mode(kwargs, self._align_to_eight, self._apply_orientation)
 
 
     class GGAspectRatioLatent:
@@ -405,180 +470,27 @@ else:
         def INPUT_TYPES(s):
             return {
                 "required": {
-                    "宽高比例": (LATENT_ASPECT_RATIOS, {"default": "9:16"}),
-                    "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                    "边长类型": (SIDE_TYPES, {"default": "最长边"}),
-                    "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
-                    "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
-                    "分辨率": (RESOLUTION_OPTIONS, {"default": "自定义"}),
-                }
-            }
-
-        RETURN_TYPES = ("LATENT",)
-        FUNCTION = "generate"
-        CATEGORY = "GuliNodes/潜空间"
-
-        def generate(self, 宽高比例: str, 边长: int, 边长类型: str, 批量大小: int, 画面方向: str = "横屏", 分辨率: str = "自定义") -> tuple:
-            width, height = _calculate_latent_dimensions(
-                宽高比例,
-                边长,
-                边长类型,
-                画面方向,
-                分辨率,
-                self._apply_orientation,
-                self._align_to_eight,
-            )
-            latent = torch.zeros([批量大小, 4, height // 8, width // 8])
-            return ({"samples": latent},)
-
-
-    class GGAspectRatioLatent2:
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @staticmethod
-        def _apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
-            if 画面方向 == "横屏" and width < height:
-                return height, width
-            if 画面方向 == "竖屏" and width > height:
-                return height, width
-            return width, height
-
-        @classmethod
-        def INPUT_TYPES(s):
-            return {
-                "required": {
-                    "宽高比例": (LATENT_ASPECT_RATIOS, {"default": "9:16"}),
-                    "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                    "边长类型": (SIDE_TYPES, {"default": "最长边"}),
-                    "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
-                    "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
-                }
-            }
-
-        RETURN_TYPES = ("LATENT", "INT", "INT")
-        RETURN_NAMES = ("LATENT", "宽度", "高度")
-        FUNCTION = "generate"
-        CATEGORY = "GuliNodes/潜空间"
-
-        def generate(self, 宽高比例: str, 边长: int, 边长类型: str, 批量大小: int, 画面方向: str = "横屏") -> tuple:
-            wr, hr = ASPECT_PRESETS[宽高比例]
-            wr, hr = self._apply_orientation(wr, hr, 画面方向)
-            if 边长类型 == "最长边":
-                width = 边长 if wr > hr else int(边长 * wr / hr)
-                height = int(边长 * hr / wr) if wr > hr else 边长
-            else:
-                height = 边长 if wr > hr else int(边长 * hr / wr)
-                width = int(边长 * wr / hr) if wr > hr else 边长
-            width = self._align_to_eight(width)
-            height = self._align_to_eight(height)
-            latent = torch.zeros([批量大小, 4, height // 8, width // 8])
-            return ({"samples": latent}, width, height)
-
-
-    class GGImageToLatent:
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @staticmethod
-        def _apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
-            if 画面方向 == "横屏" and width < height:
-                return height, width
-            if 画面方向 == "竖屏" and width > height:
-                return height, width
-            return width, height
-
-        @classmethod
-        def INPUT_TYPES(s):
-            return {
-                "required": {
-                    "模式": (["手动", "参考图像"], {"default": "手动"}),
+                    "Latent方式": (LATENT_MODE_OPTIONS, {"default": "按边长"}),
                 },
-                "optional": {
-                    "宽高比例": (LATENT_ASPECT_RATIOS, {"default": "9:16"}),
-                    "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                    "边长类型": (SIDE_TYPES, {"default": "最长边"}),
-                    "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
-                    "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
-                    "图像": ("IMAGE",),
-                }
+                "optional": _legacy_latent_mode_inputs(),
             }
 
         RETURN_TYPES = ("LATENT",)
-        RETURN_NAMES = ("Latent",)
-        FUNCTION = "convert"
+        FUNCTION = "generate"
         CATEGORY = "GuliNodes/潜空间"
 
-        def convert(self, 模式: str = "手动", 宽高比例: str = "16:9", 边长: int = 1024, 边长类型: str = "最长边", 批量大小: int = 1, 图像: torch.Tensor = None, 画面方向: str = "横屏") -> tuple:
-            if 模式 == "参考图像":
-                if 图像 is None:
-                    raise ValueError("模式设置为「参考图像」时，必须连接图像输入。")
-                if len(图像.shape) == 4:
-                    h, w = 图像.shape[1], 图像.shape[2]
-                else:
-                    h, w = 图像.shape[0], 图像.shape[1]
-                w, h = self._apply_orientation(int(w), int(h), 画面方向)
-                height = self._align_to_eight(int(h))
-                width = self._align_to_eight(int(w))
-                return ({"samples": torch.zeros([批量大小, 4, height // 8, width // 8])},)
-            else:
-                wr, hr = ASPECT_PRESETS[宽高比例]
-                wr, hr = self._apply_orientation(wr, hr, 画面方向)
-                if 边长类型 == "最长边":
-                    width = 边长 if wr > hr else int(边长 * wr / hr)
-                    height = int(边长 * hr / wr) if wr > hr else 边长
-                else:
-                    height = 边长 if wr > hr else int(边长 * hr / wr)
-                    width = int(边长 * wr / hr) if wr > hr else 边长
-                width = self._align_to_eight(width)
-                height = self._align_to_eight(height)
-                return ({"samples": torch.zeros([批量大小, 4, height // 8, width // 8])},)
-
-
-    class GGImageSizeScale:
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @classmethod
-        def INPUT_TYPES(s):
-            return {
-                "required": {
-                    "图像": ("IMAGE",),
-                    "缩放系数": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.05}),
-                }
-            }
-
-        RETURN_TYPES = ("INT", "INT")
-        RETURN_NAMES = ("宽度", "高度")
-        FUNCTION = "calculate"
-        CATEGORY = "GuliNodes/图像"
-
-        def calculate(self, 图像: torch.Tensor, 缩放系数: float = 1.0) -> tuple:
-            if len(图像.shape) == 4:
-                h, w = 图像.shape[1], 图像.shape[2]
-            else:
-                h, w = 图像.shape[0], 图像.shape[1]
-            width = self._align_to_eight(int(w * 缩放系数))
-            height = self._align_to_eight(int(h * 缩放系数))
-            return (width, height)
+        def generate(self, Latent方式: str = "按边长", **kwargs) -> tuple:
+            kwargs["Latent方式"] = Latent方式
+            return (_generate_latent_by_mode(kwargs, self._align_to_eight, self._apply_orientation),)
 
 
 NODE_CLASS_MAPPINGS = {
     "GGAspectRatioAdapter": GGAspectRatioAdapter,
     "GGAspectRatioLatent": GGAspectRatioLatent,
-    "GGAspectRatioLatent2": GGAspectRatioLatent2,
-    "GGImageToLatent": GGImageToLatent,
-    "GGImageSizeScale": GGImageSizeScale,
 }
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGAspectRatioAdapter": "GG 图像宽高",
     "GGAspectRatioLatent": "GG Latent",
-    "GGAspectRatioLatent2": "GG Latent2",
-    "GGImageToLatent": "GG 图像-Latent",
-    "GGImageSizeScale": "GG 图像尺寸缩放",
 }

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "comfyui-gulinodes"
-version = "1.0.14"
+version = "1.1.0"
 description = "GuliNodes - 工具栏 + 图像处理 + 潜空间尺寸 + 模型/LoRA + 工作流 + 文本 + 采样 + 视频"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -49,7 +49,7 @@ Icon = ""
 
 [tool.gulinodes]
 name = "ComfyUI-GuliNodes"
-node_count = 41
+node_count = 37
 python_package = "guli_nodes"
 web_directory = "web"
 summary = "Custom nodes for image tools, video compression, text processing, LoRA helpers, workflow helpers, and Z-Image sampling."

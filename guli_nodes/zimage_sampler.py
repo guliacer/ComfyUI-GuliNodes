@@ -201,107 +201,10 @@ class GGZImageSampler:
         return (out,)
 
 
-class GG采样器:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "模型": ("MODEL",),
-                "种子": (
-                    "INT",
-                    {
-                        "default": 0,
-                        "min": 0,
-                        "max": 0xFFFFFFFFFFFFFFFF,
-                        "control_after_generate": True,
-                    },
-                ),
-                "步数": (
-                    "INT",
-                    {"default": 10, "min": 4, "max": 20, "step": 1},
-                ),
-                "引导强度": (
-                    "FLOAT",
-                    {"default": 1.0, "min": 0.0, "max": 14.0, "step": 0.1, "round": 0.01},
-                ),
-                "采样器": (ZIMAGE_SAMPLERS,),
-                "调度器": (ZIMAGE_SCHEDULERS,),
-                "正向提示词": ("CONDITIONING",),
-                "负向提示词": ("CONDITIONING",),
-                "宽高比例": (LATENT_ASPECT_RATIOS, {"default": "9:16"}),
-                "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "边长类型": (SIDE_TYPES, {"default": "最长边"}),
-                "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
-                "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
-                "降噪强度": (
-                    "FLOAT",
-                    {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01},
-                ),
-            },
-            "optional": {
-                "原比例": (
-                    "IMAGE",
-                    {"tooltip": "连接图像后使用该图像宽高比例，宽高比例参数不生效，边长和边长类型仍生效。"},
-                ),
-                "原尺寸": (
-                    "IMAGE",
-                    {"tooltip": "连接图像后使用该图像尺寸，宽高比例、边长和边长类型参数不会生效。"},
-                ),
-            }
-        }
-
-    RETURN_TYPES = ("LATENT",)
-    RETURN_NAMES = ("Latent",)
-    FUNCTION = "sample"
-    CATEGORY = "GuliNodes/采样"
-
-    def sample(
-        self,
-        模型,
-        种子,
-        步数,
-        引导强度,
-        采样器,
-        调度器,
-        正向提示词,
-        负向提示词,
-        宽高比例,
-        边长,
-        边长类型,
-        批量大小,
-        画面方向,
-        降噪强度=0.9,
-        原比例=None,
-        原尺寸=None,
-    ):
-        if 原尺寸 is not None:
-            宽度, 高度 = _从图像尺寸计算Latent尺寸(原尺寸)
-        elif 原比例 is not None:
-            宽度, 高度 = _从图像比例计算Latent尺寸(原比例, 边长, 边长类型)
-        else:
-            宽度, 高度 = _计算Latent尺寸(宽高比例, 边长, 边长类型, 画面方向)
-        Latent图像 = _创建空Latent(宽度, 高度, 批量大小)
-        out = _执行ZImage采样(
-            模型,
-            种子,
-            步数,
-            引导强度,
-            采样器,
-            调度器,
-            正向提示词,
-            负向提示词,
-            Latent图像,
-            降噪强度,
-        )
-        return (out,)
-
-
 NODE_CLASS_MAPPINGS = {
     "GGZImageSampler": GGZImageSampler,
-    "GG采样器": GG采样器,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGZImageSampler": "GG Z-Image采样器",
-    "GG采样器": "GG 采样器",
 }

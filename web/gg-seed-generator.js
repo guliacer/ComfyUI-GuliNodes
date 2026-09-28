@@ -4,11 +4,14 @@ const NODE_NAME = "GGSeedGenerator";
 const SOURCE_WIDGET = "种子来源";
 const SEED_WIDGET = "种子";
 const OFFSET_WIDGET = "偏移模式";
+const STEP_WIDGET = "步长";
 const SOURCE_RANDOM = "随机";
 const SOURCE_LAST = "上次";
 const SOURCE_MANUAL = "手动";
 const OFFSET_KEEP = "保持";
+const HIDDEN_TAG = "ggHiddenSeed";
 const AUTO_SYNC_SOURCES = new Set([SOURCE_RANDOM, SOURCE_LAST]);
+const widgetState = {};
 
 function firstValue(output, key) {
     const value = output?.[key];
@@ -66,6 +69,56 @@ function syncGeneratedSeed(node, output) {
     }
 }
 
+function toggleWidget(node, widget, show) {
+    if (!widget) return;
+
+    if (!widgetState[widget.name]) {
+        widgetState[widget.name] = {
+            origType: widget.type,
+            origComputeSize: widget.computeSize,
+        };
+    }
+    const state = widgetState[widget.name];
+    widget.hidden = !show;
+    widget.type = show ? state.origType : HIDDEN_TAG;
+    widget.computeSize = show ? state.origComputeSize : () => [0, -4];
+}
+
+function refreshNode(node) {
+    if (typeof node.computeSize === "function" && typeof node.setSize === "function") {
+        const [width, height] = node.computeSize();
+        node.setSize([Math.max(Number(node.size?.[0]) || 0, width), height]);
+    }
+    node.setDirtyCanvas?.(true, true);
+    node.graph?.setDirtyCanvas?.(true, true);
+    app.graph?.setDirtyCanvas?.(true, true);
+}
+
+function updateStepVisibility(node) {
+    const offsetWidget = getWidget(node, OFFSET_WIDGET);
+    const stepWidget = getWidget(node, STEP_WIDGET);
+    if (!stepWidget) return;
+    toggleWidget(node, stepWidget, offsetWidget?.value !== OFFSET_KEEP);
+    refreshNode(node);
+    requestAnimationFrame(() => refreshNode(node));
+}
+
+function setupNode(node) {
+    if (node?.comfyClass !== NODE_NAME && node?.type !== NODE_NAME) return;
+
+    const offsetWidget = getWidget(node, OFFSET_WIDGET);
+    if (offsetWidget && !offsetWidget._ggSeedCallbackInstalled) {
+        const originalCallback = offsetWidget.callback;
+        offsetWidget.callback = function (...args) {
+            const result = originalCallback?.apply(this, args);
+            updateStepVisibility(node);
+            return result;
+        };
+        offsetWidget._ggSeedCallbackInstalled = true;
+    }
+    updateStepVisibility(node);
+}
+
 app.registerExtension({
     name: "ComfyUI.GGNodes.SeedGenerator",
 
@@ -77,5 +130,27 @@ app.registerExtension({
             originalOnExecuted?.apply(this, arguments);
             syncGeneratedSeed(this, output);
         };
+
+        const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
+        nodeType.prototype.onNodeCreated = function (...args) {
+            const result = originalOnNodeCreated?.apply(this, args);
+            setTimeout(() => setupNode(this), 0);
+            return result;
+        };
+
+        const originalOnConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function (...args) {
+            const result = originalOnConfigure?.apply(this, args);
+            setTimeout(() => setupNode(this), 0);
+            return result;
+        };
+    },
+
+    nodeCreated(node) {
+        setTimeout(() => setupNode(node), 0);
+    },
+
+    loadedGraphNode(node) {
+        setTimeout(() => setupNode(node), 0);
     },
 });

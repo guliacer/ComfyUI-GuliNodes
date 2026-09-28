@@ -1,27 +1,28 @@
 const ICONS = {
-    brush: '<path d="M4 20.5h5.2"/><path d="M14.8 3.8l5.4 5.4"/><path d="M18.3 7.3 9.1 16.5l-4.2.9.9-4.2 9.2-9.2"/><path d="M6 18c1.2-1.2 2.7-.2 3.9-1.5"/>',
-    layers: '<path d="m12 3.5 8 4.4-8 4.4-8-4.4 8-4.4z"/><path d="m4 12 8 4.4 8-4.4"/><path d="m4 16.2 8 4.3 8-4.3"/>',
+    brush: '<path d="m16.5 3.5 4 4L8 20l-5 1 1-5L16.5 3.5z"/><path d="m13.2 6.8 4 4"/>',
+    toolGrid: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2" class="gg-ui-fill"/>',
+    palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.6 0 2.2-1 1.7-2.1-.6-1.3.2-2.4 1.7-2.4h1.9c2 0 3.2-1.3 3.2-3.4C20.5 7.6 16.7 3.5 12 3.5z"/><circle cx="7.5" cy="10.5" r="1.1" class="gg-ui-fill"/><circle cx="11" cy="7.5" r="1.1" class="gg-ui-fill"/><circle cx="15.5" cy="8.5" r="1.1" class="gg-ui-fill"/>',
     node: '<rect x="5" y="5" width="14" height="14" rx="4"/><circle cx="5" cy="10" r="1.4" class="gg-ui-fill"/><circle cx="19" cy="14" r="1.4" class="gg-ui-fill"/><path d="M9 9.2h6"/><path d="M9 13h4.5"/>',
     body: '<rect x="5" y="5" width="14" height="14" rx="4"/><path d="M5 10h14"/><path d="M8.5 14h7"/><path d="M8.5 16.7h5"/>',
     title: '<rect x="5" y="5" width="14" height="14" rx="4"/><path d="M5 10h14"/><path d="M8 7.6h8"/>',
     trash: '<path d="M5 7.5h14"/><path d="M9 7.5V5.3h6v2.2"/><path d="m7.2 7.5.8 12.2h8l.8-12.2"/><path d="M10.3 11.2v5.2"/><path d="M13.7 11.2v5.2"/>',
-    pipette: '<path d="m14.5 4 5.5 5.5"/><path d="m17.2 6.8-8.8 8.8-3.6.8.8-3.6 8.8-8.8"/><path d="M5 20h5"/><path d="M12 8.2l3.8 3.8"/>',
+    pipette: '<path d="m14.5 4 5.5 5.5"/><path d="m17.2 6.8-8.8 8.8-3.6.8.8-3.6 8.8-8.8"/><path d="M4.5 20h5"/>',
     more: '<circle cx="5.5" cy="12" r="1.35" class="gg-ui-fill"/><circle cx="12" cy="12" r="1.35" class="gg-ui-fill"/><circle cx="18.5" cy="12" r="1.35" class="gg-ui-fill"/>',
-    width: '<rect x="5" y="7" width="14" height="10" rx="3"/><path d="M8 12h8"/><path d="m9.7 9.9-2.1 2.1 2.1 2.1"/><path d="m14.3 9.9 2.1 2.1-2.1 2.1"/>',
-    height: '<rect x="7" y="5" width="10" height="14" rx="3"/><path d="M12 8v8"/><path d="m9.9 9.7 2.1-2.1 2.1 2.1"/><path d="m9.9 14.3 2.1 2.1 2.1-2.1"/>',
+    width: '<path d="M4 6.5v11"/><path d="M20 6.5v11"/><path d="M7.5 12h9"/><path d="m10 9.5-2.5 2.5L10 14.5"/><path d="m14 9.5 2.5 2.5L14 14.5"/>',
+    height: '<path d="M6.5 4h11"/><path d="M6.5 20h11"/><path d="M12 7.5v9"/><path d="m9.5 10 2.5-2.5L14.5 10"/><path d="m9.5 14 2.5 2.5L14.5 14"/>',
     alignLeft: '<path d="M5 5v14"/><rect x="8" y="6.5" width="10.5" height="3.2" rx="1.2"/><rect x="8" y="11" width="7.5" height="3.2" rx="1.2"/><rect x="8" y="15.5" width="5.5" height="3.2" rx="1.2"/>',
     alignRight: '<path d="M19 5v14"/><rect x="5.5" y="6.5" width="10.5" height="3.2" rx="1.2"/><rect x="8.5" y="11" width="7.5" height="3.2" rx="1.2"/><rect x="10.5" y="15.5" width="5.5" height="3.2" rx="1.2"/>',
-    alignHCenter: '<path d="M12 5v14"/><rect x="6.5" y="6.5" width="11" height="3.2" rx="1.2"/><rect x="8.5" y="11" width="7" height="3.2" rx="1.2"/><rect x="5.5" y="15.5" width="13" height="3.2" rx="1.2"/>',
+    alignHCenter: '<path d="M12 5v14"/><rect x="6.5" y="6.5" width="11" height="3.2" rx="1.2"/><rect x="8.5" y="11" width="7" height="3.2" rx="1.2"/><rect x="7.5" y="15.5" width="9" height="3.2" rx="1.2"/>',
     alignTop: '<path d="M5 5h14"/><rect x="6.5" y="8" width="3.2" height="10.5" rx="1.2"/><rect x="11" y="8" width="3.2" height="7.5" rx="1.2"/><rect x="15.5" y="8" width="3.2" height="5.5" rx="1.2"/>',
     alignBottom: '<path d="M5 19h14"/><rect x="6.5" y="5.5" width="3.2" height="10.5" rx="1.2"/><rect x="11" y="8.5" width="3.2" height="7.5" rx="1.2"/><rect x="15.5" y="10.5" width="3.2" height="5.5" rx="1.2"/>',
-    alignVCenter: '<path d="M5 12h14"/><rect x="6.5" y="6.5" width="3.2" height="11" rx="1.2"/><rect x="11" y="8.5" width="3.2" height="7" rx="1.2"/><rect x="15.5" y="5.5" width="3.2" height="13" rx="1.2"/>',
-    spacing: '<rect x="5" y="5" width="14" height="3" rx="1.2"/><rect x="5" y="10.5" width="14" height="3" rx="1.2"/><rect x="5" y="16" width="14" height="3" rx="1.2"/><path d="M12 8.2v2"/><path d="M12 13.7v2"/>',
+    alignVCenter: '<path d="M5 12h14"/><rect x="6.5" y="6.5" width="3.2" height="11" rx="1.2"/><rect x="11" y="8.5" width="3.2" height="7" rx="1.2"/><rect x="15.5" y="7.5" width="3.2" height="9" rx="1.2"/>',
+    spacing: '<path d="M5 6h14"/><path d="M5 18h14"/><path d="M12 8.5v7"/><path d="m10.6 9.9 1.4-1.4 1.4 1.4"/><path d="m10.6 14.1 1.4 1.4 1.4-1.4"/>',
     fit: '<path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5V8"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8"/><path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16"/><path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="8.5" y="8.5" width="7" height="7" rx="2"/>',
     close: '<rect x="5" y="5" width="14" height="14" rx="7"/><path d="m9.2 9.2 5.6 5.6"/><path d="m14.8 9.2-5.6 5.6"/>',
     reset: '<path d="M4.7 10.2A7.5 7.5 0 1 1 6.8 17"/><path d="M4.5 5.5v4.8h4.8"/>',
     opacity: '<path d="M12 3.8s6.2 6 6.2 10.2a6.2 6.2 0 0 1-12.4 0C5.8 9.8 12 3.8 12 3.8z"/><path d="M12 6.2v13.5"/><path d="M12 19.7a4.5 4.5 0 0 0 0-9"/>',
-    copy: '<rect x="8" y="8" width="11" height="11" rx="3"/><rect x="5" y="5" width="11" height="11" rx="3"/><path d="M12 11h2.5"/><path d="M12 14h1.5"/>',
-    paste: '<path d="M8.5 5.5h7"/><rect x="9" y="3.5" width="6" height="4" rx="1.5"/><rect x="5" y="6" width="14" height="15" rx="3"/><path d="M8.5 12h7"/><path d="M8.5 15.5H13"/>',
+    copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 4.5h-8a3 3 0 0 0-3 3v8"/>',
+    paste: '<rect x="4.5" y="5.5" width="15" height="15.5" rx="3"/><rect x="9" y="2.8" width="6" height="3.7" rx="1.3"/>',
     clear: '<path d="m5 5 14 14"/><path d="m19 5-14 14"/>',
     check: '<path d="m20 7-10.5 10L4 11.8"/>',
     error: '<rect x="5" y="5" width="14" height="14" rx="7"/><path d="m9.2 9.2 5.6 5.6"/><path d="m14.8 9.2-5.6 5.6"/>',
@@ -30,12 +31,21 @@ const ICONS = {
     memory: '<rect x="6" y="5" width="12" height="14" rx="3"/><path d="M9 9h6"/><path d="M9 12h6"/><path d="M9 15h3.5"/><path d="M8 2.5v2.5"/><path d="M12 2.5v2.5"/><path d="M16 2.5v2.5"/><path d="M8 19v2.5"/><path d="M12 19v2.5"/><path d="M16 19v2.5"/>',
     clean: '<path d="M5 19h14"/><path d="M7 16l8.4-8.4a2.3 2.3 0 0 0-3.2-3.2L5 11.6V16h4.4"/><path d="m12.1 6.5 3.4 3.4"/><path d="M16.5 15.5h3"/><path d="M18 14v3"/>',
     modelUnload: '<rect x="6" y="4.5" width="12" height="12" rx="3"/><path d="M9 8.5h6"/><path d="M9 12h3.5"/><path d="M8.5 2.5v2"/><path d="M15.5 2.5v2"/><path d="M12 16.5v5"/><path d="m9.8 19.3 2.2 2.2 2.2-2.2"/>',
-    memorySweep: '<rect x="5" y="4" width="12" height="12" rx="3"/><path d="M8 8h6"/><path d="M8 11.5h4"/><path d="M8 2v2"/><path d="M14 2v2"/><path d="M9 16v2"/><path d="M18.2 13.8l3.3 3.3"/><path d="m14.5 20.5 7-7"/><path d="M16.2 20.5h-3.4"/>',
-    linkFlow: '<circle cx="6" cy="8" r="2.4"/><circle cx="18" cy="16" r="2.4"/><path d="M8.3 8.7c4.2.5 5.4 5.9 9.3 6.9"/><path d="M5.6 16h2.6a4 4 0 0 0 3.4-1.9"/><path d="M18.4 8h-2.6a4 4 0 0 0-3.4 1.9"/>',
-    linkTune: '<circle cx="5.5" cy="7" r="2"/><circle cx="18.5" cy="17" r="2"/><path d="M7.5 7H13"/><path d="M15 7h4"/><path d="M5.5 9v3.2A4.8 4.8 0 0 0 10.3 17h6.2"/><path d="M13 4.5v5"/><path d="M15 14.5v5"/>',
+    memorySweep: '<path d="M20.5 3.5 14 10"/><path d="M12.2 8.6 5 14.2a6.6 6.6 0 0 0 4.8 4.8l5.6-7.2z"/><path d="m8.6 12.4 3 3"/><path d="M3.5 20.5h3"/>',
+    linkFlow: '<circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/>',
+    linkTune: '<circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/><circle cx="13.6" cy="6.5" r="1.2" class="gg-ui-fill"/><circle cx="18.5" cy="11.4" r="1.2" class="gg-ui-fill"/>',
     toolbarCollapse: '<rect x="4.5" y="5.5" width="15" height="13" rx="3"/><path d="M4.5 10h15"/><path d="M9 14.5h6"/><path d="m9.5 17 2.5-2.5 2.5 2.5"/>',
     toolbarExpand: '<rect x="4.5" y="5.5" width="15" height="13" rx="3"/><path d="M4.5 10h15"/><path d="M9 14.5h6"/><path d="m9.5 12.8 2.5 2.5 2.5-2.5"/>',
+    nodeCollapse: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M4 9.5h16"/><path d="m9.5 16.5 2.5-2.5 2.5 2.5"/>',
+    nodeExpand: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M4 9.5h16"/><path d="m9.5 14 2.5 2.5 2.5-2.5"/>',
+    nodePin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
+    nodePinOff: '<path d="M12 17v5"/><path d="M15 9.34V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H7.89"/><path d="M9 9v1.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h11"/><path d="m2 2 20 20"/>',
+    nodeAlign: '<path d="M12 3v18" stroke-dasharray="3 2.4"/><rect x="3.5" y="6" width="6.2" height="5" rx="1.5"/><rect x="14.3" y="13" width="6.2" height="5" rx="1.5"/>',
+    portList: '<rect x="8" y="9" width="8" height="6" rx="1.8"/><path d="M2.5 10.5H8"/><path d="M2.5 13.5H8"/><path d="M16 10.5h5.5"/><path d="M16 13.5h5.5"/>',
     floatingText: '<rect x="4" y="5" width="13" height="11" rx="3"/><path d="M7.5 9h6"/><path d="M7.5 12h4"/><rect x="13.5" y="12.5" width="6.5" height="6.5" rx="2"/><path d="M15.6 15.8h2.3"/>',
+    groupStyle: '<rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke-dasharray="3.2 2.4"/><rect x="8.2" y="8.2" width="7.6" height="7.6" rx="1.8"/>',
+    translate: '<path d="M3.5 5.5h8"/><path d="M7.5 3.5v2"/><path d="M11.5 5.5c-.4 4-3.2 7.3-8 9"/><path d="M4.5 8.8c1.5 2.7 3.9 4.4 6.5 5"/><path d="m13.5 20.5 4-11 4 11"/><path d="M15 17h5"/>',
+    tagName: '<path d="M12.6 3.5H5.5a2 2 0 0 0-2 2v7.1a2 2 0 0 0 .6 1.4l7.3 7.3a2 2 0 0 0 2.8 0l7.1-7.1a2 2 0 0 0 0-2.8l-7.3-7.3a2 2 0 0 0-1.4-.6z"/><circle cx="8" cy="8" r="1.3" class="gg-ui-fill"/>',
 
     catImage: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="9" r="1.5" class="gg-ui-fill"/><circle cx="15.5" cy="9" r="1.5" class="gg-ui-fill"/><path d="M8 14c1 1.5 3 2.5 4 2.5s3-1 4-2.5"/>',
     catLatent: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>',
@@ -122,11 +132,31 @@ export function ensureGGIconStyles() {
         .gg-float-toolbar button:hover,
         .gg-key-input-toggle:hover,
         .gg-key-input-mask:hover,
-        .gg-key-input-test:hover,
-        .gg-ui-top-button:hover {
+        .gg-key-input-test:hover {
             color: var(--gg-ui-accent) !important;
             background: var(--gg-ui-accent-soft) !important;
             border-color: var(--gg-ui-accent-border) !important;
+        }
+        /* 顶栏开关按钮：悬停只加深底色，不改变颜色，避免「未开启悬停时像已开启」 */
+        .gg-ui-top-button:hover,
+        .gg-ui-top-button:focus-visible {
+            background: rgba(148, 163, 184, 0.16) !important;
+        }
+        /* 开关两态：关 = 灰，开 = 主题色 */
+        .gg-ui-top-button.gg-state-off {
+            color: var(--gg-ui-muted, #6b7280) !important;
+            background: rgba(148, 163, 184, 0.08) !important;
+            border-color: rgba(148, 163, 184, 0.18) !important;
+        }
+        .gg-ui-top-button.gg-state-on,
+        .gg-ui-top-button.active {
+            color: var(--gg-ui-accent) !important;
+            background: rgba(59, 130, 246, 0.17) !important;
+            border-color: var(--gg-ui-accent-border) !important;
+        }
+        .gg-ui-top-button.gg-state-on:hover,
+        .gg-ui-top-button.active:hover {
+            background: rgba(59, 130, 246, 0.26) !important;
         }
         #gg-nodes-panel .tool-btn.active,
         #gg-toolbar-settings .tool-btn.active,
@@ -220,8 +250,16 @@ const CONTROL_AFTER_GENERATE_I18N = {
     "randomize": "随机",
 };
 
+function ggDebounce(fn, delay = 200) {
+    let timer = null;
+    return () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => { timer = null; fn(); }, delay);
+    };
+}
+
 function localizeControlAfterGenerate() {
-    const observer = new MutationObserver(() => {
+    const runScan = () => {
         document.querySelectorAll(".comfy-widget-combo").forEach(combo => {
             const select = combo.querySelector("select");
             if (!select) return;
@@ -240,7 +278,8 @@ function localizeControlAfterGenerate() {
                 }));
             }
         });
-    });
+    };
+    const observer = new MutationObserver(ggDebounce(runScan));
     observer.observe(document.body, { childList: true, subtree: true });
 
     if (window.app?.registerExtension) {
@@ -296,7 +335,7 @@ function injectSettingRowBorders() {
     s.textContent = css;
     document.head.appendChild(s);
 
-    new MutationObserver(() => {
+    new MutationObserver(ggDebounce(() => {
         document.querySelectorAll('[class*="setting"], [class*="Setting"]').forEach(el => {
             if (el.children.length > 1 && el.children[0].tagName !== 'BUTTON' &&
                 el.offsetHeight > 20 && el.offsetHeight < 120) {
@@ -304,7 +343,7 @@ function injectSettingRowBorders() {
                 el.style.padding = '8px 4px';
             }
         });
-    }).observe(document.body, { childList: true, subtree: true });
+    })).observe(document.body, { childList: true, subtree: true });
 }
 
 if (document.readyState === "loading") {

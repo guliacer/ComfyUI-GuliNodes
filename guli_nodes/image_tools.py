@@ -229,9 +229,36 @@ def _执行色彩校正(图像: torch.Tensor, 温度: float, 色调: float, 明�
     return 校正后.contiguous()
 
 
+def _统一图像通道(图像: torch.Tensor, 目标通道数: int) -> torch.Tensor:
+    """把单张图像统一到目标通道数：RGB(3)↔RGBA(4) 互转，灰度/双通道先扩到 3 通道。
+    补 alpha 时用不透明（1.0）；RGBA→RGB 直接取前三通道。"""
+    当前通道数 = int(图像.shape[-1])
+    if 当前通道数 == 目标通道数:
+        return 图像
+    # 灰度(1) / 双通道(2) 先扩到 3 通道，复用第 0 通道
+    if 当前通道数 < 3:
+        图像 = 图像[..., :1].expand(*图像.shape[:-1], 3)
+        当前通道数 = 3
+        if 当前通道数 == 目标通道数:
+            return 图像.contiguous()
+    if 当前通道数 == 3 and 目标通道数 == 4:
+        alpha = torch.ones(tuple(图像.shape[:-1]) + (1,), dtype=图像.dtype, device=图像.device)
+        return torch.cat([图像, alpha], dim=-1).contiguous()
+    if 当前通道数 >= 4 and 目标通道数 == 3:
+        return 图像[..., :3].contiguous()
+    return 图像
+
+
 def concatenate_images_horizontally(images: list, labels: list = None, font_size: int = 40, border: int = 32, label_height: int = 80, spacing: int = 20) -> torch.Tensor:
     if not images:
         return None
+    # 统一通道数：取所有图像中的最大通道数（RGB=3 / RGBA=4），通道数少的补不透明 alpha。
+    # 否则 torch.cat 在宽度维度拼接时，channel 维度不一致会报错（如 RGBA 图遇到写死 3 通道的间隔条）。
+    目标通道数 = max(int(img.shape[-1]) for img in images)
+    images = [
+        _统一图像通道(img, 目标通道数) if int(img.shape[-1]) != 目标通道数 else img
+        for img in images
+    ]
     target_height = images[0].shape[1]
     resized = []
     for img in images:
@@ -241,7 +268,7 @@ def concatenate_images_horizontally(images: list, labels: list = None, font_size
         resized.append(img)
     if spacing > 0:
         gap = torch.ones(
-            (images[0].shape[0], target_height, spacing, 3),
+            (images[0].shape[0], target_height, spacing, 目标通道数),
             dtype=images[0].dtype,
             device=images[0].device,
         )
@@ -258,7 +285,12 @@ def concatenate_images_horizontally(images: list, labels: list = None, font_size
     B, H, W, C = concat_image.shape
     np_img = (concat_image[0] * 255).clamp(0, 255).to(torch.uint8).cpu().numpy()
     pil_img = Image.fromarray(np_img)
-    new_img = Image.new("RGB", (W, H + label_height), (255, 255, 255))
+    # 标签画布通道跟随拼接结果：RGBA 输入用 RGBA 画布，避免 alpha 被丢弃
+    画布模式 = "RGBA" if C == 4 else "RGB"
+    背景色 = (255, 255, 255, 255) if C == 4 else (255, 255, 255)
+    描边色 = (255, 255, 255, 255) if C == 4 else (255, 255, 255)
+    文字色 = (0, 0, 0, 255) if C == 4 else (0, 0, 0)
+    new_img = Image.new(画布模式, (W, H + label_height), 背景色)
     new_img.paste(pil_img, (0, 0))
     draw = ImageDraw.Draw(new_img)
     try:
@@ -268,69 +300,133 @@ def concatenate_images_horizontally(images: list, labels: list = None, font_size
     sub_width = W // len(labels)
     for i, text in enumerate(labels):
         x = i * sub_width + sub_width // 2
-        draw.text((x, H + label_height // 2), text, fill=(255, 255, 255), font=font, anchor="mm", stroke_width=4, stroke_fill=(255, 255, 255))
-        draw.text((x, H + label_height // 2), text, fill=(0, 0, 0), font=font, anchor="mm")
+        # 先画白描边白字做描边底，再叠黑字，保证文字在任意背景上可读
+        draw.text((x, H + label_height // 2), text, fill=描边色, font=font, anchor="mm", stroke_width=4, stroke_fill=描边色)
+        draw.text((x, H + label_height // 2), text, fill=文字色, font=font, anchor="mm")
     final_np = np.array(new_img).astype(np.float32) / 255.0
     return torch.from_numpy(final_np).unsqueeze(0)
 
 
-class GGImageResize:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "图像": ("IMAGE",),
-                "模式": (["按比例", "按最长边", "按最短边"], {"default": "按比例"}),
-            },
-            "optional": {
-                "缩放比例": ("FLOAT", {"default": 1.0, "min": 0.1, "max": 10.0, "step": 0.1}),
-                "边长": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8}),
-                "插值方法": (["bilinear", "nearest", "bicubic"], {"default": "bilinear"}),
-            }
-        }
+_CROP_ASPECT_RATIOS = ["1:1", "3:2", "4:3", "5:4", "16:9", "21:9", "9:16", "2:3", "3:4", "4:5", "9:21"]
+_CROP_K_ASPECT_RATIOS = ["1:1", "1:2", "2:3", "3:4", "4:5", "5:7", "9:16", "10:16", "9:21"]
+_CROP_ASPECT_PRESETS = {
+    ratio: tuple(int(part) for part in ratio.split(":", 1))
+    for ratio in [*_CROP_ASPECT_RATIOS, *_CROP_K_ASPECT_RATIOS]
+}
+_CROP_RESOLUTION_OPTIONS = ["1K", "2K", "3K", "4K"]
+_CROP_RESOLUTION_EDGE_LENGTHS = {"1K": 1024, "2K": 2048, "3K": 3072, "4K": 4096}
+_CROP_SIDE_TYPES = ["最长边", "最短边"]
+_CROP_ORIENTATION_TYPES = ["横屏", "竖屏"]
 
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("图像",)
-    FUNCTION = "resize"
-    CATEGORY = "GuliNodes/图像"
 
-    def resize(self, 图像: torch.Tensor, 模式: str = "按比例", 缩放比例: float = 1.0,
-               边长: int = 512, 插值方法: str = "bilinear") -> tuple:
-        if 图像 is None:
-            return (_empty_image(),)
+def _crop_ratio_dimensions(width_ratio: int, height_ratio: int, edge: int, edge_type: str) -> tuple[int, int]:
+    """按明确的最长边/最短边计算裁剪目标尺寸，并对齐到 8 的倍数。"""
+    width_ratio = max(1, int(width_ratio))
+    height_ratio = max(1, int(height_ratio))
+    edge = max(8, int(edge))
+    ratio_long = max(width_ratio, height_ratio)
+    ratio_short = min(width_ratio, height_ratio)
 
-        if 模式 == "按比例":
-            new_height = int(图像.shape[1] * 缩放比例)
-            new_width = int(图像.shape[2] * 缩放比例)
-        elif 模式 == "按最长边":
-            src_height = 图像.shape[1]
-            src_width = 图像.shape[2]
-            max_dim = max(src_height, src_width)
-            scale = 边长 / max_dim
-            new_height = int(src_height * scale)
-            new_width = int(src_width * scale)
-        elif 模式 == "按最短边":
-            src_height = 图像.shape[1]
-            src_width = 图像.shape[2]
-            min_dim = min(src_height, src_width)
-            scale = 边长 / min_dim
-            new_height = int(src_height * scale)
-            new_width = int(src_width * scale)
+    # 只有明确选择「最短边」才使用短边值；旧工作流中的空值或未知值按
+    # 默认的「最长边」处理，避免出现界面显示最长边、实际却按短边计算。
+    if edge_type == "最短边":
+        long_edge = int(edge * ratio_long / ratio_short)
+        short_edge = edge
+    else:
+        long_edge = edge
+        short_edge = int(edge * ratio_short / ratio_long)
+
+    if width_ratio >= height_ratio:
+        width, height = long_edge, short_edge
+    else:
+        width, height = short_edge, long_edge
+    return _align_to_eight(width), _align_to_eight(height)
+
+
+def _crop_resolution_dimensions(width_ratio: int, height_ratio: int, resolution: str) -> tuple[int, int]:
+    """按 K 数分辨率计算尺寸；K 数与 GG Latent 一样表示最长边。"""
+    long_edge = _CROP_RESOLUTION_EDGE_LENGTHS.get(resolution, _CROP_RESOLUTION_EDGE_LENGTHS["1K"])
+    ratio_long = max(int(width_ratio), int(height_ratio))
+    ratio_short = min(int(width_ratio), int(height_ratio))
+    short_edge = round(long_edge * ratio_short / ratio_long)
+    if width_ratio >= height_ratio:
+        return _align_to_eight(long_edge), _align_to_eight(short_edge)
+    return _align_to_eight(short_edge), _align_to_eight(long_edge)
+
+
+def _crop_apply_orientation(width_ratio: int, height_ratio: int, orientation: str) -> tuple[int, int]:
+    if orientation == "横屏" and width_ratio < height_ratio:
+        return height_ratio, width_ratio
+    if orientation == "竖屏" and width_ratio > height_ratio:
+        return height_ratio, width_ratio
+    return width_ratio, height_ratio
+
+
+def _do_crop(图像: torch.Tensor, 模式: str = "中心裁剪",
+             宽度: int = 512, 高度: int = 512, X坐标: int = 0, Y坐标: int = 0,
+             宽高比例: str = "16:9", 边长: int = 1024, 边长类型: str = "最长边",
+             画面方向: str = "横屏", 分辨率: str = "1K") -> torch.Tensor:
+    if 图像 is None:
+        return _empty_image()
+
+    img_height, img_width = 图像.shape[1], 图像.shape[2]
+
+    def safe_crop(x: int, y: int, width: int, height: int) -> torch.Tensor:
+        width = max(1, min(int(width), img_width))
+        height = max(1, min(int(height), img_height))
+        x = max(0, min(int(x), img_width - width))
+        y = max(0, min(int(y), img_height - height))
+        return 图像[:, y:y+height, x:x+width, :].contiguous()
+
+    if 模式 in ("按比例裁剪", "按K数分辨率"):
+        if 宽高比例 not in _CROP_ASPECT_PRESETS:
+            raise ValueError(f"不支持的宽高比例「{宽高比例}」。")
+        wr, hr = _CROP_ASPECT_PRESETS[宽高比例]
+        if 模式 == "按K数分辨率":
+            wr, hr = _crop_apply_orientation(wr, hr, 画面方向)
+            target_width, target_height = _crop_resolution_dimensions(wr, hr, 分辨率)
         else:
-            new_height = int(图像.shape[1] * 缩放比例)
-            new_width = int(图像.shape[2] * 缩放比例)
+            target_width, target_height = _crop_ratio_dimensions(wr, hr, 边长, 边长类型)
 
-        new_width = _align_to_eight(new_width)
-        new_height = _align_to_eight(new_height)
-
-        if 插值方法 == "nearest":
-            mode = "nearest"
-        elif 插值方法 == "bicubic":
-            mode = "bicubic"
+        if target_width <= img_width and target_height <= img_height:
+            crop_width = target_width
+            crop_height = target_height
+        elif img_width * hr <= img_height * wr:
+            crop_width = img_width
+            crop_height = max(1, min(img_height, int(img_width * hr / wr)))
         else:
-            mode = "bilinear"
+            crop_height = img_height
+            crop_width = max(1, min(img_width, int(img_height * wr / hr)))
 
-        return (_resize_image(图像, new_height, new_width, mode),)
+        x = (img_width - crop_width) // 2
+        y = (img_height - crop_height) // 2
+        cropped = safe_crop(x, y, crop_width, crop_height)
+
+        if cropped.shape[1] != target_height or cropped.shape[2] != target_width:
+            cropped = _resize_image(cropped, target_height, target_width, "bilinear")
+        return cropped
+
+    if 模式 == "中心裁剪":
+        width = max(1, min(int(宽度), img_width))
+        height = max(1, min(int(高度), img_height))
+        x = (img_width - width) // 2
+        y = (img_height - height) // 2
+    else:
+        width = max(1, min(int(宽度), img_width))
+        height = max(1, min(int(高度), img_height))
+        x = X坐标
+        y = Y坐标
+
+    return safe_crop(x, y, width, height)
+
+
+def _unpack_crop_mode(value):
+    if isinstance(value, dict):
+        nested = value.get("模式")
+        if isinstance(nested, dict):
+            return nested.get("模式", "中心裁剪"), nested
+        return nested or "中心裁剪", value
+    return value or "中心裁剪", {}
 
 
 class GGImageCrop:
@@ -339,16 +435,18 @@ class GGImageCrop:
         return {
             "required": {
                 "图像": ("IMAGE",),
-                "模式": (["中心裁剪", "手动裁剪", "按比例裁剪"], {"default": "中心裁剪"}),
+                "模式": (["中心裁剪", "手动裁剪", "按比例裁剪", "按K数分辨率"], {"default": "中心裁剪"}),
             },
             "optional": {
                 "宽度": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8}),
                 "高度": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8}),
                 "X坐标": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 8}),
                 "Y坐标": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 8}),
-                "宽高比例": (["1:1", "3:2", "4:3", "5:4", "16:9", "21:9", "9:16", "2:3", "3:4", "4:5", "9:21"], {"default": "16:9"}),
+                "宽高比例": (_CROP_ASPECT_RATIOS, {"default": "16:9"}),
                 "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "边长类型": (["最长边", "最短边"], {"default": "最长边"}),
+                "边长类型": (_CROP_SIDE_TYPES, {"default": "最长边"}),
+                "画面方向": (_CROP_ORIENTATION_TYPES, {"default": "横屏"}),
+                "分辨率": (_CROP_RESOLUTION_OPTIONS, {"default": "1K"}),
             }
         }
 
@@ -359,65 +457,11 @@ class GGImageCrop:
 
     def crop(self, 图像: torch.Tensor, 模式: str = "中心裁剪",
               宽度: int = 512, 高度: int = 512, X坐标: int = 0, Y坐标: int = 0,
-              宽高比例: str = "16:9", 边长: int = 1024, 边长类型: str = "最长边") -> tuple:
-        if 图像 is None:
-            return (_empty_image(),)
-
-        img_height, img_width = 图像.shape[1], 图像.shape[2]
-
-        def safe_crop(x: int, y: int, width: int, height: int) -> torch.Tensor:
-            width = max(1, min(int(width), img_width))
-            height = max(1, min(int(height), img_height))
-            x = max(0, min(int(x), img_width - width))
-            y = max(0, min(int(y), img_height - height))
-            return 图像[:, y:y+height, x:x+width, :].contiguous()
-
-        if 模式 == "按比例裁剪":
-            aspect_presets = {"1:1": (1, 1), "3:2": (3, 2), "4:3": (4, 3), "5:4": (5, 4), "16:9": (16, 9),
-                           "21:9": (21, 9), "9:16": (9, 16), "2:3": (2, 3), "3:4": (3, 4), "4:5": (4, 5), "9:21": (9, 21)}
-
-            wr, hr = aspect_presets[宽高比例]
-            if 边长类型 == "最长边":
-                target_width = 边长 if wr > hr else int(边长 * wr / hr)
-                target_height = int(边长 * hr / wr) if wr > hr else 边长
-            else:
-                target_height = 边长 if wr > hr else int(边长 * hr / wr)
-                target_width = int(边长 * wr / hr) if wr > hr else 边长
-
-            target_width = _align_to_eight(target_width)
-            target_height = _align_to_eight(target_height)
-
-            if target_width <= img_width and target_height <= img_height:
-                crop_width = target_width
-                crop_height = target_height
-            elif img_width * hr <= img_height * wr:
-                crop_width = img_width
-                crop_height = max(1, min(img_height, int(img_width * hr / wr)))
-            else:
-                crop_height = img_height
-                crop_width = max(1, min(img_width, int(img_height * wr / hr)))
-
-            x = (img_width - crop_width) // 2
-            y = (img_height - crop_height) // 2
-            cropped = safe_crop(x, y, crop_width, crop_height)
-
-            if cropped.shape[1] != target_height or cropped.shape[2] != target_width:
-                cropped = _resize_image(cropped, target_height, target_width, "bilinear")
-            return (cropped,)
-
-        elif 模式 == "中心裁剪":
-            width = max(1, min(int(宽度), img_width))
-            height = max(1, min(int(高度), img_height))
-            x = (img_width - width) // 2
-            y = (img_height - height) // 2
-        else:
-            width = max(1, min(int(宽度), img_width))
-            height = max(1, min(int(高度), img_height))
-            x = X坐标
-            y = Y坐标
-
-        cropped = safe_crop(x, y, width, height)
-        return (cropped,)
+              宽高比例: str = "16:9", 边长: int = 1024, 边长类型: str = "最长边",
+              画面方向: str = "横屏", 分辨率: str = "1K") -> tuple:
+        return (_do_crop(
+            图像, 模式, 宽度, 高度, X坐标, Y坐标, 宽高比例, 边长, 边长类型, 画面方向, 分辨率,
+        ),)
 
 
 class GGImageTransform:
@@ -517,7 +561,7 @@ class GG色彩校正:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "execute"
-    CATEGORY = "GuliNodes/图像/色彩"
+    CATEGORY = "GuliNodes/图像"
     DESCRIPTION = "基于 ColorCorrect 的色彩校正节点，使用 torch 张量批量处理温度、色调、明度、对比度、饱和度和伽马。"
 
     def execute(self, 图像: torch.Tensor, 温度: float = 0.0, 色调: float = 0.0, 明度: float = 0.0,
@@ -1060,6 +1104,7 @@ class GGImageCompressSave(GGSaveImage):
                 "压缩模式": (["civilblur", "Caesium", "meowtec"], {"default": "civilblur"}),
                 "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
                 "目标大小KB": ("INT", {"default": 0, "min": 0, "max": 1048576, "step": 16}),
+                "清除内存": ("BOOLEAN", {"default": False, "tooltip": "保存完成后卸载模型、清理设备缓存、Python GC 和 GuliNodes VAE 缓存。"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -1079,6 +1124,7 @@ class GGImageCompressSave(GGSaveImage):
         压缩模式="civilblur",
         质量=85,
         目标大小KB=0,
+        清除内存=False,
         prompt=None,
         extra_pnginfo=None,
     ):
@@ -1125,6 +1171,11 @@ class GGImageCompressSave(GGSaveImage):
                 "type": self.type,
             })
             counter += 1
+
+        if 清除内存:
+            from .model_loaders import cleanup_all_memory
+
+            cleanup_all_memory()
 
         # 节点继承自 SaveImage，其 RETURN_TYPES = ("IMAGE",)，
         # 因此工作流可能把本节点输出连到下游。必须回传 result 元组，
@@ -1527,7 +1578,7 @@ class ImageComparerBase(PreviewImage):
 class GGImageComparer4(ImageComparerBase):
     @classmethod
     def INPUT_TYPES(s):
-        inputs, labels = s.create_image_inputs(4)
+        inputs, labels = s.create_image_inputs(20)
         base_inputs = s.get_default_inputs()
         base_inputs["optional"].update(inputs)
         base_inputs["optional"].update(labels)
@@ -1539,15 +1590,14 @@ class GGImageComparer4(ImageComparerBase):
     FUNCTION = "compare"
     CATEGORY = "GuliNodes/图像"
 
-    def compare(self, 图像_A: torch.Tensor = None, 图像_B: torch.Tensor = None, 图像_C: torch.Tensor = None, 图像_D: torch.Tensor = None,
-                标签_A: str = "图像 A", 标签_B: str = "图像 B", 标签_C: str = "图像 C", 标签_D: str = "图像 D",
-                字体大小: int = 40, 边框宽度: int = 32, 标签高度: int = 80, 图像间距: int = 20,
+    def compare(self, 字体大小: int = 40, 边框宽度: int = 32, 标签高度: int = 80, 图像间距: int = 20,
                 prompt=None, extra_pnginfo=None, **kwargs) -> dict:
         image_pairs = [
-            (图像_A, 标签_A),
-            (图像_B, 标签_B),
-            (图像_C, 标签_C),
-            (图像_D, 标签_D),
+            (
+                kwargs.get(f"图像_{chr(65 + index)}"),
+                kwargs.get(f"标签_{chr(65 + index)}", f"图像 {chr(65 + index)}"),
+            )
+            for index in range(20)
         ]
         image_pairs = [(image, label) for image, label in image_pairs if image is not None]
         if not image_pairs:
@@ -1560,7 +1610,7 @@ class GGImageComparer4(ImageComparerBase):
                 preview_images.extend(
                     self._save_compare_images(
                         image,
-                        f"GG.compare4.{chr(65 + index)}_",
+                        f"GG.compareN.{chr(65 + index)}_",
                         "JPEG",
                         prompt,
                         extra_pnginfo,
@@ -1606,170 +1656,114 @@ class GGImageComparer2(ImageComparerBase):
             )
         return result
 
-class GGImageComparer8(ImageComparerBase):
-    @classmethod
-    def INPUT_TYPES(s):
-        inputs, labels = s.create_image_inputs(8)
-        base_inputs = s.get_default_inputs()
-        base_inputs["optional"].update(inputs)
-        base_inputs["optional"].update(labels)
-        base_inputs["hidden"] = s.get_hidden_inputs()
-        return base_inputs
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("对比结果",)
-    FUNCTION = "compare"
-    CATEGORY = "GuliNodes/图像"
-
-    def compare(self, prompt=None, extra_pnginfo=None, **kwargs) -> dict:
-        image_pairs = [
-            (
-                kwargs.get(f"图像_{chr(65 + index)}"),
-                kwargs.get(f"标签_{chr(65 + index)}", f"图像 {chr(65 + index)}"),
-            )
-            for index in range(8)
-        ]
-        image_pairs = [(image, label) for image, label in image_pairs if image is not None]
-        if not image_pairs:
-            raise RuntimeError("请至少连接一张图像用于对比。")
-        images = [image for image, _ in image_pairs]
-        labels = [label for _, label in image_pairs]
-        preview_images = []
-        for index, image in enumerate(images):
-            if len(image) > 0:
-                preview_images.extend(
-                    self._save_compare_images(
-                        image,
-                        f"GG.compare8.{chr(65 + index)}_",
-                        "JPEG",
-                        prompt,
-                        extra_pnginfo,
-                    )
-                )
-        font_size = kwargs.get("字体大小", 40)
-        border = kwargs.get("边框宽度", 32)
-        label_height = kwargs.get("标签高度", 80)
-        spacing = kwargs.get("图像间距", 20)
-        comparison = images[0] if len(images) == 1 else concatenate_images_horizontally(
-            images, labels, font_size, border, label_height, spacing
-        )
-        return {
-            "ui": {"a_images": preview_images, "b_images": []},
-            "result": (comparison,),
-        }
-
-
 _缩放方法选项 = ["nearest-exact", "bilinear", "lanczos", "area", "bicubic"]
-_VAE_TILE_SIZE = 512
-_VAE_TILE_OVERLAP = 64
 
 
-def _decode_vae_image(vae, samples, use_tiled: bool):
-    if not use_tiled:
-        return vae.decode(samples)
-    if not callable(getattr(vae, "decode_tiled", None)):
-        raise RuntimeError("当前 VAE 不支持分块解码，请关闭“分块VAE”或更新 ComfyUI。")
+def _缩放图像(图像, 缩放方法="lanczos", 缩放倍率=1.5):
+    """在像素空间缩放 IMAGE，并只返回缩放后的图像。"""
+    if not isinstance(图像, torch.Tensor) or 图像.ndim != 4:
+        raise ValueError("图像输入必须是 ComfyUI IMAGE 格式（批量、高度、宽度、通道）。")
+
+    if 缩放方法 not in _缩放方法选项:
+        raise ValueError(f"不支持的缩放方法「{缩放方法}」。")
 
     try:
-        compression = max(1, int(vae.spacial_compression_decode()))
-    except Exception:
-        compression = 8
-    return vae.decode_tiled(
-        samples,
-        tile_x=max(1, _VAE_TILE_SIZE // compression),
-        tile_y=max(1, _VAE_TILE_SIZE // compression),
-        overlap=max(0, _VAE_TILE_OVERLAP // compression),
-    )
+        倍率 = float(缩放倍率)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("缩放倍率必须是有效数字。") from exc
+    if not torch.isfinite(torch.tensor(倍率)) or 倍率 <= 0:
+        raise ValueError("缩放倍率必须大于 0。")
+    倍率 = min(10000.0, max(0.1, 倍率))
 
+    _, 原始高度, 原始宽度, _ = 图像.shape
+    目标高度 = max(1, round(原始高度 * 倍率))
+    目标宽度 = max(1, round(原始宽度 * 倍率))
 
-def _encode_vae_image(vae, image, use_tiled: bool):
-    if not use_tiled:
-        return vae.encode(image)
-    if not callable(getattr(vae, "encode_tiled", None)):
-        raise RuntimeError("当前 VAE 不支持分块编码，请关闭“分块VAE”或更新 ComfyUI。")
-    return vae.encode_tiled(
-        image,
-        tile_x=_VAE_TILE_SIZE,
-        tile_y=_VAE_TILE_SIZE,
-        overlap=_VAE_TILE_OVERLAP,
-    )
+    缩放后 = 图像.movedim(-1, 1)
+    缩放后 = comfy.utils.common_upscale(缩放后, 目标宽度, 目标高度, 缩放方法, "disabled")
+    缩放后 = 缩放后.movedim(1, -1)
+
+    return 缩放后
+
 
 class GG图像缩放:
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "Latent": ("LATENT",),
-                "VAE": ("VAE",),
+                "图像": ("IMAGE",),
                 "缩放方法": (_缩放方法选项[:], {"default": "lanczos"}),
                 "缩放倍率": ("FLOAT", {"default": 1.5, "min": 0.1, "max": 10000.0, "step": 0.05}),
-                "分块VAE": ("BOOLEAN", {"default": False}),
-            },
-            "optional": {
-                "放大模型": ("UPSCALE_MODEL",),
             },
         }
 
-    RETURN_TYPES = ("LATENT", "IMAGE")
-    RETURN_NAMES = ("Latent", "预览图像")
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("图像",)
     FUNCTION = "execute"
     CATEGORY = "GuliNodes/潜空间"
 
-    def execute(self, Latent, VAE, 缩放方法="lanczos", 缩放倍率=1.5, 分块VAE=False, 放大模型=None):
-        倍率 = max(0.1, float(缩放倍率))
-        原始图像 = _decode_vae_image(VAE, Latent["samples"], 分块VAE)
-        if len(原始图像.shape) == 5:
-            原始图像 = 原始图像.reshape(-1, 原始图像.shape[-3], 原始图像.shape[-2], 原始图像.shape[-1])
-
-        if 放大模型 is not None:
-            from nodes import NODE_CLASS_MAPPINGS as _NCM
-            _upscale_cls = _NCM.get("ImageUpscaleWithModel")
-            if _upscale_cls is not None:
-                _upscaler = _upscale_cls()
-                当前宽度 = 原始图像.shape[2]
-                目标宽度 = int(当前宽度 * 倍率)
-                while 原始图像.shape[2] < 目标宽度:
-                    if hasattr(_upscaler, "execute"):
-                        原始图像 = _upscaler.execute(放大模型, 原始图像)[0]
-                    else:
-                        原始图像 = _upscaler.upscale(放大模型, 原始图像)[0]
-                    if 原始图像.shape[2] == 当前宽度:
-                        break
-                    当前宽度 = 原始图像.shape[2]
-
-        原始高度 = 原始图像.shape[1]
-        原始宽度 = 原始图像.shape[2]
-        目标高度 = max(1, round(原始高度 * 倍率))
-        目标宽度 = max(1, round(原始宽度 * 倍率))
-
-        缩放后 = 原始图像.movedim(-1, 1)
-        缩放后 = comfy.utils.common_upscale(缩放后, 目标宽度, 目标高度, 缩放方法, "disabled")
-        缩放后 = 缩放后.movedim(1, -1)
-
-        新Latent = _encode_vae_image(VAE, 缩放后, 分块VAE)
-        return ({"samples": 新Latent}, 缩放后)
-
-
-class GG图像尺寸读取:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "图像": ("IMAGE",),
-            },
-        }
-
-    RETURN_TYPES = ("INT", "INT")
-    RETURN_NAMES = ("宽度", "高度")
-    FUNCTION = "execute"
-    CATEGORY = "GuliNodes/图像"
-
-    def execute(self, 图像):
-        _, 高度, 宽度, _ = 图像.shape
-        return (宽度, 高度)
+    def execute(self, 图像, 缩放方法="lanczos", 缩放倍率=1.5):
+        return (_缩放图像(图像, 缩放方法, 缩放倍率),)
 
 
 if io is not None:
+
+    class GGImageCropV3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GGImageCrop",
+                display_name="GG 图像裁剪",
+                category="GuliNodes/图像",
+                description="按中心、手动坐标、指定宽高比或 K 数分辨率裁剪图像，仅显示当前模式生效的参数。",
+                inputs=[
+                    io.Image.Input("图像"),
+                    io.DynamicCombo.Input("模式", options=[
+                        io.DynamicCombo.Option(key="中心裁剪", inputs=[
+                            io.Int.Input("宽度", default=512, min=64, max=4096, step=8),
+                            io.Int.Input("高度", default=512, min=64, max=4096, step=8),
+                        ]),
+                        io.DynamicCombo.Option(key="手动裁剪", inputs=[
+                            io.Int.Input("宽度", default=512, min=64, max=4096, step=8),
+                            io.Int.Input("高度", default=512, min=64, max=4096, step=8),
+                            io.Int.Input("X坐标", default=0, min=0, max=4096, step=8),
+                            io.Int.Input("Y坐标", default=0, min=0, max=4096, step=8),
+                        ]),
+                        io.DynamicCombo.Option(key="按比例裁剪", inputs=[
+                            io.Combo.Input("宽高比例", options=_CROP_ASPECT_RATIOS, default="16:9"),
+                            io.Int.Input("边长", default=1024, min=64, max=8192, step=8),
+                            io.Combo.Input("边长类型", options=_CROP_SIDE_TYPES, default="最长边"),
+                        ]),
+                        io.DynamicCombo.Option(key="按K数分辨率", inputs=[
+                            io.Combo.Input("宽高比例", options=_CROP_K_ASPECT_RATIOS, default="9:16"),
+                            io.Combo.Input("画面方向", options=_CROP_ORIENTATION_TYPES, default="横屏"),
+                            io.Combo.Input("分辨率", options=_CROP_RESOLUTION_OPTIONS, default="1K"),
+                        ]),
+                    ]),
+                ],
+                outputs=[
+                    io.Image.Output(display_name="图像"),
+                ],
+            )
+
+        @classmethod
+        def execute(cls, 图像, 模式):
+            mode, values = _unpack_crop_mode(模式)
+            return io.NodeOutput(_do_crop(
+                图像,
+                mode,
+                values.get("宽度", 512),
+                values.get("高度", 512),
+                values.get("X坐标", 0),
+                values.get("Y坐标", 0),
+                values.get("宽高比例", "16:9"),
+                values.get("边长", 1024),
+                values.get("边长类型", "最长边"),
+                values.get("画面方向", "横屏"),
+                values.get("分辨率", "1K"),
+            ))
+
+    GGImageCrop = GGImageCropV3
 
     class GG图像缩放_V3(io.ComfyNode):
         @classmethod
@@ -1779,83 +1773,24 @@ if io is not None:
                 display_name="GG 图像缩放",
                 category="GuliNodes/潜空间",
                 description=(
-                    "在像素空间中对 Latent 进行高质量缩放。"
-                    "先将潜空间解码为像素图像，按指定倍率和算法缩放后，再编码回潜空间。"
-                    "支持可选的放大模型增强和分块 VAE 编解码以节省显存。"
+                    "根据输入图像的实际宽度和高度，在像素空间中按倍率和指定算法缩放。"
+                    "仅输出缩放后的图像。"
                 ),
                 inputs=[
-                    io.Latent.Input("Latent"),
-                    io.Vae.Input("VAE"),
+                    io.Image.Input("图像", tooltip="参考图像，节点会自动读取其宽度和高度。"),
                     io.Combo.Input("缩放方法", options=_缩放方法选项, default="lanczos"),
                     io.Float.Input("缩放倍率", default=1.5, min=0.1, max=10000.0, step=0.05),
-                    io.Boolean.Input("分块VAE", default=False),
-                    io.UpscaleModel.Input("放大模型", optional=True),
                 ],
                 outputs=[
-                    io.Latent.Output(display_name="Latent"),
-                    io.Image.Output(display_name="预览图像"),
+                    io.Image.Output(display_name="图像"),
                 ],
             )
 
         @classmethod
-        def execute(cls, Latent, VAE, 缩放方法="lanczos", 缩放倍率=1.5, 分块VAE=False, 放大模型=None):
-            倍率 = max(0.1, float(缩放倍率))
-            原始图像 = _decode_vae_image(VAE, Latent["samples"], 分块VAE)
-            if len(原始图像.shape) == 5:
-                原始图像 = 原始图像.reshape(-1, 原始图像.shape[-3], 原始图像.shape[-2], 原始图像.shape[-1])
-
-            if 放大模型 is not None:
-                from nodes import NODE_CLASS_MAPPINGS as _NCM
-                _upscale_cls = _NCM.get("ImageUpscaleWithModel")
-                if _upscale_cls is not None:
-                    _upscaler = _upscale_cls()
-                    当前宽度 = 原始图像.shape[2]
-                    目标宽度 = int(当前宽度 * 倍率)
-                    while 原始图像.shape[2] < 目标宽度:
-                        if hasattr(_upscaler, "execute"):
-                            原始图像 = _upscaler.execute(放大模型, 原始图像)[0]
-                        else:
-                            原始图像 = _upscaler.upscale(放大模型, 原始图像)[0]
-                        if 原始图像.shape[2] == 当前宽度:
-                            break
-                        当前宽度 = 原始图像.shape[2]
-
-            原始高度 = 原始图像.shape[1]
-            原始宽度 = 原始图像.shape[2]
-            目标高度 = max(1, round(原始高度 * 倍率))
-            目标宽度 = max(1, round(原始宽度 * 倍率))
-
-            缩放后 = 原始图像.movedim(-1, 1)
-            缩放后 = comfy.utils.common_upscale(缩放后, 目标宽度, 目标高度, 缩放方法, "disabled")
-            缩放后 = 缩放后.movedim(1, -1)
-
-            新Latent = _encode_vae_image(VAE, 缩放后, 分块VAE)
-            return io.NodeOutput({"samples": 新Latent}, 缩放后)
+        def execute(cls, 图像, 缩放方法="lanczos", 缩放倍率=1.5):
+            return io.NodeOutput(_缩放图像(图像, 缩放方法, 缩放倍率))
 
     GG图像缩放 = GG图像缩放_V3
-
-    class GG图像尺寸读取_V3(io.ComfyNode):
-        @classmethod
-        def define_schema(cls):
-            return io.Schema(
-                node_id="GG图像尺寸读取",
-                display_name="GG 图像尺寸读取",
-                category="GuliNodes/图像",
-                inputs=[
-                    io.Image.Input("图像"),
-                ],
-                outputs=[
-                    io.Int.Output("宽度"),
-                    io.Int.Output("高度"),
-                ],
-            )
-
-        @classmethod
-        def execute(cls, 图像):
-            _, 高度, 宽度, _ = 图像.shape
-            return io.NodeOutput(宽度, 高度)
-
-    GG图像尺寸读取 = GG图像尺寸读取_V3
 
     class GG色彩校正_V3(io.ComfyNode):
         @classmethod
@@ -1863,7 +1798,7 @@ if io is not None:
             return io.Schema(
                 node_id="GG色彩校正",
                 display_name="GG 色彩校正",
-                category="GuliNodes/图像/色彩",
+                category="GuliNodes/图像",
                 description=(
                     "基于 ColorCorrect 的色彩校正节点。"
                     "使用 torch 张量批量处理温度、色调、明度、对比度、饱和度和伽马，"
@@ -1892,7 +1827,6 @@ if io is not None:
 
 
 NODE_CLASS_MAPPINGS = {
-    "GGImageResize": GGImageResize,
     "GGImageCrop": GGImageCrop,
     "GGImageTransform": GGImageTransform,
     "GGImageAdjust": GGImageAdjust,
@@ -1904,14 +1838,11 @@ NODE_CLASS_MAPPINGS = {
     "GGImageCompress": GGImageCompress,
     "GGImageComparer2": GGImageComparer2,
     "GGImageComparer4": GGImageComparer4,
-    "GGImageComparer8": GGImageComparer8,
     "GG图像缩放": GG图像缩放,
-    "GG图像尺寸读取": GG图像尺寸读取,
 }
 
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "GGImageResize": "GG 尺寸调整",
     "GGImageCrop": "GG 图像裁剪",
     "GGImageTransform": "GG 图像变换",
     "GGImageAdjust": "GG 图像调整",
@@ -1922,8 +1853,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GGImageCompressSave": "GG 图像压缩保存",
     "GGImageCompress": "GG 图像压缩",
     "GGImageComparer2": "GG 图像对比 2张",
-    "GGImageComparer4": "GG 图像对比 4张",
-    "GGImageComparer8": "GG 图像对比 8张",
+    "GGImageComparer4": "GG 图像对比 N张",
     "GG图像缩放": "GG 图像缩放",
-    "GG图像尺寸读取": "GG 图像尺寸读取",
 }

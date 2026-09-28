@@ -5,7 +5,7 @@ import { api } from "../../scripts/api.js";
  * GG 发送到素言：画布顶部按钮。
  * 点击后把当前画布上：
  *   - 非跳过的图像保存节点（GGSaveImage / GGImageCompressSave / SaveImage）的「最新一张」输出，
- *   - 非跳过的图像对比节点（GGImageComparer2/4/8）的「最新一组」图像，
+ *   - 非跳过的图像对比节点（GGImageComparer2/4）的「最新一组」图像，
  *   - 非跳过节点链路上的正面提示词（包括 easy positive / CLIPTextEncode 等），
  * 推送为同一批次到素言本地收件服务（http://127.0.0.1:9477/guli/suyan/import）。
  */
@@ -29,7 +29,6 @@ const SAVE_NODE_NAMES = new Set([
 const COMPARER_NODE_NAMES = new Set([
     "GGImageComparer2",
     "GGImageComparer4",
-    "GGImageComparer8",
 ]);
 
 // 文本节点白名单。实际选择仍由采样器正面链路和输入语义决定，避免把
@@ -38,7 +37,6 @@ const TEXT_NODE_NAMES = new Set([
     "CLIPTextEncode",
     "CLIPTextEncodeSDXL",
     "CLIPTextEncodeFlux",
-    "GGCLIPTextEncode",
     "GGCLIPText",
     "easy positive",
     "easy negative",

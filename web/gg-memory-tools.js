@@ -65,24 +65,41 @@ app.registerExtension({
             });
         };
 
-        const runCleanup = async (label, payload) => {
+        const runCleanup = async (label) => {
             if (isBusy) return;
             setBusy(true);
 
             try {
-                const response = await api.fetchApi("/free", {
+                let response = await api.fetchApi("/guli/memory/cleanup", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload),
+                    body: "{}",
                     cache: "no-store",
                 });
+
+                if (!response?.ok) {
+                    // Older installations may not have the GuliNodes route yet.
+                    response = await api.fetchApi("/free", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ unload_models: true, free_memory: true }),
+                        cache: "no-store",
+                    });
+                }
 
                 if (!response?.ok) {
                     const text = await response?.text?.();
                     throw new Error(text || `HTTP ${response?.status || "unknown"}`);
                 }
 
-                notify(`${label}请求已提交`, "ComfyUI 会安全释放可卸载的模型与缓存。");
+                let report = "";
+                try {
+                    const result = await response.json();
+                    report = result?.report || "";
+                } catch {
+                    // The legacy /free route may return an empty response.
+                }
+                notify(`${label}已完成`, report || "已释放可清理的模型、缓存和设备显存。");
             } catch (error) {
                 notify(`${label}失败`, error?.message || String(error), "error");
             } finally {
@@ -101,20 +118,15 @@ app.registerExtension({
             return button;
         };
 
-        const releaseModelButton = createButton({
-            title: "释放模型显存",
-            icon: "modelUnload",
-            action: () => runCleanup("模型显存释放", { unload_models: true }),
-        });
-        const deepCleanupButton = createButton({
-            title: "深度清理内存/显存",
+        const cleanupButton = createButton({
+            title: "释放模型并深度清理内存/显存",
             icon: "memorySweep",
-            action: () => runCleanup("深度清理", { unload_models: true, free_memory: true }),
+            action: () => runCleanup("内存与显存清理"),
         });
 
-        buttons = [releaseModelButton, deepCleanupButton];
+        buttons = [cleanupButton];
         groupEl = ComfyButtonGroup ? new ComfyButtonGroup().element : document.createElement("div");
-        groupEl.append(releaseModelButton, deepCleanupButton);
+        groupEl.append(cleanupButton);
 
         groupEl.id = "gg-memory-cleanup-buttons";
         groupEl.classList.add("gg-memory-cleanup-host");
@@ -163,9 +175,9 @@ app.registerExtension({
                 padding: 0 !important;
                 margin: 0 !important;
                 border-radius: 8px;
-                border: 1px solid var(--gg-ui-accent-border) !important;
-                background: var(--gg-ui-accent-soft) !important;
-                color: var(--gg-ui-accent) !important;
+                border: 1px solid rgba(148,163,184,0.28) !important;
+                background: rgba(148,163,184,0.10) !important;
+                color: var(--gg-ui-muted, #64748b) !important;
                 box-shadow: none !important;
                 appearance: none;
                 display: inline-flex !important;

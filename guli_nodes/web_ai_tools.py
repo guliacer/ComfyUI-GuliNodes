@@ -520,16 +520,23 @@ class GGWebAIReverseText:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "小说内容": ("STRING", {"default": "", "multiline": True, "dynamicPrompts": False}),
                 "TXT文件": (_list_txt_files(), {"default": NO_TXT_FILE, "defaultInput": True}),
+                "输出格式": (["Markdown", "JSON", "纯文本"], {"default": "Markdown"}),
+                "小说内容": ("STRING", {"default": "", "multiline": True, "dynamicPrompts": False}),
                 "提取规则": ("STRING", {"default": DEFAULT_NOVEL_RULES, "multiline": True, "dynamicPrompts": False}),
                 "总结要求": ("STRING", {"default": DEFAULT_SUMMARY_REQUIREMENTS, "multiline": True, "dynamicPrompts": False}),
-                "输出格式": (["Markdown", "JSON", "纯文本"], {"default": "Markdown"}),
             },
             "optional": {
                 "模型": ("GGLLAMA",),
                 "文本输入": ("STRING", {"forceInput": True}),
                 "TXT路径": ("STRING", {"default": "", "multiline": False, "dynamicPrompts": False}),
+                "最大输出Token": ("INT", {"default": 2048, "min": 1, "max": 200000, "step": 128}),
+                "最大输入字符": ("INT", {"default": 12000, "min": 0, "max": 500000, "step": 1000}),
+                "温度": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 2.0, "step": 0.05}),
+                "top_p采样": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "top_k采样": ("INT", {"default": 20, "min": 0, "max": 200, "step": 1}),
+                "输出think块": ("BOOLEAN", {"default": False}),
+                "API配置": ("STRING", {"forceInput": True}),
                 "系统提示词": (
                     "STRING",
                     {
@@ -538,13 +545,6 @@ class GGWebAIReverseText:
                         "dynamicPrompts": False,
                     },
                 ),
-                "最大输出Token": ("INT", {"default": 2048, "min": 1, "max": 200000, "step": 128}),
-                "最大输入字符": ("INT", {"default": 12000, "min": 0, "max": 500000, "step": 1000}),
-                "温度": ("FLOAT", {"default": 0.2, "min": 0.0, "max": 2.0, "step": 0.05}),
-                "top_p采样": ("FLOAT", {"default": 0.9, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "top_k采样": ("INT", {"default": 20, "min": 0, "max": 200, "step": 1}),
-                "输出think块": ("BOOLEAN", {"default": False}),
-                "API配置": ("STRING", {"forceInput": True}),
             },
         }
 

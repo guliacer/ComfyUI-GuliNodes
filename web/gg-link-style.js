@@ -5,6 +5,12 @@ import { ggIcon } from "./gg-ui-icons.js";
 const PREFIX = "GuliNodes.linkStyle";
 const TOP_BUTTONS_SETTING = "GuliNodes.enableLinkStyleButtons";
 const MENU_DISPLAY_SETTING = "Comfy.UseNewMenu";
+// A pointer gesture flag that never saw its pointerup (mouse released outside
+// the window, alt-tab, a context menu swallowing the event) must stop counting
+// as "interacting" after a while, or the custom renderer stays off forever.
+const GESTURE_TIMEOUT_MS = 4000;
+// Watchdog cadence for the link-style self-heal (see startLinkStyleWatchdog).
+const LINK_WATCHDOG_INTERVAL_MS = 2000;
 
 const SETTINGS = {
   enabled: `${PREFIX}.enabled`,
@@ -56,13 +62,29 @@ const DASH_ENERGY_WAVE = "能量波";
 const DASH_LASER = "激光";
 const DASH_PARTICLE = "粒子流";
 const DASH_GRADIENT = "渐变流动";
+const DASH_AURORA = "极光";
+const DASH_HELIX = "双螺旋";
+const DASH_WAVE = "波涛";
+const DASH_GALAXY = "星河";
 const DASH_TEXTURE = "自定义贴图";
+const DASH_VOID = "虚空";
+const VOID_LINK_COLOR = "#2b3138";
+const VOID_STUB_LENGTH_PX = 10;
 
 const ALL_DASH_STYLES = [
   DASH_SOLID, DASH_FLOW, DASH_FLOW_SOLID,
   DASH_PULSE, DASH_LIGHTNING, DASH_METEOR,
   DASH_ENERGY_WAVE, DASH_LASER,
-  DASH_PARTICLE, DASH_GRADIENT, DASH_TEXTURE,
+  DASH_PARTICLE, DASH_GRADIENT,
+  DASH_AURORA, DASH_HELIX, DASH_WAVE, DASH_GALAXY,
+  DASH_TEXTURE, DASH_VOID,
+];
+
+// 动画类样式清单：drawOverlay 与 ensureAnimation 共用一份，避免两处列表失步。
+const ANIMATED_STYLES = [
+  DASH_FLOW, DASH_FLOW_SOLID, DASH_PULSE, DASH_LIGHTNING, DASH_METEOR,
+  DASH_ENERGY_WAVE, DASH_LASER, DASH_PARTICLE, DASH_GRADIENT,
+  DASH_AURORA, DASH_HELIX, DASH_WAVE, DASH_GALAXY,
 ];
 
 let animationFrame = null;
@@ -198,18 +220,61 @@ function onStyleSettingChanged() {
 
 function getLinks(graph) {
   if (!graph) return [];
-  if (graph._links instanceof Map) return [...graph._links.values()];
-  const links = graph.links ?? graph._links ?? {};
-  return Array.isArray(links) ? links.filter(Boolean) : Object.values(links).filter(Boolean);
+  // 新版 litegraph 的连线存放在 graph.links —— 一个 Map-like 的 Proxy（对 LinkMap 的
+  // 代理），`instanceof Map` 未必为真，但一定有 values()。旧版用 graph._links(Map)。
+  // 只要对象带 values() 就当 Map-like 遍历，避免因 instanceof 判断失败而读空、导致
+  // 自定义连线画不出来（连线消失）。
+  for (const container of [graph.links, graph._links]) {
+    if (!container) continue;
+    try {
+      if (typeof container.values === "function") {
+        const arr = [...container.values()].filter(Boolean);
+        if (arr.length) return arr;
+      } else if (Array.isArray(container)) {
+        const arr = container.filter(Boolean);
+        if (arr.length) return arr;
+      } else if (typeof container === "object") {
+        const arr = Object.values(container).filter(Boolean);
+        if (arr.length) return arr;
+      }
+    } catch (_) {
+      // 某些代理在图切换瞬间可能抛错，忽略后尝试下一个来源。
+    }
+  }
+  return [];
 }
 
 function linkField(link, objectKey, arrayIndex) {
   return link?.[objectKey] ?? (Array.isArray(link) ? link[arrayIndex] : undefined);
 }
 
+// 子图边界 I/O 节点（inputNode.id=-10 / outputNode.id=-20）不在 _nodes_by_id 里，
+// getNodeById 找不到它们；连往边界的连线因此无法解析。这里补上解析，让子图页面
+// 的边界连线也能画出来。
+function isSubgraphBoundaryNode(node) {
+  const sg = node?.subgraph;
+  return !!sg && (node === sg.inputNode || node === sg.outputNode);
+}
+
 function nodeById(graph, id) {
   if (id == null) return null;
-  return graph?.getNodeById?.(id) ?? (graph?.nodes ?? graph?._nodes ?? []).find((node) => String(node.id) === String(id));
+  const direct = graph?.getNodeById?.(id) ?? (graph?.nodes ?? graph?._nodes ?? []).find((node) => String(node.id) === String(id));
+  if (direct) return direct;
+  const input = graph?.inputNode;
+  if (input && String(input.id) === String(id)) return input;
+  const output = graph?.outputNode;
+  if (output && String(output.id) === String(id)) return output;
+  return null;
+}
+
+// 子图边界节点的连线锚点就是对应 SubgraphSlot 的 pos（图坐标），与原生 drawConnections
+// 里 `t.pos` 一致。取不到时返回 null，交回通用路径兜底。
+function boundarySlotPos(node, slot) {
+  const pos = node?.slots?.[slot]?.pos;
+  if (Array.isArray(pos) && pos.length >= 2 && Number.isFinite(pos[0]) && Number.isFinite(pos[1])) {
+    return [pos[0], pos[1]];
+  }
+  return null;
 }
 
 let _activeNodeCache = null;
@@ -399,7 +464,6 @@ function startNodeStateWatcher() {
       styleObserver.observe(el, { attributes: true, attributeFilter: ["style", "class"] });
     });
 
-    setInterval(() => { invalidateActiveCache(); }, 200);
   };
   setTimeout(tryStart, 1000);
 }
@@ -455,6 +519,14 @@ function shouldDraw(canvas, link, cfg) {
 
 function connectionPos(node, isInput, slot) {
   const out = [0, 0];
+  if (isSubgraphBoundaryNode(node)) {
+    const pos = boundarySlotPos(node, slot);
+    if (pos) return pos;
+  }
+  if (globalThis.LiteGraph?.vueNodesMode && node?.getSlotPosition) {
+    const vuePosition = node.getSlotPosition(slot, isInput);
+    if (Array.isArray(vuePosition) && vuePosition.length >= 2) return vuePosition;
+  }
   if (node?.getConnectionPos) return node.getConnectionPos(isInput, slot, out) || out;
   const x = node?.pos?.[0] ?? 0;
   const y = node?.pos?.[1] ?? 0;
@@ -464,9 +536,11 @@ function connectionPos(node, isInput, slot) {
 }
 
 function linkColor(canvas, link, originNode, cfg) {
+  if (cfg.dashStyle === DASH_VOID && cfg.colorMode !== COLOR_CUSTOM) return VOID_LINK_COLOR;
   if (cfg.colorMode === COLOR_CUSTOM) return cfg.customColor;
   const originSlot = linkField(link, "origin_slot", 2) ?? 0;
-  const output = originNode?.outputs?.[originSlot];
+  // 普通节点从 outputs 取端口；子图输入边界节点没有 outputs，改从 slots 取。
+  const output = originNode?.outputs?.[originSlot] ?? originNode?.slots?.[originSlot];
   const type = output?.type || linkField(link, "type", 5);
   return output?.color
     || canvas?.default_connection_color_byType?.[type]
@@ -523,7 +597,32 @@ function applyDash(ctx, cfg) {
   }
 }
 
-function drawStyledLink(ctx, from, to, color, cfg) {
+function drawVoidLink(ctx, from, to, color, cfg, canvas) {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const distance = Math.hypot(dx, dy);
+  if (!Number.isFinite(distance) || distance < 0.1) return;
+
+  const scale = Number(canvas?.ds?.scale) || 1;
+  const stubLength = Math.min(VOID_STUB_LENGTH_PX / scale, distance / 2);
+  const horizontal = Math.abs(dx) >= Math.abs(dy) * 0.35;
+  const direction = horizontal
+    ? [Math.sign(dx) || 1, 0]
+    : [0, Math.sign(dy) || 1];
+
+  ctx.setLineDash([]);
+  ctx.lineDashOffset = 0;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = cfg.lineWidth;
+  ctx.beginPath();
+  ctx.moveTo(from[0], from[1]);
+  ctx.lineTo(from[0] + direction[0] * stubLength, from[1] + direction[1] * stubLength);
+  ctx.moveTo(to[0], to[1]);
+  ctx.lineTo(to[0] - direction[0] * stubLength, to[1] - direction[1] * stubLength);
+  ctx.stroke();
+}
+
+function drawStyledLink(ctx, from, to, color, cfg, canvas) {
   ctx.save();
   ctx.globalAlpha = cfg.opacity;
   ctx.lineCap = "round";
@@ -531,7 +630,9 @@ function drawStyledLink(ctx, from, to, color, cfg) {
 
   const style = cfg.dashStyle;
 
-  if (style === DASH_PULSE) {
+  if (style === DASH_VOID) {
+    drawVoidLink(ctx, from, to, color, cfg, canvas);
+  } else if (style === DASH_PULSE) {
     drawPulseLink(ctx, from, to, color, cfg);
   } else if (style === DASH_LIGHTNING) {
     drawLightningLink(ctx, from, to, color, cfg);
@@ -545,6 +646,14 @@ function drawStyledLink(ctx, from, to, color, cfg) {
     drawParticleLink(ctx, from, to, color, cfg);
   } else if (style === DASH_GRADIENT) {
     drawGradientLink(ctx, from, to, color, cfg);
+  } else if (style === DASH_AURORA) {
+    drawAuroraLink(ctx, from, to, color, cfg);
+  } else if (style === DASH_HELIX) {
+    drawHelixLink(ctx, from, to, color, cfg);
+  } else if (style === DASH_WAVE) {
+    drawWaveLink(ctx, from, to, color, cfg);
+  } else if (style === DASH_GALAXY) {
+    drawGalaxyLink(ctx, from, to, color, cfg);
   } else if (style === DASH_TEXTURE && cachedTextureImage) {
     drawTextureLink(ctx, from, to, color, cfg);
   } else if (style === DASH_FLOW_SOLID) {
@@ -555,8 +664,8 @@ function drawStyledLink(ctx, from, to, color, cfg) {
   } else {
     applyDash(ctx, cfg);
 
-    if (cfg.glow && style !== DASH_PULSE && style !== DASH_LIGHTNING &&
-        style !== DASH_METEOR && style !== DASH_ENERGY_WAVE && style !== DASH_LASER) {
+    // 走到这里只剩实线/流动虚线/流动实线/无贴图回退，都是简单描边，可直接发光。
+    if (cfg.glow) {
       ctx.strokeStyle = color;
       ctx.lineWidth = cfg.lineWidth + 4;
       ctx.shadowColor = color;
@@ -613,7 +722,9 @@ function pointOnPath(points, t) {
     }
     targetDist -= segLen;
   }
-  return to;
+  // 浮点边界下 targetDist 可能略超总长，此时直接取终点；
+  // 旧实现 return to 引用了不存在的变量，一旦触发会让整帧绘制抛错回退原生渲染。
+  return points[points.length - 1];
 }
 
 function drawNeonLink(ctx, from, to, color, cfg) {
@@ -916,6 +1027,225 @@ function perpVector(points, idx) {
   return [-dy / len, dx / len];
 }
 
+// 极光：多层宽柔光带慢速摇曳 + 明暗呼吸，中央一条提亮芯线。安静、优雅，适合长时间挂着的工作流。
+function drawAuroraLink(ctx, from, to, color, cfg) {
+  const points = samplePathPoints(from, to, cfg.pathStyle);
+  if (points.length < 2) return;
+  const time = performance.now() / (1600 / cfg.speed);
+  const c = parseColor(color);
+
+  const auroraPoint = (i, sway) => {
+    const perp = perpVector(points, i);
+    return [points[i][0] + perp[0] * sway, points[i][1] + perp[1] * sway];
+  };
+
+  for (let layer = 4; layer >= 1; layer--) {
+    ctx.beginPath();
+    for (let i = 0; i < points.length; i++) {
+      const t = i / (points.length - 1);
+      const sway = Math.sin(t * 5 - time * 2.2 + layer * 1.7) * (layer * 1.1)
+        + Math.sin(t * 11 + time * 1.4) * 0.7;
+      const p = auroraPoint(i, sway);
+      if (i === 0) ctx.moveTo(p[0], p[1]);
+      else ctx.lineTo(p[0], p[1]);
+    }
+    const breathe = 0.5 + 0.5 * Math.sin(time * 1.7 + layer * 0.9);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = cfg.lineWidth + layer * 2.4;
+    ctx.globalAlpha = cfg.opacity * (0.1 - (layer - 1) * 0.02 + (0.07 - (layer - 1) * 0.01) * breathe);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 6 + layer * 2.5;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    const sway = Math.sin(i / (points.length - 1) * 5 - time * 2.2) * 0.6
+      + Math.sin(i / (points.length - 1) * 11 + time * 1.4) * 0.3;
+    const p = auroraPoint(i, sway);
+    if (i === 0) ctx.moveTo(p[0], p[1]);
+    else ctx.lineTo(p[0], p[1]);
+  }
+  ctx.strokeStyle = `rgba(${Math.min(255, c.r + 90)},${Math.min(255, c.g + 90)},${Math.min(255, c.b + 90)},1)`;
+  ctx.lineWidth = Math.max(0.8, cfg.lineWidth * 0.5);
+  ctx.globalAlpha = cfg.opacity * (0.65 + 0.3 * Math.sin(time * 1.7));
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 6;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+// 双螺旋：两条相位相反的正弦链沿路径缠绕流动，张开处用横档相连，中间留一条淡主线。
+function drawHelixLink(ctx, from, to, color, cfg) {
+  const points = samplePathPoints(from, to, cfg.pathStyle);
+  if (points.length < 2) return;
+  const time = performance.now() / (1000 / cfg.speed);
+  const totalLen = pathLength(points);
+  const amp = cfg.lineWidth * 2.1;
+  const cycles = Math.max(1.5, Math.min(7, totalLen / 110));
+  const strandA = [];
+  const strandB = [];
+
+  for (let i = 0; i < points.length; i++) {
+    const perp = perpVector(points, i);
+    const t = i / (points.length - 1);
+    const offset = Math.sin(t * cycles * Math.PI * 2 - time * 2.4) * amp;
+    strandA.push([points[i][0] + perp[0] * offset, points[i][1] + perp[1] * offset]);
+    strandB.push([points[i][0] - perp[0] * offset, points[i][1] - perp[1] * offset]);
+  }
+
+  // 横档：只在两条链张开最大的位置绘制，交叉附近留白，形成 DNA 的节奏感。
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(0.7, cfg.lineWidth * 0.4);
+  for (let i = 0; i < points.length; i++) {
+    const t = i / (points.length - 1);
+    const open = Math.abs(Math.sin(t * cycles * Math.PI * 2 - time * 2.4));
+    if (open < 0.55) continue;
+    ctx.globalAlpha = cfg.opacity * 0.22 * open;
+    ctx.beginPath();
+    ctx.moveTo(strandA[i][0], strandA[i][1]);
+    ctx.lineTo(strandB[i][0], strandB[i][1]);
+    ctx.stroke();
+  }
+
+  ctx.shadowColor = color;
+  ctx.shadowBlur = cfg.glow ? 8 : 0;
+  for (const strand of [strandA, strandB]) {
+    ctx.beginPath();
+    ctx.moveTo(strand[0][0], strand[0][1]);
+    for (let i = 1; i < strand.length; i++) ctx.lineTo(strand[i][0], strand[i][1]);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = cfg.lineWidth;
+    ctx.globalAlpha = cfg.opacity;
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+
+  // 中间淡主线，让横档留白处不至于断开
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(0.6, cfg.lineWidth * 0.3);
+  ctx.globalAlpha = cfg.opacity * 0.28;
+  drawPath(ctx, from, to, cfg.pathStyle);
+}
+
+// 波涛：整条线变成沿法线起伏的正弦波，波峰随时间流动，峰顶带一条提亮高光。
+function drawWaveLink(ctx, from, to, color, cfg) {
+  const points = samplePathPoints(from, to, cfg.pathStyle);
+  if (points.length < 2) return;
+  const time = performance.now() / (800 / cfg.speed);
+  const totalLen = pathLength(points);
+  const amp = cfg.lineWidth * 1.7 + 1.2;
+  const cycles = Math.max(2, Math.min(8, totalLen / 80));
+  const c = parseColor(color);
+
+  const waveOffset = (i) => {
+    const t = i / (points.length - 1);
+    return Math.sin(t * cycles * Math.PI * 2 - time * 2.6) * amp;
+  };
+
+  if (cfg.glow) {
+    ctx.beginPath();
+    for (let i = 0; i < points.length; i++) {
+      const perp = perpVector(points, i);
+      const off = waveOffset(i);
+      const px = points[i][0] + perp[0] * off;
+      const py = points[i][1] + perp[1] * off;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = cfg.lineWidth + 4;
+    ctx.globalAlpha = cfg.opacity * 0.35;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 10;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    const perp = perpVector(points, i);
+    const off = waveOffset(i);
+    const px = points[i][0] + perp[0] * off;
+    const py = points[i][1] + perp[1] * off;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = cfg.lineWidth;
+  ctx.globalAlpha = cfg.opacity;
+  ctx.stroke();
+
+  // 峰顶高光：只保留波峰段，断续的提亮让波峰更立体
+  ctx.beginPath();
+  let started = false;
+  for (let i = 0; i < points.length; i++) {
+    const perp = perpVector(points, i);
+    const off = waveOffset(i);
+    if (off < amp * 0.7) { started = false; continue; }
+    const px = points[i][0] + perp[0] * off;
+    const py = points[i][1] + perp[1] * off;
+    if (!started) { ctx.moveTo(px, py); started = true; }
+    else ctx.lineTo(px, py);
+  }
+  ctx.strokeStyle = `rgba(${Math.min(255, c.r + 100)},${Math.min(255, c.g + 100)},${Math.min(255, c.b + 100)},1)`;
+  ctx.lineWidth = Math.max(0.7, cfg.lineWidth * 0.45);
+  ctx.globalAlpha = cfg.opacity * 0.8;
+  ctx.stroke();
+}
+
+// 星河：一条细淡主线 + 位置固定、亮度随机闪烁的星点，最亮的星星带十字光芒。
+function drawGalaxyLink(ctx, from, to, color, cfg) {
+  const points = buildPathPoints(from, to, cfg.pathStyle);
+  const time = performance.now() / (1000 / cfg.speed);
+  const totalLen = pathLength(points);
+
+  setLineDashEmpty(ctx);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(0.6, cfg.lineWidth * 0.4);
+  ctx.globalAlpha = cfg.opacity * 0.45;
+  drawPath(ctx, from, to, cfg.pathStyle);
+
+  const count = Math.max(4, Math.floor(totalLen / 42));
+  // 稳定伪随机：星点位置逐帧不变，只有亮度随时间闪烁
+  const hash = (n) => {
+    const v = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+    return v - Math.floor(v);
+  };
+
+  for (let i = 0; i < count; i++) {
+    const t = hash(i + 1);
+    const pos = pointOnPath(points, t);
+    const twinkle = 0.5 + 0.5 * Math.sin(time * 2.6 + hash(i + 1000.7) * Math.PI * 2);
+    const radius = cfg.lineWidth * (0.45 + 0.75 * hash(i + 77.7)) * (0.55 + 0.45 * twinkle);
+
+    ctx.beginPath();
+    ctx.arc(pos[0], pos[1], radius, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = cfg.opacity * (0.25 + 0.7 * twinkle);
+    ctx.shadowColor = color;
+    ctx.shadowBlur = radius * 3;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    if (twinkle > 0.82) {
+      const spike = radius * 2.6;
+      ctx.beginPath();
+      ctx.moveTo(pos[0] - spike, pos[1]);
+      ctx.lineTo(pos[0] + spike, pos[1]);
+      ctx.moveTo(pos[0], pos[1] - spike);
+      ctx.lineTo(pos[0], pos[1] + spike);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(0.5, radius * 0.35);
+      ctx.globalAlpha = cfg.opacity * (twinkle - 0.82) * 2.2;
+      ctx.stroke();
+    }
+  }
+}
+
 function drawGradientLink(ctx, from, to, color, cfg) {
   setLineDashEmpty(ctx);
   const points = buildPathPoints(from, to, cfg.pathStyle);
@@ -1072,8 +1402,18 @@ function clipToPath(ctx, from, to, pathStyle) {
   ctx.clip();
 }
 
-function parseColor(hex) {
-  hex = String(hex).replace("#", "");
+function parseColor(value) {
+  // 兼容 LiteGraph 部分版本把端口颜色存成 { color_on, color_off } 对象的情况。
+  if (value && typeof value === "object") {
+    const inner = value.color_on || value.color_off || value.color;
+    if (typeof inner === "string") return parseColor(inner);
+  }
+  const text = String(value ?? "").trim();
+  const rgbMatch = text.match(/^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i);
+  if (rgbMatch) {
+    return { r: Number(rgbMatch[1]) || 0, g: Number(rgbMatch[2]) || 0, b: Number(rgbMatch[3]) || 0 };
+  }
+  let hex = text.replace("#", "");
   if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
   return {
     r: parseInt(hex.slice(0, 2), 16) || 0,
@@ -1084,39 +1424,105 @@ function parseColor(hex) {
 
 function setLineDashEmpty(ctx) { ctx.setLineDash([]); }
 
-function drawOverlay(canvas, ctx, cfg = config()) {
-  if (!cfg.enabled) return;
+function drawOverlay(canvas, ctx, cfg = config(), graphOverride = null) {
+  if (!cfg.enabled) return false;
 
-  const graph = canvas?.graph || app.graph;
-  if (!graph) return;
+  const graph = graphOverride || canvas?.graph || app.graph;
+  if (!graph) return false;
 
-  invalidateActiveCache();
-  let hasAnimatedLink = false;
+  const links = getLinks(graph).filter((link) => shouldDraw(canvas, link, cfg));
+  if (!links.length) return false;
 
-  for (const link of getLinks(graph)) {
-    if (!shouldDraw(canvas, link, cfg)) continue;
-    hasAnimatedLink = true;
-
-    const originNode = nodeById(graph, linkField(link, "origin_id", 1));
-    const targetNode = nodeById(graph, linkField(link, "target_id", 3));
-    if (!originNode || !targetNode) continue;
-
-    const originSlot = linkField(link, "origin_slot", 2) ?? 0;
-    const targetSlot = linkField(link, "target_slot", 4) ?? 0;
-    const from = connectionPos(originNode, false, originSlot);
-    const to = connectionPos(targetNode, true, targetSlot);
-    drawStyledLink(ctx, from, to, linkColor(canvas, link, originNode, cfg), cfg);
+  // Check the complete batch before painting. During connect/disconnect, the
+  // graph can briefly expose a link before one endpoint is available. Native
+  // LiteGraph drawing is more reliable for that transient state.
+  const resolvedLinks = links.map((link) => ({
+    link,
+    originNode: nodeById(graph, linkField(link, "origin_id", 1)),
+    targetNode: nodeById(graph, linkField(link, "target_id", 3)),
+  }));
+  if (resolvedLinks.some(({ originNode, targetNode }) => !originNode || !targetNode)) {
+    return false;
   }
 
-  const isAnimatedStyle = [DASH_FLOW, DASH_FLOW_SOLID, DASH_PULSE,
-      DASH_LIGHTNING, DASH_METEOR, DASH_ENERGY_WAVE, DASH_LASER,
-      DASH_PARTICLE, DASH_GRADIENT].includes(cfg.dashStyle);
+  for (const item of resolvedLinks) {
+    item.from = connectionPos(item.originNode, false, linkField(item.link, "origin_slot", 2) ?? 0);
+    item.to = connectionPos(item.targetNode, true, linkField(item.link, "target_slot", 4) ?? 0);
+  }
+  if (resolvedLinks.some(({ from, to }) => (
+    !Array.isArray(from) || !Array.isArray(to)
+    || !Number.isFinite(from[0]) || !Number.isFinite(from[1])
+    || !Number.isFinite(to[0]) || !Number.isFinite(to[1])
+  ))) {
+    return false;
+  }
+
+  let hasAnimatedLink = false;
+
+  for (const { link, originNode, from, to } of resolvedLinks) {
+    hasAnimatedLink = true;
+
+    drawStyledLink(ctx, from, to, linkColor(canvas, link, originNode, cfg), cfg, canvas);
+  }
+
+  const isAnimatedStyle = ANIMATED_STYLES.includes(cfg.dashStyle);
   const isTextureAnimated = cfg.dashStyle === DASH_TEXTURE && cachedTextureImage;
   const isAlwaysAnimate = cfg.displayMode !== DISPLAY_ALL && hasAnimatedLink;
 
-  if ((isAnimatedStyle || isTextureAnimated || isAlwaysAnimate) && cfg.enabled) {
+  if ((isAnimatedStyle || isTextureAnimated || isAlwaysAnimate) && hasAnimatedLink) {
     ensureAnimation();
   }
+  return true;
+}
+
+function hasRenderableLink(canvas, cfg, graph = canvas?.graph || app.graph) {
+  if (!graph) return false;
+
+  for (const link of getLinks(graph)) {
+    if (!shouldDraw(canvas, link, cfg)) continue;
+    const originNode = nodeById(graph, linkField(link, "origin_id", 1));
+    const targetNode = nodeById(graph, linkField(link, "target_id", 3));
+    if (originNode && targetNode) return true;
+  }
+
+  return false;
+}
+
+function graphFromDrawArguments(canvas, args) {
+  const graph = args?.find((value) => (
+    value && typeof value === "object"
+    && typeof value.getNodeById === "function"
+    && (value.links != null || value._links != null)
+  ));
+  return graph || canvas?.graph || app.graph;
+}
+
+// 原生连线是否被设为隐藏（links_render_mode = HIDDEN_LINK，本机取值 -1）。
+// 隐藏时交回原生等于画空白，所以这种情况下我们必须自己画。
+function nativeLinksHidden(canvas = app.canvas) {
+  const mode = canvas?.links_render_mode;
+  if (mode == null) return false;
+  const LG = globalThis.LiteGraph;
+  const hidden = LG?.LinkRenderType?.HIDDEN_LINK ?? LG?.HIDDEN_LINK ?? -1;
+  return mode === hidden;
+}
+
+function isCanvasInteracting(canvas = app.canvas) {
+  const hasState = (value) => value != null && value !== false && typeof value !== "function";
+  return canvas?.dragging_canvas === true
+    // LiteGraph stores the node currently being moved separately from the
+    // canvas-pan flag. Without this check custom links keep rebuilding every
+    // path while a node is dragged, which makes the pointer feel sticky.
+    || hasState(canvas?.node_dragged)
+    || hasState(canvas?.moving_node)
+    || hasState(canvas?.resizing_node)
+    || canvas?.last_mouse_dragging === true
+    || canvas?.pointer_is_down === true
+    || canvas?.pointer?.isDown === true
+    || canvas?.pointer?.dragStarted === true
+    || (canvas?.__ggLinkStylePointerGesture === true
+      && performance.now() - Number(canvas?.__ggLinkStyleGestureStartedAt || 0) < GESTURE_TIMEOUT_MS)
+    || globalThis.__ggGroupStylerDraggingCanvas === canvas;
 }
 
 function ensureAnimation() {
@@ -1124,15 +1530,15 @@ function ensureAnimation() {
   animationFrame = requestAnimationFrame(() => {
     animationFrame = null;
     const cfg = config();
-    if (!cfg.enabled) return;
+    if (!cfg.enabled || isCanvasInteracting() || !hasRenderableLink(app.canvas, cfg)) return;
 
-    const isAnimatedStyle = [DASH_FLOW, DASH_FLOW_SOLID, DASH_PULSE,
-        DASH_LIGHTNING, DASH_METEOR, DASH_ENERGY_WAVE, DASH_LASER,
-        DASH_PARTICLE, DASH_GRADIENT].includes(cfg.dashStyle);
+    const isAnimatedStyle = ANIMATED_STYLES.includes(cfg.dashStyle);
     const isTextureAnimated = cfg.dashStyle === DASH_TEXTURE && cachedTextureImage;
     const isNonAllMode = cfg.displayMode !== DISPLAY_ALL;
 
-    if (isAnimatedStyle || isTextureAnimated || isNonAllMode) {
+    if ((isAnimatedStyle || isTextureAnimated || isNonAllMode)
+        && !isCanvasInteracting()
+        && hasRenderableLink(app.canvas, cfg)) {
       markDirty();
       ensureAnimation();
     }
@@ -1141,21 +1547,60 @@ function ensureAnimation() {
 
 function patchCanvas(canvas) {
   if (!canvas || typeof canvas.drawConnections !== "function") return false;
-  if (canvas.__ggLinkStylePatched && canvas.drawConnections.__ggLinkStyleWrapper) return true;
+  if (hasLinkStyleWrapper(canvas.drawConnections)) {
+    canvas.__ggLinkStylePatched = true;
+    patchedCanvas = canvas;
+    return true;
+  }
 
   const originalDrawConnections = canvas.drawConnections;
   const wrappedDrawConnections = function(ctx, ...args) {
     const cfg = config();
     if (!cfg.enabled) {
+      this.__ggLinkStyleLastNativePaint = performance.now();
       return originalDrawConnections.call(this, ctx, ...args);
     }
 
+    // 关键：若用户把 ComfyUI 原生连线设为「隐藏」（links_render_mode=HIDDEN），
+    // 交回原生就是画空白。这种设置下我们必须自己画连线——即便在拖拽/平移中，
+    // 否则移动画布时连线就消失。只有当原生连线可见时，交互期间交回原生才安全
+    // （原生更省、也仍然看得见）。
+    const hidden = nativeLinksHidden(this);
+    if (isCanvasInteracting(this) && !hidden) {
+      this.__ggLinkStyleLastNativePaint = performance.now();
+      return originalDrawConnections.call(this, ctx, ...args);
+    }
+
+    let painted = false;
     try {
-      drawOverlay(this, ctx, cfg);
+      painted = drawOverlay(this, ctx, cfg, graphFromDrawArguments(this, args));
     } catch (error) {
       console.warn("[GuliNodes] Failed to draw custom link style:", error);
+      // A malformed/stale link or an incompatible canvas context must never
+      // blank the entire graph for a frame. Keep ComfyUI's renderer as the
+      // reliable fallback and allow the next redraw to retry custom styling.
+      this.__ggLinkStyleLastNativePaint = performance.now();
+      return originalDrawConnections.call(this, ctx, ...args);
     }
-    return undefined;
+
+    if (painted) {
+      this.__ggLinkStyleLastCustomPaint = performance.now();
+      return undefined;
+    }
+
+    // 本帧自定义什么都没画（无图/无连线/端点未就绪/坐标未定）。
+    // 筛选模式下"没有命中"是刻意隐藏，直接抑制原生即可。
+    if (cfg.displayMode !== DISPLAY_ALL) {
+      this.__ggLinkStyleLastCustomPaint = performance.now();
+      return undefined;
+    }
+    // 全部模式：交回原生兜底。若原生被隐藏（兜底也是空白），则说明这是瞬态读空，
+    // 安排下一帧重画，直到自定义能画出来，绝不停在空白帧上。
+    this.__ggLinkStyleLastNativePaint = performance.now();
+    if (hidden && hasRenderableLink(this, cfg)) {
+      requestAnimationFrame(() => markDirty());
+    }
+    return originalDrawConnections.call(this, ctx, ...args);
   };
   wrappedDrawConnections.__ggLinkStyleWrapper = true;
   wrappedDrawConnections.__ggLinkStyleOriginal = originalDrawConnections;
@@ -1166,14 +1611,103 @@ function patchCanvas(canvas) {
   return true;
 }
 
+function hasLinkStyleWrapper(drawConnections) {
+  const visited = new Set();
+  let current = drawConnections;
+  while (typeof current === "function" && !visited.has(current)) {
+    if (current.__ggLinkStyleWrapper) return true;
+    visited.add(current);
+    current = current.__ggLinkStyleOriginal || current.__ggGroupStylerConnectionOriginal;
+  }
+  return false;
+}
+
+function installInteractionReleaseHook(canvas) {
+  if (!canvas?.canvas || canvas.__ggLinkStyleReleaseHook) return;
+  const ownerDocument = canvas.canvas.ownerDocument || document;
+  const ownerWindow = ownerDocument.defaultView || window;
+  const begin = () => {
+    canvas.__ggLinkStylePointerGesture = true;
+    canvas.__ggLinkStyleGestureStartedAt = performance.now();
+  };
+  const refresh = () => {
+    canvas.__ggLinkStylePointerGesture = false;
+    requestAnimationFrame(() => {
+      markDirty();
+      ensureAnimation();
+    });
+  };
+  ownerWindow.addEventListener("pointerdown", begin, true);
+  ownerWindow.addEventListener("pointerup", refresh, true);
+  ownerWindow.addEventListener("pointercancel", refresh, true);
+  ownerWindow.addEventListener("mouseup", refresh, true);
+  ownerWindow.addEventListener("blur", refresh, true);
+  canvas.__ggLinkStyleReleaseHook = true;
+}
+
 function patchCanvasSoon() {
   let attempts = 0;
   const tick = () => {
     attempts += 1;
-    if (patchCanvas(app.canvas) || attempts >= 30) return;
+    const canvas = app.canvas;
+    if (patchCanvas(canvas)) {
+      installInteractionReleaseHook(canvas);
+      startLinkStyleWatchdog();
+      return;
+    }
+    if (attempts >= 30) {
+      // Even if the canvas never appeared, keep the watchdog alive: ComfyUI
+      // may build a fresh canvas instance later (workflow load, menu switch).
+      startLinkStyleWatchdog();
+      return;
+    }
     setTimeout(tick, 100);
   };
   tick();
+}
+
+// Low-frequency self-heal for every "links sometimes disappear / lose their
+// style" path we know of:
+//   1. ComfyUI replaced the canvas instance (workflow load, menu switch) and
+//      the drawConnections wrapper vanished — reinstall it.
+//   2. A pointer gesture flag leaked without a pointerup (released outside
+//      the window, alt-tab, context menu) — the GESTURE_TIMEOUT_MS guard in
+//      isCanvasInteracting expires it; a repaint then restores the style.
+//   3. The release repaint after a drag was swallowed, so the canvas kept the
+//      native renderer from the drag frames — repaint once, style returns.
+// The stale check only fires when the *most recent* paint was a native one
+// while custom styling is enabled, idle, and renderable — so a resting canvas
+// whose last frame was already custom-styled never triggers extra repaints.
+let linkWatchdogTimer = null;
+function startLinkStyleWatchdog() {
+  if (linkWatchdogTimer != null) return;
+  linkWatchdogTimer = setInterval(() => {
+    try {
+      const canvas = app.canvas;
+      if (!canvas || typeof canvas.drawConnections !== "function") return;
+      if (!patchCanvas(canvas)) return;
+      installInteractionReleaseHook(canvas);
+
+      const cfg = config();
+      if (!cfg.enabled || isCanvasInteracting(canvas)) return;
+      if (!hasRenderableLink(canvas, cfg)) return;
+
+      // Fire only when the most recent paint frame was handed to the native
+      // renderer (or nothing ever painted). Once custom styling runs again it
+      // refreshes __ggLinkStyleLastCustomPaint, so this fires at most once per
+      // lost frame — never in a loop over an already-correct canvas.
+      const lastNative = Number(canvas.__ggLinkStyleLastNativePaint) || 0;
+      const lastCustom = Number(canvas.__ggLinkStyleLastCustomPaint) || 0;
+      if (lastCustom >= lastNative) return;
+
+      canvas.__ggLinkStyleLastCustomPaint = performance.now();
+      markDirty();
+      ensureAnimation();
+    } catch (error) {
+      // The watchdog must never become the source of a console storm.
+      console.warn("[GuliNodes] Link style watchdog tick failed:", error);
+    }
+  }, LINK_WATCHDOG_INTERVAL_MS);
 }
 
 function createTopButton(title, icon, action) {
@@ -1553,9 +2087,9 @@ function installLinkStyleTopControlsStyles() {
       padding: 0 !important;
       margin: 0 !important;
       border-radius: 8px;
-      border: 1px solid var(--gg-ui-accent-border) !important;
-      background: var(--gg-ui-accent-soft) !important;
-      color: var(--gg-ui-accent) !important;
+      border: 1px solid rgba(148, 163, 184, 0.28) !important;
+      background: rgba(148, 163, 184, 0.10) !important;
+      color: var(--gg-ui-muted, #64748b) !important;
       box-shadow: none !important;
       appearance: none;
       display: inline-flex !important;
@@ -1568,12 +2102,18 @@ function installLinkStyleTopControlsStyles() {
       transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
     }
     #gg-link-style-buttons .gg-link-style-btn:hover,
-    #gg-link-style-buttons .gg-link-style-btn:focus-visible,
+    #gg-link-style-buttons .gg-link-style-btn:focus-visible {
+      background: rgba(148, 163, 184, 0.18) !important;
+      transform: scale(1.06);
+    }
     #gg-link-style-buttons .gg-link-style-btn.active {
       color: var(--gg-ui-accent) !important;
       background: rgba(59, 130, 246, 0.17) !important;
       border-color: var(--gg-ui-accent-border) !important;
-      transform: scale(1.08);
+      transform: scale(1.06);
+    }
+    #gg-link-style-buttons .gg-link-style-btn.active:hover {
+      background: rgba(59, 130, 246, 0.26) !important;
     }
     #gg-link-style-buttons .gg-link-style-btn .gg-ui-icon {
       width: 18px;
@@ -1649,8 +2189,18 @@ function installLinkStyleTopControlsStyles() {
       border-radius: var(--gg-ui-radius);
       background: var(--gg-ui-surface-soft);
       color: var(--gg-ui-ink);
-      padding: 0 8px;
+      padding: 0 24px 0 8px;
       box-sizing: border-box;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 7px center;
+      background-size: 10px;
+      cursor: pointer;
+      transition: border-color 0.12s ease, box-shadow 0.12s ease;
+    }
+    #gg-link-style-panel select:hover {
+      border-color: var(--gg-ui-accent-border);
     }
     #gg-link-style-panel input[type="checkbox"] {
       width: 16px;
@@ -1796,6 +2346,7 @@ async function setupTopControls() {
   };
 
   const placeGroup = () => {
+    if (window.__ggMountTopGroup?.(groupEl)) return true;
     groupEl.classList.remove("gg-link-menu-host", "gg-link-legacy-host", "gg-link-floating-host");
 
     const settingsGroup = app.menu?.settingsGroup?.element;
@@ -1869,6 +2420,12 @@ app.registerExtension({
     await setupTopControls();
     startNodeStateWatcher();
     startExecutionWatcher();
+  },
+
+  afterConfigureGraph() {
+    if (!config().enabled) return;
+    app.canvas?.setDirty?.(true, true);
+    ensureAnimation();
   },
 
   settings: [

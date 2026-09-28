@@ -131,8 +131,18 @@ const groupControlState = {
     hydrateTimer: null,
     drawWatchdogTimer: null,
     nativeGroupHover: null,
+    hoverFrame: null,
+    hoverCanvas: null,
+    hoverEvent: null,
     legacyRecoveredGroups: new WeakSet(),
 };
+
+function syncGroupInteractionMarker() {
+    globalThis.__ggGroupStylerDraggingCanvas = groupDragState.active?.canvas
+        || resizeState.active?.canvas
+        || groupControlState.proxyDrag?.canvas
+        || null;
+}
 
 const hiddenNodeDomStates = new WeakMap();
 let hiddenNodeDomObserver = null;
@@ -1174,18 +1184,12 @@ function scheduleHiddenNodeDomSync(canvas = app.canvas) {
 
 function installHiddenNodeDomObserver() {
     if (hiddenNodeDomObserver || typeof MutationObserver === "undefined" || typeof document === "undefined") return;
-    hiddenNodeDomObserver = new MutationObserver((mutations) => {
-        for (const mutation of mutations) {
-            for (const added of mutation.addedNodes) {
-                if (added.nodeType !== 1) continue;
-                if (added.classList?.contains("lg-node") || added.hasAttribute?.("data-node-id")
-                    || added.querySelector?.(".lg-node, [data-node-id]")) {
-                    scheduleHiddenNodeDomSync(app.canvas);
-                    return;
-                }
-            }
-        }
-    });
+    let scanTimer = null;
+    const scheduleScan = () => {
+        if (scanTimer) clearTimeout(scanTimer);
+        scanTimer = setTimeout(() => { scanTimer = null; scheduleHiddenNodeDomSync(app.canvas); }, 200);
+    };
+    hiddenNodeDomObserver = new MutationObserver(scheduleScan);
     hiddenNodeDomObserver.observe(document.body, { childList: true, subtree: true });
 }
 
@@ -3029,6 +3033,7 @@ function startGroupTitleDragFromEvent(canvas, event) {
         previousSelected: !!hit.group.selected,
         previousPrivateSelected: "_selected" in hit.group ? !!hit.group._selected : false,
     };
+    syncGroupInteractionMarker();
 
     clearNativePointerAction(canvas);
     canvas.selected_group = hit.group;
@@ -3110,6 +3115,7 @@ function finishActiveGroupTitleDrag(canvas, event) {
     if (!active || active.canvas !== canvas) return false;
 
     groupDragState.active = null;
+    syncGroupInteractionMarker();
     stopGroupDragCapture();
     try {
         if (active.pointerId != null) canvas.canvas?.releasePointerCapture?.(active.pointerId);
@@ -3151,6 +3157,7 @@ function cancelActiveGroupTitleDrag(canvas, event) {
     if (!active || active.canvas !== canvas) return false;
 
     groupDragState.active = null;
+    syncGroupInteractionMarker();
     stopGroupDragCapture();
     try {
         if (active.pointerId != null) canvas.canvas?.releasePointerCapture?.(active.pointerId);
@@ -3165,21 +3172,47 @@ function cancelActiveGroupTitleDrag(canvas, event) {
     return true;
 }
 
+function selectionHasNode(canvas = app.canvas) {
+    const selectedNodes = canvas?.selected_nodes;
+    if (selectedNodes && typeof selectedNodes === "object") {
+        for (const _key in selectedNodes) return true;
+    }
+    const items = canvas?.selectedItems;
+    if (items instanceof Set) {
+        for (const item of items) if (item && !isGraphGroupLike(item)) return true;
+    }
+    if (Array.isArray(canvas?.selected_items)) {
+        for (const item of canvas.selected_items) if (item && !isGraphGroupLike(item)) return true;
+    }
+    return false;
+}
+
 function hasGroupReplacementTarget(canvas = app.canvas) {
     if (!isEnabled()) return false;
+    // An in-progress group drag or resize is unambiguously a group gesture.
+    if (isGraphGroupLike(resizeState.active?.group) || isGraphGroupLike(groupDragState.active?.group)) {
+        return true;
+    }
+    // A selected node owns the official selection toolbox, so it must stay
+    // visible even when a group is hovered or when the node lives inside a
+    // GuliNodes group. The classic canvas renderer selects nodes on the
+    // <canvas> element, so the DOM `.lg-node` cleanup below never fires for it;
+    // without this guard the toolbox stays hidden after clicking such a node.
+    if (selectionHasNode(canvas)) return false;
     return !!(
         (canvas?.selectedItems instanceof Set && [...canvas.selectedItems].some(isGraphGroupLike))
         || (Array.isArray(canvas?.selected_items) && canvas.selected_items.some(isGraphGroupLike))
         || isGraphGroupLike(resizeState.hover?.group)
-        || isGraphGroupLike(resizeState.active?.group)
-        || isGraphGroupLike(groupDragState.active?.group)
     );
 }
 
 function syncOfficialGroupReplacementState(canvas = app.canvas) {
     const active = hasGroupReplacementTarget(canvas);
     try {
-        document.body?.classList.toggle("gg-group-styler-force-groups", active);
+        const body = document.body;
+        if (!body) return;
+        const hasClass = body.classList.contains("gg-group-styler-force-groups");
+        if (hasClass !== active) body.classList.toggle("gg-group-styler-force-groups", active);
     } catch (_) {
         // Body may not be ready during very early startup.
     }
@@ -3237,6 +3270,7 @@ function startGroupResizeFromEvent(canvas, event) {
         wasSelected: !!(hit.group.selected || hit.group._selected),
     };
     resizeState.hover = hit;
+    syncGroupInteractionMarker();
 
     clearNativePointerAction(canvas);
     canvas.selected_group = hit.group;
@@ -3322,6 +3356,7 @@ function finishActiveResize(canvas, event) {
     const active = resizeState.active;
     resizeState.active = null;
     resizeState.hover = null;
+    syncGroupInteractionMarker();
     stopResizeCapture();
 
     if (canvas.canvas?.style) canvas.canvas.style.cursor = "";
@@ -3383,6 +3418,7 @@ function cancelActiveResize(canvas) {
     const active = resizeState.active;
     resizeState.active = null;
     resizeState.hover = null;
+    syncGroupInteractionMarker();
     stopResizeCapture();
     restoreGroupResizeSelection(active);
     if (canvas?.canvas?.style?.cursor?.includes("resize")) {
@@ -3469,6 +3505,7 @@ function startSubworkflowProxyDragFromEvent(canvas, event) {
         pointerId: event?.pointerId,
         moved: false,
     };
+    syncGroupInteractionMarker();
     groupControlState.hoverProxy = hit;
 
     clearNativePointerAction(canvas);
@@ -3557,6 +3594,7 @@ function finishActiveSubworkflowProxyDrag(canvas, event) {
     if (active?.canvas !== canvas) return false;
 
     groupControlState.proxyDrag = null;
+    syncGroupInteractionMarker();
     stopSubworkflowProxyCapture();
     if (canvas.canvas?.style) canvas.canvas.style.cursor = "";
     clearNativePointerAction(canvas);
@@ -3576,6 +3614,7 @@ function cancelActiveSubworkflowProxyDrag(canvas) {
     const active = groupControlState.proxyDrag;
     if (!active || active.canvas !== canvas) return;
     groupControlState.proxyDrag = null;
+    syncGroupInteractionMarker();
     stopSubworkflowProxyCapture();
     if (canvas?.canvas?.style?.cursor === "grab" || canvas?.canvas?.style?.cursor === "grabbing") {
         canvas.canvas.style.cursor = "";
@@ -3734,15 +3773,63 @@ function handleGroupScaleEvent(canvas, event) {
     return true;
 }
 
+function isNativeCanvasInteraction(canvas) {
+    const hasState = (value) => value != null && value !== false && typeof value !== "function";
+    return canvas?.dragging_canvas === true
+        || hasState(canvas?.node_dragged)
+        || hasState(canvas?.moving_node)
+        || hasState(canvas?.resizing_node)
+        || canvas?.last_mouse_dragging === true
+        || canvas?.pointer_is_down === true
+        || canvas?.pointer?.isDown === true
+        || canvas?.pointer?.dragStarted === true
+        || canvas?.__ggLinkStylePointerGesture === true
+        || globalThis.__ggGroupStylerDraggingCanvas === canvas;
+}
+
+function scheduleGroupHoverUpdate(canvas, event) {
+    if (!canvas || !isEnabled() || isNativeCanvasInteraction(canvas)) return false;
+
+    groupControlState.hoverCanvas = canvas;
+    groupControlState.hoverEvent = event;
+    if (groupControlState.hoverFrame != null) return true;
+
+    const request = globalThis.requestAnimationFrame
+        || ((callback) => globalThis.setTimeout(callback, 0));
+    groupControlState.hoverFrame = request(() => {
+        groupControlState.hoverFrame = null;
+        const targetCanvas = groupControlState.hoverCanvas;
+        const targetEvent = groupControlState.hoverEvent;
+        groupControlState.hoverCanvas = null;
+        groupControlState.hoverEvent = null;
+        if (targetCanvas && targetEvent && !isNativeCanvasInteraction(targetCanvas)) {
+            updateGroupHoverFromEvent(targetCanvas, targetEvent);
+        }
+    });
+    return true;
+}
+
 function updateGroupHoverFromEvent(canvas, event) {
     if (!isEnabled() || resizeState.active?.canvas === canvas || groupControlState.proxyDrag?.canvas === canvas) {
-        groupControlState.nativeGroupHover = null;
-        syncOfficialGroupReplacementState(canvas);
+        if (groupControlState.nativeGroupHover) {
+            groupControlState.nativeGroupHover = null;
+            syncOfficialGroupReplacementState(canvas);
+        }
         return false;
     }
 
+    // Normal node/canvas dragging is owned by LiteGraph. Hover hit testing for
+    // group controls adds no useful feedback during that gesture and competes
+    // with the native redraw path, so leave the existing hover state untouched.
+    if (isNativeCanvasInteraction(canvas)) {
+        return false;
+    }
+
+    const previousNativeHover = groupControlState.nativeGroupHover;
     groupControlState.nativeGroupHover = hitTestGraphGroup(canvas, event);
-    syncOfficialGroupReplacementState(canvas);
+    if (groupControlState.nativeGroupHover !== previousNativeHover) {
+        syncOfficialGroupReplacementState(canvas);
+    }
 
     const hit = hitTestGroupResizeHandle(canvas, event);
     const previous = resizeState.hover;
@@ -3808,7 +3895,6 @@ function updateGroupHoverFromEvent(canvas, event) {
     clearProxyHover(canvas);
     clearScaleHover(canvas);
     clearToggleHover(canvas);
-    syncTopScaleButton();
     return false;
 }
 
@@ -4352,6 +4438,7 @@ function installGroupResizeInteractions(proto) {
 
         const result = originalMouseDown?.call(this, event, ...args);
         syncTopScaleButton();
+        syncOfficialGroupReplacementState(this);
         return result;
     };
     wrappedMouseDown[GROUP_INTERACTION_PATCH_FLAG] = true;
@@ -4380,7 +4467,7 @@ function installGroupResizeInteractions(proto) {
             return result;
         }
 
-        updateGroupHoverFromEvent(this, event);
+        scheduleGroupHoverUpdate(this, event);
 
         return result;
     };
@@ -4402,6 +4489,7 @@ function installGroupResizeInteractions(proto) {
 
         const result = originalMouseUp?.call(this, event, ...args);
         syncTopScaleButton();
+        syncOfficialGroupReplacementState(this);
         return result;
     };
     wrappedMouseUp[GROUP_INTERACTION_PATCH_FLAG] = true;
@@ -4442,16 +4530,18 @@ function installCanvasPointerCapture(canvas = app.canvas) {
     };
     const onPointerMove = (event) => {
         if (updateActiveGroupTitleDrag(canvas, event)) return;
-        if (isCanvasEventTarget(element, event)) updateGroupHoverFromEvent(canvas, event);
+        if (isCanvasEventTarget(element, event)) scheduleGroupHoverUpdate(canvas, event);
     };
     const onMouseMove = (event) => {
         if (updateActiveGroupTitleDrag(canvas, event)) return;
-        if (isCanvasEventTarget(element, event)) updateGroupHoverFromEvent(canvas, event);
+        if (isCanvasEventTarget(element, event)) scheduleGroupHoverUpdate(canvas, event);
     };
     const onDoubleClick = (event) => {
         if (isCanvasEventTarget(element, event)) editSubworkflowProxyTitleFromEvent(canvas, event);
     };
     const onPointerLeave = () => {
+        groupControlState.hoverCanvas = null;
+        groupControlState.hoverEvent = null;
         clearResizeHover(canvas);
         clearNativeGroupHover(canvas);
         clearProxyHover(canvas);
@@ -4480,7 +4570,12 @@ function installCanvasPointerCapture(canvas = app.canvas) {
         }
     }
     element.addEventListener("pointermove", onPointerMove, false);
-    element.addEventListener("mousemove", onMouseMove, false);
+    // Pointer events cover mouse input in supported browsers. Keeping a second
+    // mousemove listener makes every physical move perform the hover pipeline
+    // twice; retain it only for older builds without PointerEvent.
+    if (typeof globalThis.PointerEvent === "undefined") {
+        element.addEventListener("mousemove", onMouseMove, false);
+    }
     element.addEventListener("dblclick", onDoubleClick, true);
     element.addEventListener("pointerout", onPointerLeave, false);
     element.addEventListener("mouseleave", onPointerLeave, false);
@@ -4703,12 +4798,15 @@ function installHiddenNodePatchesWhenReady() {
 
 function installHiddenConnectionsPatch(canvas = app.canvas) {
     if (!canvas || typeof canvas.drawConnections !== "function") return false;
-    if (canvas.drawConnections?.[HIDDEN_CONNECTIONS_PATCH_FLAG]) return true;
+    if (hasHiddenConnectionsPatch(canvas.drawConnections)) return true;
 
     const originalDrawConnections = canvas.drawConnections;
     const wrappedDrawConnections = function(ctx, ...args) {
         const graph = this?.graph ?? canvas.graph ?? app.graph;
-        if (!hasHiddenScaleNodes(graph)) {
+        // Native LiteGraph redraw is already the cheapest path while a
+        // pointer gesture is active. Avoid mutating graph node arrays during
+        // every pan/move event just to filter hidden group nodes.
+        if (isNativeCanvasInteraction(this) || !hasHiddenScaleNodes(graph)) {
             return originalDrawConnections.call(this, ctx, ...args);
         }
         return withHiddenNodesFiltered(graph, () => originalDrawConnections.call(this, ctx, ...args));
@@ -4724,14 +4822,23 @@ function installHiddenConnectionsPatch(canvas = app.canvas) {
     return true;
 }
 
+function hasHiddenConnectionsPatch(drawConnections) {
+    const visited = new Set();
+    let current = drawConnections;
+    while (typeof current === "function" && !visited.has(current)) {
+        if (current[HIDDEN_CONNECTIONS_PATCH_FLAG]) return true;
+        visited.add(current);
+        current = current.__ggGroupStylerConnectionOriginal || current.__ggLinkStyleOriginal;
+    }
+    return false;
+}
+
 function installHiddenConnectionsPatchWhenReady() {
     let attempts = 0;
     const tick = () => {
         attempts += 1;
-        installHiddenConnectionsPatch(app.canvas);
-        if (attempts < 80) {
-            setTimeout(tick, 150);
-        }
+        if (installHiddenConnectionsPatch(app.canvas) || attempts >= 80) return;
+        setTimeout(tick, 150);
     };
     tick();
 }
@@ -4791,6 +4898,9 @@ function patchGroupDrawMethod(proto) {
 
     const originalDrawGroups = proto.drawGroups[GROUP_DRAW_ORIGINAL_KEY] || proto.drawGroups;
     const wrappedDrawGroups = function(canvas, ctx) {
+        // Native gestures still go through drawGroups. Keep the custom
+        // renderer in that redraw path so panning never falls back to the
+        // unstyled LiteGraph group appearance.
         if (!isEnabled()) {
             resizeState.hover = null;
             clearNativeGroupHover(this);
@@ -4876,7 +4986,7 @@ function createTopButton() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "comfyui-button gg-ui-top-button gg-group-styler-btn";
-    button.innerHTML = ggIcon("catWorkflow", 18);
+    button.innerHTML = ggIcon("groupStyle", 18);
     button.addEventListener("click", async () => {
         await writeSetting(SETTINGS_ID, !isEnabled());
         syncTopButton(button);
@@ -4981,9 +5091,9 @@ function installTopButtonStyles() {
             padding: 0 !important;
             margin: 0 !important;
             border-radius: 8px;
-            border: 1px solid var(--gg-ui-accent-border) !important;
-            background: var(--gg-ui-accent-soft) !important;
-            color: var(--gg-ui-accent) !important;
+            border: 1px solid rgba(148,163,184,0.28) !important;
+            background: rgba(148,163,184,0.10) !important;
+            color: var(--gg-ui-muted, #64748b) !important;
             box-shadow: none !important;
             appearance: none;
             display: inline-flex !important;
@@ -4993,16 +5103,21 @@ function installTopButtonStyles() {
             line-height: 0 !important;
             cursor: pointer;
             overflow: hidden;
-            opacity: 0.62;
-            transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
+            transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
         }
         #gg-group-styler-button .gg-group-styler-btn:hover,
-        #gg-group-styler-button .gg-group-styler-btn:focus-visible,
+        #gg-group-styler-button .gg-group-styler-btn:focus-visible {
+            background: rgba(148,163,184,0.18) !important;
+            transform: scale(1.06);
+        }
         #gg-group-styler-button .gg-group-styler-btn.active {
+            color: var(--gg-ui-accent) !important;
             background: rgba(59, 130, 246, 0.17) !important;
             border-color: var(--gg-ui-accent-border) !important;
-            opacity: 1;
-            transform: scale(1.08);
+            transform: scale(1.06);
+        }
+        #gg-group-styler-button .gg-group-styler-btn.active:hover {
+            background: rgba(59, 130, 246, 0.26) !important;
         }
         #gg-group-styler-button .gg-group-styler-btn.gg-scale-hidden {
             color: var(--gg-ui-success) !important;
@@ -5058,6 +5173,7 @@ async function installTopButton() {
     groupEl.append(button, scaleButton);
 
     const placeGroup = () => {
+        if (window.__ggMountTopGroup?.(groupEl)) return true;
         groupEl.classList.remove(
             "gg-group-styler-menu-host",
             "gg-group-styler-legacy-host",

@@ -25,12 +25,6 @@ if io is not None:
                 description="在工作流画布中放置可配置样式的浮动标题。",
                 search_aliases=["GG 标题", "标题", "注释", "Label", "Title"],
                 inputs=[
-                    io.String.Input(
-                        "标题文本",
-                        default=DEFAULT_TEXT,
-                        multiline=True,
-                        placeholder="输入要显示在画布上的标题",
-                    ),
                     io.Int.Input("字体大小", default=32, min=1, max=256, step=1),
                     io.String.Input("字体族", default="Arial", multiline=False),
                     io.String.Input("字体颜色", default="#ffffff", multiline=False),
@@ -44,6 +38,12 @@ if io is not None:
                     io.Int.Input("圆角半径", default=0, min=0, max=256, step=1),
                     io.Int.Input("旋转角度", default=0, min=-360, max=360, step=1),
                     io.Int.Input("背景不透明度", default=0, min=0, max=100, step=1),
+                    io.String.Input(
+                        "标题文本",
+                        default=DEFAULT_TEXT,
+                        multiline=True,
+                        placeholder="输入要显示在画布上的标题",
+                    ),
                 ],
                 outputs=[],
             )
@@ -75,14 +75,6 @@ else:
         def INPUT_TYPES(cls):
             return {
                 "required": {
-                    "标题文本": (
-                        "STRING",
-                        {
-                            "default": DEFAULT_TEXT,
-                            "multiline": True,
-                            "placeholder": "输入要显示在画布上的标题",
-                        },
-                    ),
                     "字体大小": ("INT", {"default": 32, "min": 1, "max": 256, "step": 1}),
                     "字体族": ("STRING", {"default": "Arial", "multiline": False}),
                     "字体颜色": ("STRING", {"default": "#ffffff", "multiline": False}),
@@ -96,6 +88,14 @@ else:
                     "圆角半径": ("INT", {"default": 0, "min": 0, "max": 256, "step": 1}),
                     "旋转角度": ("INT", {"default": 0, "min": -360, "max": 360, "step": 1}),
                     "背景不透明度": ("INT", {"default": 0, "min": 0, "max": 100, "step": 1}),
+                    "标题文本": (
+                        "STRING",
+                        {
+                            "default": DEFAULT_TEXT,
+                            "multiline": True,
+                            "placeholder": "输入要显示在画布上的标题",
+                        },
+                    ),
                 },
             }
 

@@ -59,6 +59,429 @@ app.registerExtension({
         topSwitchHost.id = "gg-toolbar-top-switch";
         topSwitchHost.classList.add("gg-toolbar-top-switch-host");
 
+        const TOP_TOOL_GROUPS = [
+            { id: "gg-link-style-buttons", label: "连接线" },
+            { id: "gg-group-styler-button", label: "分组样式" },
+            { id: "gg-node-glow-buttons", label: "节点光效" },
+            { id: "gg-node-plugin-name-buttons", label: "插件名称" },
+            { id: "gg-port-list-toggle-button", label: "输入输出列表" },
+            { id: "gg-node-collapse-button", label: "节点折叠" },
+            { id: "gg-node-pin-button", label: "节点固定" },
+            { id: "gg-node-align-button", label: "移动对齐" },
+            { id: "gg-comfy-translate-buttons", label: "界面翻译" },
+            { id: "gg-taprelay-toggle-host", label: "完成通知" },
+        ];
+        const TOP_GROUP_IDS = new Set(TOP_TOOL_GROUPS.map((entry) => entry.id));
+        const TOP_DETAIL_PANEL_CONFIG = new Map([
+            ["gg-link-style-buttons", { trigger: 'button[title="连接线快速设置"]', panelId: "gg-link-style-panel" }],
+            ["gg-node-glow-buttons", { trigger: 'button[title="节点光效设置"]', panelId: "gg-node-glow-settings-panel" }],
+            ["gg-node-collapse-button", { trigger: 'button[title="节点折叠设置"]', panelId: "gg-node-collapse-settings-panel" }],
+        ]);
+        let topToolsMenu = null;
+        let topToolsContent = null;
+        let topToolsNav = null;
+        let topToolsDetail = null;
+        let topToolsButton = null;
+        let topToolsGroup = null;
+        let repositionTopToolsMenu = null;
+        const topToolRows = new Map();
+
+        const closeTopDetailPanel = (panel) => {
+            if (!panel) return;
+            if (panel.id === "gg-link-style-panel") {
+                if (panel.isConnected) panel.querySelector(".gg-link-style-close")?.click();
+                else panel.remove();
+            } else {
+                panel.style.display = "none";
+                const row = topToolRows.get(panel.dataset.ggTopDetailToolId);
+                row?.source?.querySelector('button[title="节点光效设置"]')?.classList.remove("active");
+            }
+            const row = topToolRows.get(panel.dataset.ggTopDetailToolId);
+            if (row) {
+                row.entry.dataset.expanded = "false";
+                row.detail.hidden = true;
+                row.row.setAttribute("aria-expanded", "false");
+            }
+        };
+
+        const closeTopDetailPanels = () => {
+            TOP_DETAIL_PANEL_CONFIG.forEach(({ panelId }) => {
+                closeTopDetailPanel(document.getElementById(panelId));
+            });
+        };
+
+        const embedTopDetailPanel = (toolId) => {
+            const config = TOP_DETAIL_PANEL_CONFIG.get(toolId);
+            if (!config || !topToolsDetail) return false;
+            const panel = document.getElementById(config.panelId);
+            const row = topToolRows.get(toolId);
+            if (!panel || !row) return false;
+            panel.dataset.ggTopDetailPanel = "true";
+            panel.dataset.ggTopDetailToolId = toolId;
+            if (panel.parentElement !== row.detail) row.detail.appendChild(panel);
+            panel.style.position = "static";
+            panel.style.inset = "auto";
+            panel.style.left = "";
+            panel.style.top = "";
+            panel.style.right = "";
+            panel.style.width = "100%";
+            panel.style.maxWidth = "none";
+            panel.style.maxHeight = "none";
+            panel.style.margin = "8px 0 0";
+            panel.style.boxSizing = "border-box";
+            panel.style.display = "block";
+            row.entry.dataset.expanded = "true";
+            row.detail.hidden = false;
+            row.row.setAttribute("aria-expanded", "true");
+            requestAnimationFrame(() => repositionTopToolsMenu?.());
+            return true;
+        };
+
+        window.__ggEmbedTopDetailPanel = embedTopDetailPanel;
+
+        const clearTopGroupPosition = (element) => {
+            element.classList.remove(
+                "gg-link-menu-host", "gg-link-legacy-host", "gg-link-floating-host",
+                "gg-memory-menu-host", "gg-memory-legacy-host", "gg-memory-floating-host",
+                "gg-group-styler-menu-host", "gg-group-styler-legacy-host", "gg-group-styler-floating-host",
+                "gg-translate-menu-host", "gg-translate-legacy-host", "gg-translate-floating-host",
+                "gg-node-glow-floating-host", "gg-node-plugin-name-floating",
+                "gg-port-list-floating", "gg-suyan-floating-host",
+                "gg-taprelay-floating-host",
+            );
+            element.style.position = "";
+            element.style.top = "";
+            element.style.right = "";
+            element.style.zIndex = "";
+        };
+
+        const syncTopToolsMenu = () => {
+            for (const [id, row] of topToolRows) {
+                const source = row.source;
+                const available = !!source;
+                row.entry.hidden = !available;
+                if (!available) continue;
+                const panel = document.getElementById(TOP_DETAIL_PANEL_CONFIG.get(id)?.panelId || "");
+                const expanded = !!panel && panel.parentElement === row.detail && panel.style.display !== "none";
+                row.entry.dataset.expanded = expanded ? "true" : "false";
+                row.detail.hidden = !expanded;
+                row.row.setAttribute("aria-expanded", expanded ? "true" : "false");
+            }
+            repositionTopToolsMenu?.();
+        };
+
+        window.__ggMountTopGroup = (element) => {
+            if (!element || !topToolsDetail || !TOP_GROUP_IDS.has(element.id)) return false;
+            if (element === topToolsGroup || element.contains(topToolsGroup)) return false;
+            const row = topToolRows.get(element.id);
+            if (!row) return false;
+            clearTopGroupPosition(element);
+            if (element.parentElement !== row.controls) row.controls.appendChild(element);
+            // A feature may hide its original top-bar host when disabled. The
+            // menu must keep the source control visible so it can be enabled again.
+            element.style.setProperty("display", "inline-flex", "important");
+            element.dataset.ggTopToolSource = "true";
+            element.dataset.ggTopToolId = element.id;
+            element.dataset.ggTopGrouped = "true";
+            row.source = element;
+            row.entry.hidden = false;
+            syncTopToolsMenu();
+            return true;
+        };
+
+        const installTopToolsMenu = () => {
+            if (topToolsGroup) return;
+            const style = document.createElement("style");
+            style.id = "gg-top-tools-menu-style";
+            style.textContent = `
+                #gg-top-tools-group {
+                    position: relative;
+                    display: inline-flex;
+                    align-items: center;
+                    height: 34px;
+                    margin-inline: 2px;
+                    flex: 0 0 auto;
+                }
+                #gg-top-tools-button {
+                    width: 34px;
+                    min-width: 34px;
+                    height: 34px;
+                    min-height: 34px;
+                    padding: 0;
+                    border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3));
+                    border-radius: 8px;
+                    background: var(--gg-toolbar-button-bg, var(--comfy-menu-bg, rgba(255,255,255,0.94)));
+                    color: var(--gg-ui-ink, #3f4856);
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    cursor: pointer;
+                }
+                #gg-top-tools-button.active,
+                #gg-top-tools-button:hover {
+                    color: var(--gg-ui-accent, #3b82f6);
+                    background: var(--gg-ui-accent-soft, rgba(59,130,246,0.13));
+                    border-color: var(--gg-ui-accent-border, rgba(59,130,246,0.3));
+                }
+                #gg-top-tools-menu {
+                    position: fixed;
+                    display: none;
+                    z-index: 100006;
+                    width: min(360px, calc(100vw - 16px));
+                    max-height: min(82vh, 700px);
+                    overflow: auto;
+                    padding: 0;
+                    border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3));
+                    border-radius: 10px;
+                    background: color-mix(in srgb, var(--comfy-menu-bg, #fff) 95%, var(--gg-ui-accent, #3b82f6));
+                    box-shadow: 0 18px 44px rgba(15,23,42,0.22);
+                    backdrop-filter: blur(16px);
+                }
+                #gg-top-tools-menu[data-open="true"] { display: block; }
+                #gg-top-tools-content {
+                    display: block;
+                }
+                #gg-top-tools-nav {
+                    min-width: 0;
+                    min-height: 0;
+                    padding: 8px;
+                }
+                #gg-top-tools-nav::before {
+                    content: "GuliNodes 工具";
+                    display: block;
+                    padding: 2px 8px 7px;
+                    color: var(--gg-ui-muted, #6b7280);
+                    font-size: 11px;
+                    font-weight: 700;
+                }
+                #gg-top-tools-nav .gg-top-tool-entry {
+                    display: block;
+                    min-width: 0;
+                    border: 1px solid transparent;
+                    border-radius: 8px;
+                }
+                #gg-top-tools-nav .gg-top-tool-entry + .gg-top-tool-entry {
+                    margin-top: 2px;
+                }
+                #gg-top-tools-nav .gg-top-tool-entry[hidden] {
+                    display: none !important;
+                }
+                #gg-top-tools-nav .gg-top-tool-entry[data-expanded="true"] {
+                    border-color: var(--gg-ui-accent-border, rgba(59,130,246,0.3));
+                    background: var(--gg-ui-accent-soft, rgba(59,130,246,0.08));
+                }
+                #gg-top-tools-nav .gg-top-tool-row {
+                    width: 100%;
+                    min-height: 40px;
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr) auto;
+                    align-items: center;
+                    gap: 10px;
+                    padding: 5px 8px;
+                    border: 0;
+                    border-radius: 7px;
+                    background: transparent;
+                    color: var(--gg-ui-ink, #3f4856);
+                    text-align: left;
+                    box-sizing: border-box;
+                    font: inherit;
+                }
+                #gg-top-tools-nav .gg-top-tool-row:hover {
+                    background: var(--gg-ui-accent-soft, rgba(59,130,246,0.12));
+                }
+                #gg-top-tools-nav .gg-top-tool-row-label {
+                    display: block;
+                    min-width: 0;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                    font-size: 13px;
+                    font-weight: 650;
+                }
+                #gg-top-tools-nav .gg-top-tool-controls {
+                    display: inline-flex;
+                    min-width: 0;
+                    align-items: center;
+                    justify-content: flex-end;
+                    gap: 4px;
+                }
+                #gg-top-tools-nav [data-gg-top-tool-source] {
+                    display: inline-flex !important;
+                    width: auto !important;
+                    min-width: 0 !important;
+                    height: auto !important;
+                    margin: 0 !important;
+                    align-items: center !important;
+                    justify-content: flex-end !important;
+                    gap: 4px !important;
+                    flex: 0 0 auto !important;
+                }
+                #gg-top-tools-nav [data-gg-top-tool-source] > button,
+                #gg-top-tools-nav [data-gg-top-tool-source] .gg-ui-top-button,
+                #gg-top-tools-nav [data-gg-top-tool-source] .gg-toolbar-top-button {
+                    width: 30px !important;
+                    min-width: 30px !important;
+                    max-width: 30px !important;
+                    height: 30px !important;
+                    min-height: 30px !important;
+                    max-height: 30px !important;
+                    padding: 0 !important;
+                    border-radius: 7px !important;
+                    box-sizing: border-box !important;
+                }
+                #gg-top-tools-nav [data-gg-top-tool-source] .gg-ui-icon {
+                    width: 17px;
+                    height: 17px;
+                }
+                #gg-top-tools-nav .gg-top-tool-detail {
+                    display: block;
+                    min-width: 0;
+                    padding: 0 8px 8px;
+                }
+                #gg-top-tools-nav .gg-top-tool-detail[hidden] {
+                    display: none !important;
+                }
+                #gg-top-tools-nav [data-gg-top-detail-panel] {
+                    min-width: 0;
+                    width: 100% !important;
+                    max-width: none !important;
+                    max-height: none !important;
+                    margin: 0 !important;
+                    border-radius: 12px !important;
+                    box-sizing: border-box !important;
+                }
+                @media (max-width: 620px) {
+                    #gg-top-tools-menu {
+                        width: min(360px, calc(100vw - 16px));
+                    }
+                }
+            `;
+            document.head.appendChild(style);
+
+            topToolsGroup = document.createElement("div");
+            topToolsGroup.id = "gg-top-tools-group";
+            topToolsButton = document.createElement("button");
+            topToolsButton.id = "gg-top-tools-button";
+            topToolsButton.type = "button";
+            topToolsButton.title = "GuliNodes 工具";
+            topToolsButton.setAttribute("aria-label", "GuliNodes 工具");
+            topToolsButton.setAttribute("aria-expanded", "false");
+            topToolsButton.innerHTML = ggIcon("toolGrid", 18);
+            topToolsMenu = document.createElement("div");
+            topToolsMenu.id = "gg-top-tools-menu";
+            topToolsMenu.setAttribute("role", "menu");
+            topToolsContent = document.createElement("div");
+            topToolsContent.id = "gg-top-tools-content";
+            topToolsNav = document.createElement("div");
+            topToolsNav.id = "gg-top-tools-nav";
+            // Kept as a compatibility marker for extensions that only check that
+            // the toolbar menu has been installed before mounting their controls.
+            topToolsDetail = topToolsNav;
+            topToolsContent.appendChild(topToolsNav);
+            topToolsMenu.appendChild(topToolsContent);
+            TOP_TOOL_GROUPS.forEach((entry) => {
+                const wrapper = document.createElement("div");
+                wrapper.className = "gg-top-tool-entry";
+                wrapper.dataset.toolId = entry.id;
+                wrapper.dataset.available = "false";
+                wrapper.hidden = true;
+                const row = document.createElement("div");
+                row.className = "gg-top-tool-row";
+                row.setAttribute("role", "menuitem");
+                row.setAttribute("aria-expanded", "false");
+                row.innerHTML = `<span class="gg-top-tool-row-label"></span><span class="gg-top-tool-controls"></span>`;
+                row.querySelector(".gg-top-tool-row-label").textContent = entry.label;
+                const detail = document.createElement("div");
+                detail.className = "gg-top-tool-detail";
+                detail.hidden = true;
+                detail.dataset.ggTopDetailSlot = entry.id;
+                wrapper.append(row, detail);
+                topToolsNav.appendChild(wrapper);
+                topToolRows.set(entry.id, {
+                    entry: wrapper,
+                    row,
+                    controls: row.querySelector(".gg-top-tool-controls"),
+                    detail,
+                    source: null,
+                });
+            });
+            // Keep the trigger in the top bar, but portal the menu to body. ComfyUI's
+            // top button group can clip descendants or create a stacking context.
+            topToolsGroup.append(topToolsButton);
+            document.body.appendChild(topToolsMenu);
+
+            topToolsMenu.addEventListener("click", (event) => {
+                const source = event.target.closest?.("[data-gg-top-tool-source]");
+                const toolId = source?.dataset.ggTopToolId;
+                const config = TOP_DETAIL_PANEL_CONFIG.get(toolId);
+                if (config && event.target.closest?.(config.trigger)) {
+                    requestAnimationFrame(() => {
+                        const panel = document.getElementById(config.panelId);
+                        if (panel && panel.style.display !== "none") embedTopDetailPanel(toolId);
+                    });
+                }
+                requestAnimationFrame(syncTopToolsMenu);
+                event.stopPropagation();
+            });
+
+            const positionMenu = () => {
+                if (!topToolsMenu || topToolsMenu.dataset.open !== "true") return;
+                const rect = topToolsButton.getBoundingClientRect();
+                const menuWidth = Math.min(360, window.innerWidth - 16);
+                const left = Math.min(window.innerWidth - menuWidth - 8, Math.max(8, rect.left));
+                const belowTop = rect.bottom + 8;
+                const top = belowTop + topToolsMenu.offsetHeight <= window.innerHeight - 8
+                    ? belowTop
+                    : Math.max(8, rect.top - topToolsMenu.offsetHeight - 8);
+                topToolsMenu.style.left = `${left}px`;
+                topToolsMenu.style.top = `${top}px`;
+            };
+            repositionTopToolsMenu = positionMenu;
+            const setMenuOpen = (open) => {
+                topToolsMenu.dataset.open = open ? "true" : "false";
+                topToolsButton.setAttribute("aria-expanded", open ? "true" : "false");
+                topToolsButton.classList.toggle("active", open);
+                if (open) {
+                    collectTopGroups();
+                    positionMenu();
+                } else {
+                    closeTopDetailPanels();
+                }
+            };
+            topToolsButton.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                setMenuOpen(topToolsMenu.dataset.open !== "true");
+            });
+            topToolsMenu.addEventListener("click", (event) => event.stopPropagation());
+            topToolsMenu.addEventListener("wheel", (event) => event.stopPropagation(), { passive: true });
+            document.addEventListener("pointerdown", (event) => {
+                if (
+                    topToolsMenu.dataset.open === "true"
+                    && !topToolsGroup.contains(event.target)
+                    && !topToolsMenu.contains(event.target)
+                ) setMenuOpen(false);
+            }, true);
+            document.addEventListener("keydown", (event) => {
+                if (event.key === "Escape" && topToolsMenu.dataset.open === "true") setMenuOpen(false);
+            });
+            window.addEventListener("resize", positionMenu);
+            window.__ggTopToolsMenuOpen = () => topToolsMenu.dataset.open === "true";
+        };
+
+        const collectTopGroups = () => {
+            if (!topToolsContent) return;
+            for (const id of TOP_GROUP_IDS) {
+                const element = document.getElementById(id);
+                if (element) {
+                    window.__ggMountTopGroup(element);
+                }
+            }
+            syncTopToolsMenu();
+        };
+
+        installTopToolsMenu();
+
         // 创建单个工具栏面板
         const panel = document.createElement("div");
         panel.id = "gg-nodes-panel";
@@ -81,7 +504,7 @@ app.registerExtension({
                 </button>
                 <div class="color-mode-wrap" style="position:relative;">
                     <button id="btn-color-mode" class="tool-btn" data-tooltip="上色模式" style="background:transparent;border:none;padding:4px;">
-                        ${ggIcon("layers", 21)}
+                        ${ggIcon("palette", 21)}
                     </button>
                     <div id="gg-color-mode-menu" style="display:none;position:absolute;left:50%;bottom:42px;transform:translateX(-50%);z-index:100000;">
                         <button class="tool-btn color-mode-btn active" data-mode="node" data-tooltip="节点整体" style="background:transparent;border:none;padding:4px;">
@@ -871,6 +1294,21 @@ app.registerExtension({
 
         let lastPosition = { left: "50%", bottom: "30px" };
 
+        const placeTopTools = () => {
+            if (!topToolsGroup) return;
+            const settingsGroup = app.menu?.settingsGroup?.element;
+            if (settingsGroup?.parentElement) {
+                if (settingsGroup.previousElementSibling !== topToolsGroup) settingsGroup.before(topToolsGroup);
+            } else {
+                const queueButton = document.getElementById("queue-button");
+                if (queueButton?.parentElement && queueButton.nextElementSibling !== topToolsGroup) {
+                    queueButton.insertAdjacentElement("afterend", topToolsGroup);
+                }
+                else if (topToolsGroup.parentElement !== document.body) document.body.appendChild(topToolsGroup);
+            }
+            collectTopGroups();
+        };
+
         const placeTopSwitch = () => {
             if (!topSwitchHost) return;
             topSwitchHost.classList.remove("gg-toolbar-menu-host", "gg-toolbar-legacy-host", "gg-toolbar-floating-host");
@@ -896,6 +1334,7 @@ app.registerExtension({
         };
 
         const updateMiniIconState = (visible) => {
+            placeTopTools();
             placeTopSwitch();
             const shouldShowSwitch = toolbarEnabled && topSwitchEnabled;
             topSwitchHost.classList.toggle("gg-toolbar-hidden", !shouldShowSwitch);
@@ -990,6 +1429,10 @@ app.registerExtension({
 
         requestAnimationFrame(() => updateMiniIconState(panel.style.display !== "none"));
         setTimeout(() => updateMiniIconState(panel.style.display !== "none"), 800);
+        setTimeout(() => {
+            placeTopTools();
+            collectTopGroups();
+        }, 1800);
 
         panel.addEventListener("contextmenu", e => {
             e.preventDefault();

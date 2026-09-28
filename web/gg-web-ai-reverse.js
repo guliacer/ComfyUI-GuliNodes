@@ -19,6 +19,8 @@ const MIN_PANEL_HEIGHT = 360;
 const MAX_PANEL_HEIGHT = 1500;
 const DEFAULT_PANEL_HEIGHT = 820;
 const URL_BAR_HEIGHT = 28;
+const HIDDEN_TAG = "ggHiddenWebAI";
+const hiddenWidgetState = {};
 
 const PLATFORM_URLS = Object.freeze({
     "豆包": "https://www.doubao.com/",
@@ -131,6 +133,25 @@ function getPanelHeight(node) {
 
 function getPlatform(node) {
     return getWidgetValue(node, "平台", "豆包");
+}
+
+function toggleHiddenWidget(node, widget, show) {
+    if (!widget) return;
+    if (!hiddenWidgetState[widget.name]) {
+        hiddenWidgetState[widget.name] = {
+            origType: widget.type,
+            origComputeSize: widget.computeSize,
+        };
+    }
+    const state = hiddenWidgetState[widget.name];
+    widget.hidden = !show;
+    widget.type = show ? state.origType : HIDDEN_TAG;
+    widget.computeSize = show ? state.origComputeSize : () => [0, -4];
+}
+
+function updateCustomUrlVisibility(node) {
+    // 仅“自定义”平台会用到自定义网址，其余平台用内置地址，隐藏该输入。
+    toggleHiddenWidget(node, getWidget(node, "自定义网址"), getPlatform(node) === "自定义");
 }
 
 function normalizeUrl(url) {
@@ -313,6 +334,7 @@ function wrapWidgetCallback(node, widgetName) {
         const result = originalCallback?.apply(this, arguments);
         window.setTimeout(() => {
             const shouldReload = widgetName === "平台" || widgetName === "自定义网址";
+            if (widgetName === "平台") updateCustomUrlVisibility(node);
             updatePanelFromWidgets(node, shouldReload);
             resizeNodeToPanel(node);
         }, 0);
@@ -452,6 +474,7 @@ function ensureWebAIWidget(node) {
 
     node.ggWebAIReverseWidget = widget;
     installNodeHooks(node);
+    updateCustomUrlVisibility(node);
     updatePanelFromWidgets(node, true);
     window.setTimeout(() => resizeNodeToPanel(node), 0);
     window.setTimeout(() => resizeNodeToPanel(node), 120);

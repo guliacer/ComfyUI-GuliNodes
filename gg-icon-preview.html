@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GuliNodes 图标美化预览</title>
+<style>
+    :root {
+        --ink: #3f4856;
+        --muted: #6b7280;
+        --accent: #3b82f6;
+        --accent-soft: rgba(59, 130, 246, 0.13);
+        --accent-border: rgba(59, 130, 246, 0.28);
+        --line: rgba(148, 163, 184, 0.22);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+        font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+        background: #f4f6fa;
+        color: var(--ink);
+        padding: 32px 24px 56px;
+    }
+    .wrap { max-width: 860px; margin: 0 auto; }
+    h1 { font-size: 20px; font-weight: 700; margin-bottom: 6px; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+    h2 { font-size: 15px; font-weight: 650; margin: 26px 0 12px; }
+
+    .gg-ui-icon {
+        display: block;
+        color: inherit;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2.15;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        vector-effect: non-scaling-stroke;
+    }
+    .gg-ui-icon .gg-ui-fill { fill: currentColor; stroke: none; }
+
+    /* ---- 对比网格 ---- */
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+    .card {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 14px 16px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+    .cell { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 76px; }
+    .cell .demo {
+        width: 44px; height: 44px;
+        border-radius: 10px;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(148,163,184,0.08);
+        border: 1px solid var(--line);
+        color: var(--ink);
+    }
+    .cell.new .demo {
+        background: var(--accent-soft);
+        border-color: var(--accent-border);
+        color: var(--accent);
+    }
+    .cell .tag { font-size: 11px; color: var(--muted); }
+    .cell.new .tag { color: var(--accent); font-weight: 600; }
+    .card .info { flex: 1; min-width: 0; }
+    .card .name { font-size: 13.5px; font-weight: 650; }
+    .card .why { font-size: 12px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+
+    /* ---- 开关状态演示 ---- */
+    .state-demo { display: flex; gap: 14px; flex-wrap: wrap; }
+    .state-item {
+        flex: 1; min-width: 150px;
+        background: #fff; border: 1px solid var(--line); border-radius: 12px;
+        padding: 14px; display: flex; align-items: center; gap: 12px;
+    }
+    .state-item .tbtn { flex: 0 0 auto; position: relative; }
+    .state-text b { display: block; font-size: 12.5px; }
+    .state-text i { display: block; font-style: normal; font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .tbtn.state-off  { color: #64748b; background: rgba(148,163,184,0.10); border-color: rgba(148,163,184,0.28); }
+    .tbtn.state-hover{ color: #64748b; background: rgba(148,163,184,0.18); border-color: rgba(148,163,184,0.28); }
+    .tbtn.state-on   { color: var(--accent); background: rgba(59,130,246,0.17); border-color: var(--accent-border); }
+    .tbtn.state-on-hover { color: var(--accent); background: rgba(59,130,246,0.26); border-color: var(--accent-border); }
+
+    /* ---- 顶部工具栏模拟 ---- */
+    .toolbar-mock {
+        display: flex; align-items: center; gap: 8px;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 14px;
+        margin-bottom: 8px;
+        width: fit-content;
+    }
+    .tbtn {
+        width: 34px; height: 34px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: rgba(255,255,255,0.6);
+        color: var(--ink);
+        display: inline-flex; align-items: center; justify-content: center;
+        cursor: default;
+    }
+    .tbtn.on { color: var(--accent); background: var(--accent-soft); border-color: var(--accent-border); }
+
+    /* ---- 下拉菜单模拟 ---- */
+    .menu-mock {
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.1);
+        padding: 14px 16px;
+        width: 320px;
+    }
+    .menu-mock .mtitle { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+    .mrow {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 4px;
+        border-radius: 8px;
+    }
+    .mrow:hover { background: var(--accent-soft); }
+    .mrow .label { font-size: 13px; font-weight: 650; }
+    .mrow .ctrls { display: flex; gap: 6px; }
+    .mrow .tbtn { width: 30px; height: 30px; border-radius: 7px; }
+    .mrow .tbtn .gg-ui-icon { width: 17px; height: 17px; }
+
+    /* ---- 设置面板前后对比 ---- */
+    .panel-compare { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+    .pmock { width: 300px; border-radius: 14px; overflow: hidden; }
+    .pmock .ptitle {
+        font-size: 12px; font-weight: 650;
+        padding: 8px 14px;
+        background: rgba(148,163,184,0.14);
+        color: var(--muted);
+    }
+    .pmock.new .ptitle { color: var(--accent); background: var(--accent-soft); }
+    .pmock .pbody { padding: 14px; font-size: 12px; }
+    .pmock.old { background: #fff; border: 1px solid var(--line); color: var(--ink); }
+    .pmock.new {
+        background: color-mix(in srgb, #fff 94%, var(--accent));
+        border: 1px solid var(--accent-border);
+        color: var(--ink);
+        box-shadow: 0 16px 36px rgba(15,23,42,0.08);
+    }
+    .plabel { color: var(--muted); font-weight: 600; }
+    .prow { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: 8px; }
+    .prow select {
+        height: 26px; padding: 0 6px; font: inherit; color: inherit;
+        border: 1px solid var(--line); border-radius: 6px; background: rgba(255,255,255,0.7);
+    }
+    .pbtns { display: grid; gap: 6px; margin-top: 7px; }
+    .pbtns.plain { grid-template-columns: repeat(4, 1fr); }
+    .pbtns.plain span {
+        padding: 5px 3px; text-align: center;
+        border: 1px solid var(--line); border-radius: 6px; background: transparent;
+    }
+    .pbtns.plain span.on { background: var(--accent-soft); color: var(--accent); border-color: var(--line); }
+    .pbtns.seg { grid-template-columns: repeat(3, 1fr); }
+    .pbtns.seg.four { grid-template-columns: repeat(4, 1fr); }
+    .pbtns.seg span {
+        padding: 6px 4px; text-align: center; font-weight: 550;
+        border: 1px solid var(--accent-border); border-radius: 8px;
+        background: color-mix(in srgb, #fff 70%, transparent);
+        transition: all 0.14s ease;
+    }
+    .pbtns.seg span:hover { border-color: var(--accent); background: var(--accent-soft); }
+    .pbtns.seg span.on {
+        border-color: var(--accent); color: var(--accent); font-weight: 650;
+        background: var(--accent-soft);
+        box-shadow: 0 0 0 2px rgba(59,130,246,0.14);
+    }
+    .pchecks { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 7px; }
+    .pchecks label { display: flex; align-items: center; gap: 6px; }
+    .pchips { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 7px; }
+    .pchips span {
+        position: relative; padding: 6px 9px 6px 28px;
+        border: 1px solid var(--accent-border); border-radius: 9px;
+        background: color-mix(in srgb, #fff 70%, transparent);
+        transition: all 0.14s ease;
+    }
+    .pchips span::before {
+        content: ""; position: absolute; left: 9px; top: 50%; translate: 0 -50%;
+        width: 13px; height: 13px; border: 1.5px solid rgba(100,116,139,0.55);
+        border-radius: 4.5px; box-sizing: border-box; background: transparent;
+    }
+    .pchips span.on {
+        border-color: var(--accent-border); background: var(--accent-soft);
+        color: var(--accent); font-weight: 600;
+    }
+    .pchips span.on::before {
+        border-color: var(--accent); background-color: var(--accent);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 13 5 5 9-11'/%3E%3C/svg%3E");
+        background-size: 9px; background-position: center; background-repeat: no-repeat;
+    }
+
+    /* ---- 光效色彩选择 ---- */
+    .color-chips {
+        display: grid; grid-template-columns: repeat(5, 1fr);
+        gap: 10px; justify-items: center; margin-top: 9px;
+    }
+    .color-chips .chip {
+        width: 32px; height: 32px; padding: 0;
+        border: 2px solid transparent; border-radius: 50%;
+        box-shadow: inset 0 1px 2px rgba(255,255,255,0.55), 0 1px 3px rgba(15,23,42,0.18);
+        cursor: pointer; box-sizing: border-box;
+        transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+    }
+    .color-chips .chip:hover { transform: translateY(-1px) scale(1.08); }
+    .color-chips .chip.active {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.22), inset 0 1px 2px rgba(255,255,255,0.55);
+    }
+    .cnote { margin-top: 10px; font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+    <h1>GuliNodes 图标美化预览</h1>
+    <p class="sub">左侧为优化前 · 右侧为优化后（蓝色高亮）。全部为 24 viewBox 线性图标，统一圆角端点，与 ComfyUI 浅色画布风格一致。</p>
+
+    <h2>重画的图标（样式杂乱 / 不达意）</h2>
+    <div class="grid" id="redrawn"></div>
+
+    <h2>新增的图标（功能专属，不再借用其它含义）</h2>
+    <div class="grid" id="newIcons"></div>
+
+    <h2>开关状态规范 · 一眼看出功能是否开启</h2>
+    <div class="state-demo">
+        <div class="state-item">
+            <span class="tbtn state-off"><svg class="gg-ui-icon" width="18" height="18" viewBox="0 0 24 24"><circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/></svg></span>
+            <div class="state-text"><b>未开启</b><i>灰色图标 + 浅灰底</i></div>
+        </div>
+        <div class="state-item">
+            <span class="tbtn state-hover"><svg class="gg-ui-icon" width="18" height="18" viewBox="0 0 24 24"><circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/></svg></span>
+            <div class="state-text"><b>悬停（未开启）</b><i>仍是灰色，只加深底色</i></div>
+        </div>
+        <div class="state-item">
+            <span class="tbtn state-on"><svg class="gg-ui-icon" width="18" height="18" viewBox="0 0 24 24"><circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/></svg></span>
+            <div class="state-text"><b>已开启</b><i>蓝色图标 + 蓝色底/边</i></div>
+        </div>
+        <div class="state-item">
+            <span class="tbtn state-on-hover"><svg class="gg-ui-icon" width="18" height="18" viewBox="0 0 24 24"><circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/></svg></span>
+            <div class="state-text"><b>悬停（已开启）</b><i>蓝色加深一档</i></div>
+        </div>
+    </div>
+    <p class="sub" style="margin-top:10px;">统一规则：开关型顶栏按钮 关=灰 / 开=蓝，悬停不再把灰色变蓝（此前"悬停=开启"是误读的重灾区）；瞬时动作按钮（内存清理）默认灰色、悬停短暂变蓝；素言品牌 Logo 保持彩色不参与状态。已覆盖：节点光效、连接线、界面翻译、分组样式、输入输出列表、节点折叠、完成通知、插件名称。</p>
+
+    <h2>实际效果模拟 · 顶部工具栏</h2>
+    <div class="toolbar-mock" id="toolbarMock"></div>
+
+    <h2>实际效果模拟 · GuliNodes 工具下拉菜单</h2>
+    <div class="menu-mock" id="menuMock"></div>
+
+    <h2>设置面板美化 · 节点光效设置（前后对比）</h2>
+    <div class="panel-compare">
+        <div class="pmock old">
+            <div class="ptitle">优化前</div>
+            <div class="pbody">
+                <div class="prow"><span class="plabel">效果模式</span><select><option>智能</option><option>自定义</option><option>随机</option></select></div>
+                <div class="plabel" style="margin-top:10px;">效果强度</div>
+                <div class="pbtns plain"><span>低</span><span class="on">标准</span><span>梦幻</span><span>沉浸</span></div>
+                <div class="plabel" style="margin-top:10px;">光效效果池</div>
+                <div class="pchecks">
+                    <label><input type="checkbox" checked>星尘</label>
+                    <label><input type="checkbox" checked>彩虹</label>
+                    <label><input type="checkbox" checked>音符</label>
+                    <label><input type="checkbox" checked>宇宙尘埃</label>
+                </div>
+            </div>
+        </div>
+        <div class="pmock new">
+            <div class="ptitle">优化后（蓝框为选中态）</div>
+            <div class="pbody">
+                <div class="plabel">效果模式</div>
+                <div class="pbtns seg"><span class="on">智能</span><span>自定义</span><span>随机</span></div>
+                <div class="plabel" style="margin-top:11px;">效果强度</div>
+                <div class="pbtns seg four"><span>低</span><span class="on">标准</span><span>梦幻</span><span>沉浸</span></div>
+                <div class="plabel" style="margin-top:11px;">光效效果池</div>
+                <div class="pchips">
+                    <span class="on">星尘</span><span class="on">彩虹</span><span class="on">音符</span><span class="on">宇宙尘埃</span><span class="on">爱心</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    <p class="sub" style="margin-top:12px;">要点：效果模式弃用原生下拉（弹出灰框无法美化），改为与强度一致的按钮组；效果池复选框改为芯片式勾选，选中即高亮；容器加标题分隔线、统一圆角与过渡动画。连接线快速设置面板的下拉框同步美化（自定义箭头 + 悬停反馈）。</p>
+
+    <h2>新功能 · 光效色彩选择</h2>
+    <div class="pmock new" style="width: 340px;">
+        <div class="ptitle">节点光效设置 · 光效色彩</div>
+        <div class="pbody">
+            <div class="plabel">光效色彩（悬停可看名称）</div>
+            <div class="color-chips" id="colorChips"></div>
+            <div class="cnote" id="colorNote">点击色板即时生效 · 「自动」保留每个效果各自的默认配色</div>
+        </div>
+    </div>
+    <p class="sub" style="margin-top:12px;">每个主题在暗色画布与浅色画布各有一套色阶：暗色画布上光比背景更亮（芯色接近纯白），浅色画布上用更深的色阶保持对比；彩虹效果会转为所选色彩的邻近色渐变，不再跳出主题。设置页 GuliNodes / 节点光效 同步新增「光效色彩」下拉项。</p>
+</div>
+
+<script>
+const OLD = {
+    brush: '<path d="M4 20.5h5.2"/><path d="M14.8 3.8l5.4 5.4"/><path d="M18.3 7.3 9.1 16.5l-4.2.9.9-4.2 9.2-9.2"/><path d="M6 18c1.2-1.2 2.7-.2 3.9-1.5"/>',
+    copy: '<rect x="8" y="8" width="11" height="11" rx="3"/><rect x="5" y="5" width="11" height="11" rx="3"/><path d="M12 11h2.5"/><path d="M12 14h1.5"/>',
+    paste: '<path d="M8.5 5.5h7"/><rect x="9" y="3.5" width="6" height="4" rx="1.5"/><rect x="5" y="6" width="14" height="15" rx="3"/><path d="M8.5 12h7"/><path d="M8.5 15.5H13"/>',
+    width: '<rect x="5" y="7" width="14" height="10" rx="3"/><path d="M8 12h8"/><path d="m9.7 9.9-2.1 2.1 2.1 2.1"/><path d="m14.3 9.9 2.1 2.1-2.1 2.1"/>',
+    height: '<rect x="7" y="5" width="10" height="14" rx="3"/><path d="M12 8v8"/><path d="m9.9 9.7 2.1-2.1 2.1 2.1"/><path d="m9.9 14.3 2.1 2.1 2.1-2.1"/>',
+    spacing: '<rect x="5" y="5" width="14" height="3" rx="1.2"/><rect x="5" y="10.5" width="14" height="3" rx="1.2"/><rect x="5" y="16" width="14" height="3" rx="1.2"/><path d="M12 8.2v2"/><path d="M12 13.7v2"/>',
+    layers: '<path d="m12 3.5 8 4.4-8 4.4-8-4.4 8-4.4z"/><path d="m4 12 8 4.4 8-4.4"/><path d="m4 16.2 8 4.3 8-4.3"/>',
+    linkFlow: '<circle cx="6" cy="8" r="2.4"/><circle cx="18" cy="16" r="2.4"/><path d="M8.3 8.7c4.2.5 5.4 5.9 9.3 6.9"/><path d="M5.6 16h2.6a4 4 0 0 0 3.4-1.9"/><path d="M18.4 8h-2.6a4 4 0 0 0-3.4 1.9"/>',
+    linkTune: '<circle cx="5.5" cy="7" r="2"/><circle cx="18.5" cy="17" r="2"/><path d="M7.5 7H13"/><path d="M15 7h4"/><path d="M5.5 9v3.2A4.8 4.8 0 0 0 10.3 17h6.2"/><path d="M13 4.5v5"/><path d="M15 14.5v5"/>',
+    memorySweep: '<rect x="5" y="4" width="12" height="12" rx="3"/><path d="M8 8h6"/><path d="M8 11.5h4"/><path d="M8 2v2"/><path d="M14 2v2"/><path d="M9 16v2"/><path d="M18.2 13.8l3.3 3.3"/><path d="m14.5 20.5 7-7"/><path d="M16.2 20.5h-3.4"/>',
+    nodeCollapse: '<rect x="4.5" y="4.5" width="15" height="15" rx="3"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h8"/>',
+    nodeExpand: '<rect x="4.5" y="4.5" width="15" height="15" rx="3"/><path d="m8 10 4 4 4-4"/>',
+};
+
+const NEW = {
+    brush: '<path d="m16.5 3.5 4 4L8 20l-5 1 1-5L16.5 3.5z"/><path d="m13.2 6.8 4 4"/>',
+    copy: '<rect x="8.5" y="8.5" width="11" height="11" rx="2.5"/><path d="M15.5 4.5h-8a3 3 0 0 0-3 3v8"/>',
+    paste: '<rect x="4.5" y="5.5" width="15" height="15.5" rx="3"/><rect x="9" y="2.8" width="6" height="3.7" rx="1.3"/>',
+    width: '<path d="M4 6.5v11"/><path d="M20 6.5v11"/><path d="M7.5 12h9"/><path d="m10 9.5-2.5 2.5L10 14.5"/><path d="m14 9.5 2.5 2.5L14 14.5"/>',
+    height: '<path d="M6.5 4h11"/><path d="M6.5 20h11"/><path d="M12 7.5v9"/><path d="m9.5 10 2.5-2.5L14.5 10"/><path d="m9.5 14 2.5 2.5L14.5 14"/>',
+    spacing: '<path d="M5 6h14"/><path d="M5 18h14"/><path d="M12 8.5v7"/><path d="m10.6 9.9 1.4-1.4 1.4 1.4"/><path d="m10.6 14.1 1.4 1.4 1.4-1.4"/>',
+    toolGrid: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2" class="gg-ui-fill"/>',
+    linkFlow: '<circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/>',
+    linkTune: '<circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/><circle cx="13.6" cy="6.5" r="1.2" class="gg-ui-fill"/><circle cx="18.5" cy="11.4" r="1.2" class="gg-ui-fill"/>',
+    memorySweep: '<path d="M20.5 3.5 14 10"/><path d="M12.2 8.6 5 14.2a6.6 6.6 0 0 0 4.8 4.8l5.6-7.2z"/><path d="m8.6 12.4 3 3"/><path d="M3.5 20.5h3"/>',
+    nodeCollapse: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M4 9.5h16"/><path d="m9.5 16.5 2.5-2.5 2.5 2.5"/>',
+    nodeExpand: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M4 9.5h16"/><path d="m9.5 14 2.5 2.5 2.5-2.5"/>',
+    portList: '<rect x="8" y="9" width="8" height="6" rx="1.8"/><path d="M2.5 10.5H8"/><path d="M2.5 13.5H8"/><path d="M16 10.5h5.5"/><path d="M16 13.5h5.5"/>',
+    groupStyle: '<rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke-dasharray="3.2 2.4"/><rect x="8.2" y="8.2" width="7.6" height="7.6" rx="1.8"/>',
+    translate: '<path d="M3.5 5.5h8"/><path d="M7.5 3.5v2"/><path d="M11.5 5.5c-.4 4-3.2 7.3-8 9"/><path d="M4.5 8.8c1.5 2.7 3.9 4.4 6.5 5"/><path d="m13.5 20.5 4-11 4 11"/><path d="M15 17h5"/>',
+    tagName: '<path d="M12.6 3.5H5.5a2 2 0 0 0-2 2v7.1a2 2 0 0 0 .6 1.4l7.3 7.3a2 2 0 0 0 2.8 0l7.1-7.1a2 2 0 0 0 0-2.8l-7.3-7.3a2 2 0 0 0-1.4-.6z"/><circle cx="8" cy="8" r="1.3" class="gg-ui-fill"/>',
+    // 未改动、供模拟使用的既有图标
+    sparkle: '<path d="M12 2l2.2 6.8L21 11l-6.8 2.2L12 20l-2.2-6.8L3 11l6.8-2.2L12 2z"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V19a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+    fit: '<path d="M8 4H5.5A1.5 1.5 0 0 0 4 5.5V8"/><path d="M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8"/><path d="M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16"/><path d="M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><rect x="8.5" y="8.5" width="7" height="7" rx="2"/>',
+    eyeOff: '<path d="M4 4l16 16"/><path d="M8.4 8.2C5.4 9.5 3.5 12 3.5 12s3.2 5.2 8.5 5.2c1.5 0 2.8-.4 3.9-1"/><path d="M10.4 6.9c.5-.1 1-.1 1.6-.1 5.3 0 8.5 5.2 8.5 5.2s-.8 1.4-2.3 2.7"/><path d="M10.8 10.8a2.4 2.4 0 0 0 2.4 2.4"/>',
+    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10.3 21h3.4"/>',
+    toolGrid: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2" class="gg-ui-fill"/>',
+    palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.6 0 2.2-1 1.7-2.1-.6-1.3.2-2.4 1.7-2.4h1.9c2 0 3.2-1.3 3.2-3.4C20.5 7.6 16.7 3.5 12 3.5z"/><circle cx="7.5" cy="10.5" r="1.1" class="gg-ui-fill"/><circle cx="11" cy="7.5" r="1.1" class="gg-ui-fill"/><circle cx="15.5" cy="8.5" r="1.1" class="gg-ui-fill"/>',
+};
+
+function icon(paths, size) {
+    return `<svg class="gg-ui-icon" width="${size}" height="${size}" viewBox="0 0 24 24">${paths}</svg>`;
+}
+
+const REDRAWN = [
+    { key: "brush", name: "启用节点上色", why: "旧版铅笔加底部弧线，两段构图互相打架；新版一笔成形的斜铅笔加笔尖分割线，干净大气，「上色」含义直观。" },
+    { key: "copy", name: "复制节点尺寸", why: "旧版两个矩形交叉叠画、框内还有内容线，21px 下糊成一团；新版采用标准双框构造（外框只画左上圆弧，不与前框交叉）。" },
+    { key: "paste", name: "粘贴尺寸 / 粘贴上色", why: "旧版剪贴板塞了两条内容线，小尺寸发糊；新版只留夹子和板身，夹子改成卡扣式压在板上，与 copy 的双框造型一眼区分。" },
+    { key: "width", name: "自动宽度", why: "旧版在矩形框内塞双向箭头，挤成一团；新版「左右边界线 + 双向拉伸箭头」，宽度语义一目了然。" },
+    { key: "height", name: "自动高度", why: "同宽度图标重构：上下边界线 + 纵向双向拉伸箭头，与宽度图标形成横竖一对。" },
+    { key: "spacing", name: "自动间距", why: "旧版三个色块加两条 2 格小竖线，小尺寸看不清；新版上下两条界线加中间带箭头的测量线，正是「间距」的标准符号。" },
+    { key: "portList", name: "输入输出列表", why: "旧版借用划线眼睛（eyeOff），17px 下线条杂乱、含义偏「隐藏」；新版专属图标：中间节点、左右各两条端口线，「输入输出 + 列表」双层含义，开关状态由颜色承担。" },
+    { key: "nodeCollapse", name: "节点折叠 / 展开", why: "旧版两个小箭头挤在框中央，17px 下像「X」；新版加标题栏分隔线、箭头加长一倍——折叠箭头向上收、展开箭头向下放，语义和形状都立得住。" },
+    { key: "toolGrid", name: "GuliNodes 工具 · 菜单入口", why: "旧版三层叠加在 18px 下糊成一团，还像「图层」含义跑偏；新版 2×2 圆角方格（右下实心点缀），正是「工具集合」的经典隐喻，小尺寸依旧清晰。" },
+    { key: "linkFlow", name: "连接线 · 开关", why: "旧版两条曲线交叉缠绕，17px 下糊成一团；新版「节点 → 圆角曲线 → 节点」一眼读懂连线关系。" },
+    { key: "linkTune", name: "连接线 · 快速设置", why: "旧版混入直线与断口，含义不明；新版保留连线骨架、加两个贝塞尔控制点，表达「可调节曲线」。" },
+    { key: "memorySweep", name: "内存清理", why: "旧版芯片 + 扫帚叠加，元素糊在一起；新版改为单一大扫帚 + 清扫轨迹，干净利落。" },
+    { key: "nodeCollapse", name: "节点折叠", why: "旧版是三条横线，看起来像「列表」而不是折叠；新版上下箭头向中心收拢，表达「折叠」。" },
+    { key: "nodeExpand", name: "节点展开", why: "旧版只有单个箭头，与折叠难以区分；新版上下箭头向外撑开，与折叠形成一对语义相反的组合。" },
+];
+const ADDED = [
+    { key: "groupStyle", name: "分组样式", why: "原来借用「工作流」图标，不达意；新版虚线框 + 实心节点，正是「给一组节点套样式」的含义。" },
+    { key: "translate", name: "界面翻译", why: "原来借用聊天气泡图标；新版经典「文 / A」双语布局，翻译含义一目了然。" },
+    { key: "tagName", name: "插件名称", why: "原来与「输入输出列表」同为眼睛图标，无法区分；新版改为标签图标，表达「名称标签」，开关状态由按钮高亮承担。" },
+];
+
+function card(item) {
+    return `<div class="card">
+        <div class="cell"><div class="demo">${icon(OLD[item.key] || "", 22)}</div><span class="tag">优化前</span></div>
+        <div class="cell new"><div class="demo">${icon(NEW[item.key], 22)}</div><span class="tag">优化后</span></div>
+        <div class="info">
+            <div class="name">${item.name}</div>
+            <div class="why">${item.why}</div>
+        </div>
+    </div>`;
+}
+document.getElementById("redrawn").innerHTML = REDRAWN.map(card).join("");
+document.getElementById("newIcons").innerHTML = ADDED.map(item => `
+    <div class="card">
+        <div class="cell new"><div class="demo">${icon(NEW[item.key], 22)}</div><span class="tag">新增</span></div>
+        <div class="info">
+            <div class="name">${item.name}</div>
+            <div class="why">${item.why}</div>
+        </div>
+    </div>`).join("");
+
+// 顶部工具栏模拟
+const toolbar = [
+    { key: "translate", title: "界面翻译", on: true },
+    { key: "memorySweep", title: "内存清理", on: false },
+    { key: "bell", title: "完成通知", on: true },
+    { key: "toolGrid", title: "GuliNodes 工具", on: true },
+];
+document.getElementById("toolbarMock").innerHTML =
+    toolbar.map(b => `<span class="tbtn ${b.on ? "on" : ""}" title="${b.title}">${icon(NEW[b.key], 18)}</span>`).join("") +
+    `<span style="font-size:13px;color:var(--muted);margin-left:6px;">← 顶部按钮（素言为品牌 Logo 图片，保持不变）</span>`;
+
+// 下拉菜单模拟
+const menu = [
+    { label: "连接线", btns: [["linkFlow", true], ["linkTune", false]] },
+    { label: "分组样式", btns: [["groupStyle", true], ["fit", false]] },
+    { label: "节点光效", btns: [["sparkle", true], ["settings", false]] },
+    { label: "插件名称", btns: [["tagName", true]] },
+    { label: "输入输出列表", btns: [["portList", false]] },
+    { label: "节点折叠", btns: [["nodeCollapse", false]] },
+    { label: "界面翻译", btns: [["translate", true]] },
+    { label: "完成通知", btns: [["bell", true]] },
+];
+document.getElementById("menuMock").innerHTML =
+    `<div class="mtitle">GuliNodes 工具</div>` +
+    menu.map(row => `<div class="mrow">
+        <span class="label">${row.label}</span>
+        <span class="ctrls">${row.btns.map(([k, on]) => `<span class="tbtn ${on ? "on" : ""}">${icon(NEW[k], 17)}</span>`).join("")}</span>
+    </div>`).join("");
+
+// 光效色彩主题芯片（与插件内逻辑一致，取暗色阶做预览）
+const THEMES = [
+    { label: "自动", bg: "conic-gradient(from 210deg, #f472b6, #fbbf24, #4ade80, #38bdf8, #a78bfa, #f472b6)" },
+    { label: "梦幻紫", bg: "linear-gradient(135deg, #a78bfa 0%, #ffffff 52%, #67e8f9 100%)" },
+    { label: "星河蓝", bg: "linear-gradient(135deg, #60a5fa 0%, #eff6ff 52%, #c4b5fd 100%)" },
+    { label: "樱花粉", bg: "linear-gradient(135deg, #f9a8d4 0%, #fff1f8 52%, #fb7185 100%)" },
+    { label: "落日橙", bg: "linear-gradient(135deg, #fbbf24 0%, #fffbeb 52%, #fb923c 100%)" },
+    { label: "翡翠绿", bg: "linear-gradient(135deg, #4ade80 0%, #f0fdf4 52%, #2dd4bf 100%)" },
+    { label: "冰晶青", bg: "linear-gradient(135deg, #67e8f9 0%, #f0f9ff 52%, #38bdf8 100%)" },
+    { label: "玫瑰红", bg: "linear-gradient(135deg, #fb7185 0%, #fff1f2 52%, #f9a8d4 100%)" },
+    { label: "鎏金", bg: "linear-gradient(135deg, #fde68a 0%, #fffbeb 52%, #fbbf24 100%)" },
+];
+const chipHost = document.getElementById("colorChips");
+chipHost.innerHTML = THEMES.map((t, i) =>
+    `<span class="chip ${i === 0 ? "active" : ""}" title="${t.label}" style="background:${t.bg}"></span>`
+).join("");
+chipHost.addEventListener("click", (event) => {
+    const chip = event.target.closest(".chip");
+    if (!chip) return;
+    chipHost.querySelectorAll(".chip").forEach(el => el.classList.remove("active"));
+    chip.classList.add("active");
+    document.getElementById("colorNote").textContent =
+        `当前预览：${chip.title} · 深色画布用亮色阶、浅色画布用深色阶，彩虹转为邻近色渐变`;
+});
+</script>
+</body>
+</html>

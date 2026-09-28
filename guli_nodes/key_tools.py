@@ -32,6 +32,7 @@ CONFIG_NAME = "API配置"
 CONFIG_TYPE = "GG_API_CONFIG"
 DEFAULT_MODEL_NAME = "gpt-4o-mini"
 TEST_ROUTE = "/guli/key_input/test"
+MODELS_ROUTE = "/guli/key_input/models"
 TEST_TIMEOUT_SECONDS = 20
 _ROUTES_REGISTERED = False
 _DIRECT_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -223,6 +224,9 @@ def _request_headers(key_value: str | None, *, content_type: bool = False) -> di
     api_key = _normalize_key(key_value)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
+        # Different OpenAI-compatible gateways use one of these conventional headers.
+        headers["api-key"] = api_key
+        headers["x-api-key"] = api_key
     return headers
 
 
@@ -231,6 +235,118 @@ def _read_http_error(exc: urllib.error.HTTPError) -> str:
         return exc.read().decode("utf-8", errors="replace")
     except Exception:
         return str(exc)
+
+
+def _model_name_from_item(item) -> str:
+    if isinstance(item, str):
+        return item.strip()
+    if not isinstance(item, dict):
+        return ""
+    for key in ("id", "name", "model", "model_name", "modelName"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _extract_model_names(data) -> list[str]:
+    candidates = data
+    if isinstance(data, dict):
+        for key in ("data", "models", "result", "items"):
+            value = data.get(key)
+            if isinstance(value, (list, tuple, dict)):
+                candidates = value
+                break
+
+    if isinstance(candidates, dict):
+        candidates = list(candidates.values())
+    if not isinstance(candidates, (list, tuple)):
+        candidates = [candidates]
+
+    names = []
+    seen = set()
+    for item in candidates:
+        name = _model_name_from_item(item)
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+        if len(names) >= 500:
+            break
+    return names
+
+
+def _fetch_models(endpoint: str | None, key_value: str | None) -> dict:
+    started_at = time.perf_counter()
+    url = ""
+    try:
+        url = _models_url(endpoint or "")
+        with _urlopen_get_with_fallbacks(url, _request_headers(key_value), timeout=TEST_TIMEOUT_SECONDS) as response:
+            raw_text = response.read().decode("utf-8", errors="replace")
+            status = getattr(response, "status", 200)
+
+        try:
+            data = json.loads(raw_text) if raw_text else {}
+        except Exception as exc:
+            return {
+                "ok": False,
+                "status": status,
+                "models": [],
+                "message": f"模型接口返回的不是有效 JSON：{exc}{_format_url_context(url)}",
+                "endpoint": url,
+            }
+
+        if isinstance(data, dict) and data.get("error"):
+            return {
+                "ok": False,
+                "status": status,
+                "models": [],
+                "message": f"{_extract_error_message(raw_text) or '模型接口返回了错误信息。'}{_format_url_context(url)}",
+                "endpoint": url,
+            }
+
+        models = _extract_model_names(data)
+        if not models:
+            return {
+                "ok": False,
+                "status": status,
+                "models": [],
+                "message": f"模型接口没有返回可用的模型名称。{_format_url_context(url)}",
+                "endpoint": url,
+            }
+
+        return _with_elapsed({
+            "ok": True,
+            "status": status,
+            "models": models,
+            "message": f"已获取 {len(models)} 个模型",
+            "endpoint": url,
+        }, started_at)
+    except urllib.error.HTTPError as exc:
+        error_text = _read_http_error(exc)
+        error_url = getattr(exc, "url", "") or url
+        return {
+            "ok": False,
+            "status": getattr(exc, "code", 0),
+            "models": [],
+            "message": f"HTTP {getattr(exc, 'code', '')}: {_extract_error_message(error_text) or str(exc)}{_format_url_context(error_url)}",
+            "endpoint": error_url,
+        }
+    except urllib.error.URLError as exc:
+        return {
+            "ok": False,
+            "status": 0,
+            "models": [],
+            "message": f"连接失败：{getattr(exc, 'reason', exc)}{_format_url_context(url)}",
+            "endpoint": url,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status": 0,
+            "models": [],
+            "message": f"{exc}{_format_url_context(url)}",
+            "endpoint": url,
+        }
 
 
 def _test_models_endpoint(endpoint: str | None, key_value: str | None) -> dict:
@@ -401,6 +517,22 @@ def _register_key_test_route() -> None:
         )
         return web.json_response(result)
 
+    @PromptServer.instance.routes.post(MODELS_ROUTE)
+    async def guli_key_input_models(request):
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+
+        loop = asyncio.get_running_loop()
+        result = await loop.run_in_executor(
+            None,
+            _fetch_models,
+            payload.get("endpoint"),
+            payload.get("key"),
+        )
+        return web.json_response(result)
+
     _ROUTES_REGISTERED = True
 
 
@@ -416,7 +548,7 @@ if io is not None:
                 node_id=NODE_ID,
                 display_name=DISPLAY_NAME,
                 category=CATEGORY,
-                description="输入 API Key、访问令牌、API 端点和模型名称，并输出统一 API 配置。",
+                description="输入 API Key、访问令牌、API 端点和模型名称，同时输出兼容的 API 配置以及三个独立字符串。",
                 search_aliases=["KeyInput", "API Key Input", "Endpoint Input", "Model Input", "API Config", "密钥输入", "端点设置", "模型名称", "API配置"],
                 inputs=[
                     io.String.Input(
@@ -439,13 +571,24 @@ if io is not None:
                     ),
                 ],
                 outputs=[
-                    io.String.Output(display_name=CONFIG_NAME),
+                    io.String.Output(id="api_config", display_name=CONFIG_NAME),
+                    io.String.Output(id="api_key", display_name=KEY_NAME),
+                    io.String.Output(id="api_base_url", display_name=ENDPOINT_NAME),
+                    io.String.Output(id="model", display_name=MODEL_NAME),
                 ],
             )
 
         @classmethod
         def execute(cls, 密钥: str = "", 端点: str = "", 模型名称: str = DEFAULT_MODEL_NAME):
-            return io.NodeOutput(_build_api_config(密钥, 端点, 模型名称))
+            密钥值 = _normalize_key(密钥)
+            端点值 = _normalize_endpoint(端点)
+            模型值 = _normalize_model_name(模型名称)
+            return io.NodeOutput(
+                _build_api_config(密钥值, 端点值, 模型值),
+                密钥值,
+                端点值,
+                模型值,
+            )
 
         @classmethod
         def IS_CHANGED(cls, 密钥: str = "", 端点: str = "", 模型名称: str = DEFAULT_MODEL_NAME):
@@ -485,14 +628,22 @@ else:
                 },
             }
 
-        RETURN_TYPES = ("STRING",)
-        RETURN_NAMES = (CONFIG_NAME,)
+        RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
+        RETURN_NAMES = (CONFIG_NAME, KEY_NAME, ENDPOINT_NAME, MODEL_NAME)
         FUNCTION = "execute"
         CATEGORY = CATEGORY
-        DESCRIPTION = "输入 API Key、访问令牌、API 端点和模型名称，并输出统一 API 配置。"
+        DESCRIPTION = "输入 API Key、访问令牌、API 端点和模型名称，同时输出兼容的 API 配置以及三个独立字符串。"
 
         def execute(self, 密钥: str = "", 端点: str = "", 模型名称: str = DEFAULT_MODEL_NAME):
-            return (_build_api_config(密钥, 端点, 模型名称),)
+            密钥值 = _normalize_key(密钥)
+            端点值 = _normalize_endpoint(端点)
+            模型值 = _normalize_model_name(模型名称)
+            return (
+                _build_api_config(密钥值, 端点值, 模型值),
+                密钥值,
+                端点值,
+                模型值,
+            )
 
         @classmethod
         def IS_CHANGED(cls, 密钥: str = "", 端点: str = "", 模型名称: str = DEFAULT_MODEL_NAME):

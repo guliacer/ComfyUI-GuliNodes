@@ -1,4 +1,5 @@
 from collections import OrderedDict
+import asyncio
 import gc
 import hashlib
 import os
@@ -8,6 +9,16 @@ import comfy.model_management as mm
 import comfy.sd
 import folder_paths
 import torch
+
+try:
+    from aiohttp import web
+except Exception:
+    web = None
+
+try:
+    from server import PromptServer
+except Exception:
+    PromptServer = None
 
 
 ANY_INPUT = "*"
@@ -21,6 +32,8 @@ DETAIL_REPORT_NAME = "\u8be6\u7ec6\u62a5\u544a"
 REPORT_OUTPUT = "\u62a5\u544a"
 MEMORY_CLEANUP_NODE_ID = "GGMemoryCleanup"
 MEMORY_CLEANUP_DISPLAY_NAME = "GG \u5185\u5b58\u6e05\u7406"
+MEMORY_CLEANUP_ROUTE = "/guli/memory/cleanup"
+_MEMORY_ROUTE_REGISTERED = False
 
 LATENT_INPUT = "Latent"
 IMAGE_INPUT = "\u56fe\u50cf"
@@ -30,8 +43,6 @@ LATENT_OUTPUT = "Latent"
 EMPTY_VAE_MESSAGE = "\uff08\u8bf7\u628aVAE\u6a21\u578b\u653e\u5230 models/vae\uff09"
 VAE_DECODE_NODE_ID = "GGVAE\u89e3\u7801"
 VAE_DECODE_DISPLAY_NAME = "GG VAE\u89e3\u7801"
-VAE_ENCODE_NODE_ID = "GGVAE\u7f16\u7801"
-VAE_ENCODE_DISPLAY_NAME = "GG VAE\u7f16\u7801"
 VAE_CACHE_LIMIT = 2
 
 MODEL_OUTPUT = "\u6a21\u578b"
@@ -79,15 +90,6 @@ def _get_native_vae_decode_class():
         from nodes import VAEDecode
 
         return VAEDecode
-    except Exception:
-        return None
-
-
-def _get_native_vae_encode_class():
-    try:
-        from nodes import VAEEncode
-
-        return VAEEncode
     except Exception:
         return None
 
@@ -166,15 +168,6 @@ def _decode_vae_with_native_node(vae, samples):
     if len(images.shape) == 5:
         images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
     return (images,)
-
-
-def _encode_vae_with_native_node(vae, pixels):
-    encode_class = _get_native_vae_encode_class()
-    if encode_class is not None:
-        return encode_class().encode(vae, pixels)
-
-    latent = vae.encode(pixels)
-    return ({"samples": latent},)
 
 
 def _format_bytes(value) -> str:
@@ -300,6 +293,42 @@ def _execute_memory_cleanup(
     return report
 
 
+def cleanup_all_memory() -> str:
+    """Clear device caches, loaded models, Python references, and GuliNodes VAE cache."""
+    return _execute_memory_cleanup(
+        clear_cache=True,
+        clear_models=True,
+        clear_vae_cache=True,
+        gc_rounds=2,
+        detail_report=False,
+    )
+
+
+def _register_memory_cleanup_route() -> None:
+    global _MEMORY_ROUTE_REGISTERED
+    if (
+        _MEMORY_ROUTE_REGISTERED
+        or PromptServer is None
+        or getattr(PromptServer, "instance", None) is None
+        or web is None
+    ):
+        return
+
+    @PromptServer.instance.routes.post(MEMORY_CLEANUP_ROUTE)
+    async def guli_memory_cleanup(request):
+        try:
+            loop = asyncio.get_running_loop()
+            report = await loop.run_in_executor(None, cleanup_all_memory)
+            return web.json_response({"ok": True, "report": report})
+        except Exception as exc:
+            return web.json_response({"ok": False, "message": str(exc)}, status=500)
+
+    _MEMORY_ROUTE_REGISTERED = True
+
+
+_register_memory_cleanup_route()
+
+
 class GGVaeDecode:
     _vae_cache = OrderedDict()
     _cache_lock = threading.RLock()
@@ -361,31 +390,6 @@ class GGVaeDecode:
         return m.hexdigest()
 
 
-class GGVaeEncode(GGVaeDecode):
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                IMAGE_INPUT: ("IMAGE", {"tooltip": "\u9700\u8981\u7f16\u7801\u4e3a Latent \u7684\u56fe\u50cf\u3002"}),
-                VAE_NAME: (_list_vae_files(), {"tooltip": "\u9009\u62e9\u8981\u52a0\u8f7d\u5e76\u7528\u4e8e\u7f16\u7801\u7684 VAE\u3002"}),
-            }
-        }
-
-    RETURN_TYPES = ("LATENT",)
-    RETURN_NAMES = (LATENT_OUTPUT,)
-    FUNCTION = "encode"
-    CATEGORY = "GuliNodes/潜空间"
-    DESCRIPTION = "\u878d\u5408\u52a0\u8f7dVAE\u4e0eVAE\u7f16\u7801\u7684\u4e00\u4f53\u8282\u70b9\uff0c\u56fe\u50cf\u8f93\u5165\u540e\u76f4\u63a5\u8f93\u51fa Latent\uff0cVAE \u6309\u6587\u4ef6\u6307\u7eb9\u7f13\u5b58\u3002"
-
-    def encode(self, **kwargs) -> tuple:
-        图像 = kwargs.get(IMAGE_INPUT)
-        VAE名称 = kwargs.get(VAE_NAME, "")
-        if 图像 is None:
-            raise RuntimeError("\u56fe\u50cf\u8f93\u5165\u65e0\u6548\uff1a\u672a\u68c0\u6d4b\u5230\u9700\u8981\u7f16\u7801\u4e3a Latent \u7684\u56fe\u50cf\u3002")
-        VAE模型 = self._get_vae(VAE名称)
-        return _encode_vae_with_native_node(VAE模型, 图像)
-
-
 class GGMemoryCleanup:
     @classmethod
     def INPUT_TYPES(cls):
@@ -393,7 +397,7 @@ class GGMemoryCleanup:
             "required": {
                 CLEAR_CACHE_NAME: ("BOOLEAN", {"default": True, "tooltip": "\u6e05\u7406 PyTorch/ComfyUI \u8bbe\u5907\u7f13\u5b58\u3002"}),
                 CLEAR_MODELS_NAME: ("BOOLEAN", {"default": True, "tooltip": "\u5378\u8f7d ComfyUI \u5f53\u524d\u52a0\u8f7d\u7684\u6a21\u578b\u5e76\u6e05\u7406\u6b7b\u4ea1\u5f15\u7528\u3002"}),
-                CLEAR_VAE_CACHE_NAME: ("BOOLEAN", {"default": True, "tooltip": "\u6e05\u7406 GG VAE\u89e3\u7801/GG VAE\u7f16\u7801 \u8282\u70b9\u5185\u90e8\u7f13\u5b58\u7684 VAE\u3002"}),
+                CLEAR_VAE_CACHE_NAME: ("BOOLEAN", {"default": True, "tooltip": "\u6e05\u7406 GG VAE\u89e3\u7801 \u8282\u70b9\u5185\u90e8\u7f13\u5b58\u7684 VAE\u3002"}),
             },
             "optional": {
                 ANY_NAME: (ANY_INPUT,),
@@ -426,13 +430,11 @@ class GGMemoryCleanup:
 
 NODE_CLASS_MAPPINGS = {
     VAE_DECODE_NODE_ID: GGVaeDecode,
-    VAE_ENCODE_NODE_ID: GGVaeEncode,
     MEMORY_CLEANUP_NODE_ID: GGMemoryCleanup,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     VAE_DECODE_NODE_ID: VAE_DECODE_DISPLAY_NAME,
-    VAE_ENCODE_NODE_ID: VAE_ENCODE_DISPLAY_NAME,
     MEMORY_CLEANUP_NODE_ID: MEMORY_CLEANUP_DISPLAY_NAME,
 }
 

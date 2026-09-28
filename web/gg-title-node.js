@@ -17,6 +17,7 @@ const TOOLBAR_STYLE_KEY = "ggTitleToolbarStyle";
 const MIN_LETTER_SPACING = -64;
 const MAX_LETTER_SPACING = 128;
 const LETTER_SPACING_STEP = 3;
+const DRAW_NODE_PATCH_FLAG = "_ggTitleDrawNodePatched";
 
 function isNodes20Mode(canvas = app.canvas) {
   return !!(
@@ -1964,19 +1965,50 @@ function installTitleBehavior(nodeType) {
   };
 }
 
-function installDrawPatch() {
-  if (
-    !globalThis.LGraphCanvas?.prototype
-    || typeof globalThis.LGraphCanvas.prototype.drawNode !== "function"
-    || globalThis.LGraphCanvas.prototype._ggTitleDrawPatched
-  ) return;
-  const originalDrawNode = globalThis.LGraphCanvas.prototype.drawNode;
-  globalThis.LGraphCanvas.prototype._ggTitleDrawPatched = true;
-  globalThis.LGraphCanvas.prototype.drawNode = function (node, ctx) {
+function patchDrawNodeTarget(target) {
+  if (!target || typeof target.drawNode !== "function") return false;
+  const originalDrawNode = target.drawNode;
+  if (originalDrawNode[DRAW_NODE_PATCH_FLAG]) return true;
+
+  const wrapped = function (node, ctx) {
     if (!isTitleNode(node) || isNodes20Mode(this)) return originalDrawNode.apply(this, arguments);
     this.current_node = node;
     drawTitle(node, ctx, this);
   };
+  wrapped[DRAW_NODE_PATCH_FLAG] = true;
+
+  try {
+    target.drawNode = wrapped;
+    return true;
+  } catch (error) {
+    console.warn("[GuliNodes] Unable to patch canvas node drawing for the title node:", error);
+    return false;
+  }
+}
+
+function installDrawPatch() {
+  const prototype = globalThis.LGraphCanvas?.prototype;
+  if (!prototype || typeof prototype.drawNode !== "function") return false;
+
+  if (!prototype._ggTitleDrawPatched) {
+    prototype._ggTitleDrawPatched = true;
+    if (!patchDrawNodeTarget(prototype)) {
+      prototype._ggTitleDrawPatched = false;
+      return false;
+    }
+  }
+
+  // Some extensions install their own drawNode directly on the canvas instance,
+  // for example the GuliNodes port list toggle. That own property shadows the
+  // prototype method, so the title node would be drawn by LiteGraph as an empty
+  // box and its text would never be painted. Patch the instance as well whenever
+  // it shadows the prototype chain.
+  const canvas = app.canvas || globalThis.LGraphCanvas?.active_canvas;
+  if (canvas && typeof canvas.drawNode === "function" && canvas.drawNode !== prototype.drawNode) {
+    patchDrawNodeTarget(canvas);
+  }
+
+  return true;
 }
 
 function isLeftMouseDown(event) {

@@ -31,6 +31,11 @@ except Exception:
     InputImpl = None
 
 try:
+    from comfy_api.latest import io
+except Exception:
+    io = None
+
+try:
     from comfy.comfy_types import IO, ComfyNodeABC
 except Exception:
     IO = None
@@ -61,6 +66,8 @@ CN_MODE = "\u538b\u7f29\u6a21\u5f0f"
 CN_CRF = "CRF"
 CN_SPEED = "\u7f16\u7801\u901f\u5ea6"
 CN_KEEP_RESOLUTION = "\u4fdd\u6301\u539f\u5206\u8fa8\u7387"
+CN_RESOLUTION_MODE = "\u5206\u8fa8\u7387\u5904\u7406"
+RES_LIMIT = "\u9650\u5236\u6700\u5927\u5bbd\u9ad8"
 CN_MAX_WIDTH = "\u6700\u5927\u5bbd\u5ea6"
 CN_MAX_HEIGHT = "\u6700\u5927\u9ad8\u5ea6"
 CN_FPS = "\u8f93\u51fa\u5e27\u7387"
@@ -1111,63 +1118,78 @@ class GGVideoCompress:
     CATEGORY = "GuliNodes/视频"
 
     def compress_video(self, **kwargs):
-        video_object = kwargs.get(CN_VIDEO_OBJECT)
-        encoder = kwargs.get(CN_ENCODER, DEFAULT_ENCODER_LABEL)
-        compress_mode = kwargs.get(CN_MODE, MODE_SMART)
-        crf = float(kwargs.get(CN_CRF, 23.5))
-        preset = kwargs.get(CN_SPEED, "medium")
-        keep_original_resolution = bool(kwargs.get(CN_KEEP_RESOLUTION, True))
-        max_width = int(kwargs.get(CN_MAX_WIDTH, 0))
-        max_height = int(kwargs.get(CN_MAX_HEIGHT, 0))
-        fps = int(kwargs.get(CN_FPS, 0))
-        audio_bitrate_kbps = int(kwargs.get(CN_AUDIO_BITRATE, 96))
-        remove_metadata = bool(kwargs.get(CN_REMOVE_METADATA, True))
-        unique_id = kwargs.get("unique_id")
+        return (_run_video_compress(
+            video_object=kwargs.get(CN_VIDEO_OBJECT),
+            encoder=kwargs.get(CN_ENCODER, DEFAULT_ENCODER_LABEL),
+            compress_mode=kwargs.get(CN_MODE, MODE_SMART),
+            crf=float(kwargs.get(CN_CRF, 23.5)),
+            preset=kwargs.get(CN_SPEED, "medium"),
+            keep_original_resolution=bool(kwargs.get(CN_KEEP_RESOLUTION, True)),
+            max_width=int(kwargs.get(CN_MAX_WIDTH, 0)),
+            max_height=int(kwargs.get(CN_MAX_HEIGHT, 0)),
+            fps=int(kwargs.get(CN_FPS, 0)),
+            audio_bitrate_kbps=int(kwargs.get(CN_AUDIO_BITRATE, 96)),
+            remove_metadata=bool(kwargs.get(CN_REMOVE_METADATA, True)),
+            unique_id=kwargs.get("unique_id"),
+        ),)
 
-        ffmpeg_path = _resolve_ffmpeg_binary("ffmpeg")
-        if not ffmpeg_path:
-            raise RuntimeError("\u672a\u627e\u5230 ffmpeg\u3002")
 
-        source_path = _validate_source_path(_resolve_source_path(video_object))
-        ok, probe_error = _probe_video_readable(source_path)
-        if not ok:
-            raise RuntimeError(f"\u8f93\u5165\u89c6\u9891\u65e0\u6cd5\u6b63\u5e38\u89e3\u7801: {source_path}\n{probe_error}")
-        output_format = _infer_temp_output_format(source_path)
-        output_path = _build_temp_output_path(source_path, output_format)
-        errors = []
+def _unpack_resolution_mode(value):
+    if isinstance(value, dict):
+        nested = value.get(CN_RESOLUTION_MODE)
+        if isinstance(nested, dict):
+            return nested.get(CN_RESOLUTION_MODE, CN_KEEP_RESOLUTION), nested
+        return nested or CN_KEEP_RESOLUTION, value
+    return value or CN_KEEP_RESOLUTION, {}
 
-        for candidate_encoder in _get_encoder_candidates(output_format, encoder, compress_mode):
-            if os.path.exists(output_path):
-                try:
-                    os.remove(output_path)
-                except Exception:
-                    pass
 
-            command, video_codec = _build_ffmpeg_command(
-                ffmpeg_path=ffmpeg_path,
-                source_path=source_path,
-                output_path=output_path,
-                output_format=output_format,
-                encoder=candidate_encoder,
-                compress_mode=compress_mode,
-                crf=crf,
-                preset=preset,
-                keep_original_resolution=keep_original_resolution,
-                max_width=max_width,
-                max_height=max_height,
-                fps=fps,
-                audio_bitrate_kbps=audio_bitrate_kbps,
-                remove_metadata=remove_metadata,
-            )
+def _run_video_compress(video_object, encoder, compress_mode, crf, preset,
+                        keep_original_resolution, max_width, max_height, fps,
+                        audio_bitrate_kbps, remove_metadata, unique_id):
+    ffmpeg_path = _resolve_ffmpeg_binary("ffmpeg")
+    if not ffmpeg_path:
+        raise RuntimeError("\u672a\u627e\u5230 ffmpeg\u3002")
 
-            result = _run_ffmpeg_command_with_progress(command, source_path, str(unique_id) if unique_id else None)
-            if result.returncode == 0 and os.path.exists(output_path):
-                return (_build_video_output(output_path, output_format, video_codec, source_path, candidate_encoder),)
+    source_path = _validate_source_path(_resolve_source_path(video_object))
+    ok, probe_error = _probe_video_readable(source_path)
+    if not ok:
+        raise RuntimeError(f"\u8f93\u5165\u89c6\u9891\u65e0\u6cd5\u6b63\u5e38\u89e3\u7801: {source_path}\n{probe_error}")
+    output_format = _infer_temp_output_format(source_path)
+    output_path = _build_temp_output_path(source_path, output_format)
+    errors = []
 
-            stderr_text = (result.stderr or "").strip()[-800:]
-            errors.append(_summarize_encoder_error(candidate_encoder, stderr_text))
+    for candidate_encoder in _get_encoder_candidates(output_format, encoder, compress_mode):
+        if os.path.exists(output_path):
+            try:
+                os.remove(output_path)
+            except Exception:
+                pass
 
-        raise RuntimeError("\u89c6\u9891\u538b\u7f29\u5931\u8d25\u3002\n" + "\n".join(errors[-3:]))
+        command, video_codec = _build_ffmpeg_command(
+            ffmpeg_path=ffmpeg_path,
+            source_path=source_path,
+            output_path=output_path,
+            output_format=output_format,
+            encoder=candidate_encoder,
+            compress_mode=compress_mode,
+            crf=crf,
+            preset=preset,
+            keep_original_resolution=keep_original_resolution,
+            max_width=max_width,
+            max_height=max_height,
+            fps=fps,
+            audio_bitrate_kbps=audio_bitrate_kbps,
+            remove_metadata=remove_metadata,
+        )
+
+        result = _run_ffmpeg_command_with_progress(command, source_path, str(unique_id) if unique_id else None)
+        if result.returncode == 0 and os.path.exists(output_path):
+            return _build_video_output(output_path, output_format, video_codec, source_path, candidate_encoder)
+
+        stderr_text = (result.stderr or "").strip()[-800:]
+        errors.append(_summarize_encoder_error(candidate_encoder, stderr_text))
+
+    raise RuntimeError("\u89c6\u9891\u538b\u7f29\u5931\u8d25\u3002\n" + "\n".join(errors[-3:]))
 
 
 class GGVideoSave:
@@ -1229,6 +1251,60 @@ class GGVideoSave:
             stderr = (transcode_result.stderr or remux_result.stderr or "").strip()
             raise RuntimeError(f"\u89c6\u9891\u4fdd\u5b58\u5931\u8d25\u3002\n\u9519\u8bef: {stderr[-1500:]}")
         return {"ui": {"guli_video_preview": [{"path": destination_path, "format": target_format, "source_path": source_path}]}}
+
+
+if io is not None:
+
+    class GGVideoCompressV3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GGVideoCompress",
+                display_name="GG \u89c6\u9891\u538b\u7f29",
+                category="GuliNodes/\u89c6\u9891",
+                description="\u4f7f\u7528 ffmpeg \u538b\u7f29\u89c6\u9891\uff0c\u9009\u300c\u9650\u5236\u6700\u5927\u5bbd\u9ad8\u300d\u65f6\u624d\u663e\u793a\u6700\u5927\u5bbd\u5ea6/\u9ad8\u5ea6\u3002",
+                inputs=[
+                    io.Video.Input(CN_VIDEO_OBJECT),
+                    io.Combo.Input(CN_ENCODER, options=_get_encoder_options(), default=DEFAULT_ENCODER_LABEL),
+                    io.Combo.Input(CN_MODE, options=[MODE_SMART, MODE_SIZE, MODE_COMPAT], default=MODE_SMART),
+                    io.Float.Input(CN_CRF, default=23.5, min=0.0, max=40.0, step=0.1),
+                    io.Combo.Input(CN_SPEED, options=PRESET_OPTIONS, default="medium"),
+                    io.DynamicCombo.Input(CN_RESOLUTION_MODE, options=[
+                        io.DynamicCombo.Option(key=CN_KEEP_RESOLUTION, inputs=[]),
+                        io.DynamicCombo.Option(key=RES_LIMIT, inputs=[
+                            io.Int.Input(CN_MAX_WIDTH, default=0, min=0, max=8192, step=2),
+                            io.Int.Input(CN_MAX_HEIGHT, default=0, min=0, max=8192, step=2),
+                        ]),
+                    ]),
+                    io.Int.Input(CN_FPS, default=0, min=0, max=240, step=1),
+                    io.Int.Input(CN_AUDIO_BITRATE, default=96, min=0, max=512, step=8),
+                    io.Boolean.Input(CN_REMOVE_METADATA, default=True),
+                ],
+                outputs=[
+                    io.Video.Output(display_name=CN_VIDEO),
+                ],
+                hidden=[io.Hidden.unique_id],
+            )
+
+        @classmethod
+        def execute(cls, **kwargs):
+            resolution_mode, res_values = _unpack_resolution_mode(kwargs.get(CN_RESOLUTION_MODE))
+            return io.NodeOutput(_run_video_compress(
+                video_object=kwargs.get(CN_VIDEO_OBJECT),
+                encoder=kwargs.get(CN_ENCODER, DEFAULT_ENCODER_LABEL),
+                compress_mode=kwargs.get(CN_MODE, MODE_SMART),
+                crf=float(kwargs.get(CN_CRF, 23.5)),
+                preset=kwargs.get(CN_SPEED, "medium"),
+                keep_original_resolution=(resolution_mode == CN_KEEP_RESOLUTION),
+                max_width=int(res_values.get(CN_MAX_WIDTH, 0)),
+                max_height=int(res_values.get(CN_MAX_HEIGHT, 0)),
+                fps=int(kwargs.get(CN_FPS, 0)),
+                audio_bitrate_kbps=int(kwargs.get(CN_AUDIO_BITRATE, 96)),
+                remove_metadata=bool(kwargs.get(CN_REMOVE_METADATA, True)),
+                unique_id=cls.hidden.unique_id,
+            ))
+
+    GGVideoCompress = GGVideoCompressV3
 
 
 NODE_CLASS_MAPPINGS = {

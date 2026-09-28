@@ -14,6 +14,128 @@ function imageDataToUrl(data) {
     return api.apiURL(`/view?filename=${encodeURIComponent(data.filename)}&type=${data.type}&subfolder=${data.subfolder || ""}${app.getPreviewFormatParam()}${app.getRandParam()}`);
 }
 
+const IMAGE_COMPARER_NODES = new Set(["GGImageComparer4"]);
+const IMAGE_PREFIX = "图像_";
+const LABEL_PREFIX = "标签_";
+const MAX_COMPARE_IMAGES = 20;
+const HIDDEN_LABEL_TYPE = "ggHiddenImageComparerLabel";
+
+function isComparerNNode(node) {
+    return IMAGE_COMPARER_NODES.has(node?.comfyClass) || IMAGE_COMPARER_NODES.has(node?.type);
+}
+
+function getImageNumber(name) {
+    const value = String(name || "");
+    if (!value.startsWith(IMAGE_PREFIX)) return -1;
+    const suffix = value.slice(IMAGE_PREFIX.length);
+    if (!/^[A-Z]$/.test(suffix)) return -1;
+    return suffix.charCodeAt(0) - 65;
+}
+
+function imageInputs(node) {
+    return (node?.inputs || [])
+        .map((input, index) => ({ input, index, number: getImageNumber(input?.name) }))
+        .filter((item) => item.number >= 0 && item.number < MAX_COMPARE_IMAGES)
+        .sort((a, b) => a.number - b.number);
+}
+
+function labelWidgets(node) {
+    const widgets = new Map();
+    for (const widget of node?.widgets || []) {
+        const name = String(widget?.name || "");
+        if (name.startsWith(LABEL_PREFIX)) widgets.set(name.slice(LABEL_PREFIX.length), widget);
+    }
+    return widgets;
+}
+
+function setLabelVisible(widget, visible) {
+    if (!widget) return;
+    if (!widget._ggComparerLabelState) {
+        widget._ggComparerLabelState = {
+            type: widget.type,
+            hidden: widget.hidden,
+            computeSize: widget.computeSize,
+        };
+    }
+    const state = widget._ggComparerLabelState;
+    widget.hidden = !visible;
+    widget.type = visible ? state.type : HIDDEN_LABEL_TYPE;
+    widget.computeSize = visible ? state.computeSize : () => [0, -4];
+}
+
+function comparerVisibleCount(node) {
+    const slots = imageInputs(node);
+    let highestConnected = -1;
+    for (const slot of slots) {
+        if (slot.input?.link != null) highestConnected = Math.max(highestConnected, slot.number);
+    }
+    // Keep one empty trailing slot after normalization; it is added below when
+    // the last currently visible slot is connected.
+    return Math.min(MAX_COMPARE_IMAGES, Math.max(1, highestConnected + 1));
+}
+
+function normalizeComparerInputs(node) {
+    if (!isComparerNNode(node) || !Array.isArray(node.inputs)) return;
+
+    const visibleCount = comparerVisibleCount(node);
+    const slots = imageInputs(node);
+
+    // Remove only trailing, unconnected slots. Earlier slots retain their names
+    // and indexes, so existing connections do not move when a blank tail closes.
+    for (const slot of slots.slice().reverse()) {
+        if (slot.number < visibleCount || slot.input?.link != null) continue;
+        const currentIndex = node.inputs.indexOf(slot.input);
+        if (currentIndex >= 0) node.removeInput?.(currentIndex);
+    }
+
+    let current = imageInputs(node);
+    if (!current.length && node.addInput) {
+        node.addInput(`${IMAGE_PREFIX}A`, "IMAGE");
+        current = imageInputs(node);
+    }
+    const last = current.at(-1);
+    if (last?.input?.link != null && current.length < MAX_COMPARE_IMAGES && node.addInput) {
+        node.addInput(`${IMAGE_PREFIX}${String.fromCharCode(65 + last.number + 1)}`, "IMAGE");
+        current = imageInputs(node);
+    }
+
+    const labels = labelWidgets(node);
+    const connectedNumbers = new Set(
+        current
+            .filter((slot) => slot.input?.link != null)
+            .map((slot) => slot.number),
+    );
+    // Keep the default A label visible before the first connection. Once an
+    // image is connected, labels follow connected sources only; the retained
+    // empty trailing port is intentionally unlabeled until it becomes active.
+    for (let index = 0; index < MAX_COMPARE_IMAGES; index += 1) {
+        const visible = connectedNumbers.size === 0
+            ? index === 0
+            : connectedNumbers.has(index);
+        setLabelVisible(labels.get(String.fromCharCode(65 + index)), visible);
+    }
+
+    node._ggComparerInputCount = Math.min(MAX_COMPARE_IMAGES, Math.max(1, current.length));
+    node._widgetSlotsDirty = true;
+    node._setConcreteSlots?.();
+    try {
+        node.arrange?.();
+    } catch {
+        // Some versions expose arrange only after graph attachment.
+    }
+    node.setDirtyCanvas?.(true, true);
+    node.graph?.setDirtyCanvas?.(true, true);
+}
+
+function scheduleComparerNormalization(node) {
+    if (!isComparerNNode(node) || node._ggComparerNormalizeScheduled) return;
+    node._ggComparerNormalizeScheduled = true;
+    setTimeout(() => {
+        node._ggComparerNormalizeScheduled = false;
+        normalizeComparerInputs(node);
+    }, 0);
+}
+
 // 图像对比节点类（封装所有交互逻辑）
 class GGImageComparerNode {
     constructor(node) {
@@ -306,7 +428,31 @@ class GGImageComparerNode {
 app.registerExtension({
     name: "ComfyUI.GGNodes.ImageComparer",
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        // 仅处理GGImageComparer2节点
+        if (nodeData.name === "GGImageComparer4") {
+            const originalOnConnectionsChange = nodeType.prototype.onConnectionsChange;
+            nodeType.prototype.onConnectionsChange = function (...args) {
+                const result = originalOnConnectionsChange?.apply(this, args);
+                scheduleComparerNormalization(this);
+                return result;
+            };
+
+            const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function (...args) {
+                const result = originalOnNodeCreated?.apply(this, args);
+                scheduleComparerNormalization(this);
+                return result;
+            };
+
+            const originalOnConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function (...args) {
+                const result = originalOnConfigure?.apply(this, args);
+                scheduleComparerNormalization(this);
+                return result;
+            };
+            return;
+        }
+
+        // 仅处理 GGImageComparer2 节点的双图滑动预览。
         if (nodeData.name !== "GGImageComparer2") return;
 
         // 重写节点创建方法
@@ -332,5 +478,13 @@ app.registerExtension({
             originalOnDrawBackground?.call(this, ctx);
             if (this.ggComparer) this.ggComparer.draw(ctx);
         };
+    },
+
+    loadedGraphNode(node) {
+        scheduleComparerNormalization(node);
+    },
+
+    nodeCreated(node) {
+        scheduleComparerNormalization(node);
     }
 });

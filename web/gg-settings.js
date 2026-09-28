@@ -1,7 +1,7 @@
 import { app } from "../../scripts/app.js";
 
 const SETTINGS_ID = "GuliNodes";
-const VERSION = "1.0.8";
+const VERSION = "1.0.17";
 const REPOSITORY_URL = "https://github.com/guliacer/ComfyUI-GuliNodes";
 
 function createBadgeLink({ href, src, alt, title }) {
@@ -130,6 +130,52 @@ app.registerExtension({
                 if (window.__ggApplyFloatButtonsTopSwitch) window.__ggApplyFloatButtonsTopSwitch(value);
                 else window.__ggApplyFloatButtons?.(value);
             },
+        },
+        {
+            id: `${SETTINGS_ID}.enablePortListToggle`,
+            category: ["GuliNodes", "\u8282\u70b9\u663e\u793a"],
+            name: "\u8f93\u5165\u8f93\u51fa\u5217\u8868\u9690\u85cf\u6309\u94ae",
+            type: "boolean",
+            defaultValue: false,
+            tooltip: "\u5f00\u542f\u540e\uff0c\u5728\u6709\u8f93\u5165\u6216\u8f93\u51fa\u7684\u8282\u70b9\u6807\u9898\u680f\u663e\u793a\u6309\u94ae\uff0c\u53ef\u4ee5\u9690\u85cf\u6216\u6062\u590d\u7aef\u53e3\u5217\u8868",
+            onChange: (value) => { window.__ggApplyPortListToggle?.(value); },
+        },
+        {
+            id: `${SETTINGS_ID}.enableNodeCollapseButton`,
+            category: ["GuliNodes", "\u8282\u70b9\u663e\u793a"],
+            name: "\u8282\u70b9\u6298\u53e0\u6309\u94ae",
+            type: "boolean",
+            defaultValue: true,
+            tooltip: "\u5f00\u542f\u540e\uff0c\u5728\u8282\u70b9\u6807\u9898\u680f\u663e\u793a\u6298\u53e0/\u6062\u590d\u6309\u94ae\uff0c\u5e76\u4fdd\u7559\u6298\u53e0\u72b6\u6001",
+            onChange: (value) => { window.__ggApplyNodeCollapseButton?.(value); },
+        },
+        {
+            id: `${SETTINGS_ID}.nodeCollapseWidthPadding`,
+            category: ["GuliNodes", "\u8282\u70b9\u663e\u793a"],
+            name: "\u8282\u70b9\u6298\u53e0\u5bbd\u5ea6",
+            type: "slider",
+            defaultValue: 150,
+            attrs: { min: 60, max: 400, step: 1 },
+            tooltip: "\u6240\u6709\u6298\u53e0\u8282\u70b9\u7edf\u4e00\u4e3a\u8fd9\u4e2a\u5bbd\u5ea6\uff08\u50cf\u7d20\uff09\u3002\u6807\u9898\u8fc7\u957f\u4f1a\u622a\u65ad\uff0c\u8fc7\u77ed\u5219\u53f3\u4fa7\u7559\u767d\u3002",
+            onChange: (value) => { window.__ggApplyNodeCollapseWidthPadding?.(value); },
+        },
+        {
+            id: `${SETTINGS_ID}.enableNodePinButton`,
+            category: ["GuliNodes", "\u8282\u70b9\u663e\u793a"],
+            name: "\u8282\u70b9\u56fa\u5b9a\u6309\u94ae",
+            type: "boolean",
+            defaultValue: true,
+            tooltip: "\u5f00\u542f\u540e\uff0c\u5728\u8282\u70b9\u6807\u9898\u680f\u6298\u53e0\u6309\u94ae\u65c1\u663e\u793a\u56fa\u5b9a\u6309\u94ae\uff0c\u70b9\u51fb\u53ef\u5c06\u8282\u70b9\u56fa\u5b9a\u5728\u753b\u5e03\u4e0a\uff08\u4e0d\u53ef\u62d6\u52a8/\u7f29\u653e\uff09\u6216\u53d6\u6d88\u56fa\u5b9a\u3002",
+            onChange: (value) => { window.__ggApplyNodePinButton?.(value); },
+        },
+        {
+            id: `${SETTINGS_ID}.enableNodeAlign`,
+            category: ["GuliNodes", "\u8282\u70b9\u663e\u793a"],
+            name: "\u79fb\u52a8\u5bf9\u9f50\u5438\u9644",
+            type: "boolean",
+            defaultValue: true,
+            tooltip: "\u5f00\u542f\u540e\uff0c\u62d6\u52a8\u8282\u70b9\u65f6\u4f1a\u81ea\u52a8\u5bf9\u9f50\u5230\u9644\u8fd1\u8282\u70b9\u7684\u8fb9\u7f18/\u4e2d\u7ebf\uff08\u50cf PS \u79fb\u52a8\u56fe\u5c42\uff09\uff0c\u5e76\u663e\u793a\u5bf9\u9f50\u53c2\u8003\u7ebf\u3002",
+            onChange: (value) => { window.__ggApplyNodeAlign?.(value); },
         },
     ],
 });

@@ -1,1 +1,7 @@
-# Main GuliNodes has no extra Python dependencies beyond ComfyUI's bundled environment.
+# GuliNodes 主体不需要 ComfyUI 自带环境之外的 Python 依赖。
+#
+# 可选依赖（默认不安装，故此处仅注释、不作为强制项）：
+# 「GG 提示词增强qwen2.1」的「本地LLM」增强方式需要 llama-cpp-python
+# （加载 GGUF 主模型 + mmproj 视觉投影）。不用本地LLM 方式可不装；缺失时该方式
+# 给出中文提示，API / 本地PE 两种方式不受影响。按平台/CUDA 选择合适 wheel 手动安装：
+#   pip install llama-cpp-python

@@ -130,38 +130,6 @@ class GGTextDisplayCopy:
         return {"ui": {"文本": [display_text]}, "result": (display_text,)}
 
 
-class GGCLIPTextEncode:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "CLIP模型": ("CLIP", {"tooltip": "用于编码文本提示词的 CLIP 模型。"}),
-                "文本": ("STRING", {"default": "", "multiline": True, "dynamicPrompts": True, "tooltip": "需要编码为条件的文本提示词。"}),
-            }
-        }
-
-    RETURN_TYPES = ("CONDITIONING",)
-    RETURN_NAMES = ("条件",)
-    FUNCTION = "encode"
-    CATEGORY = "GuliNodes/文本"
-    DESCRIPTION = "带读取剪贴板按钮的 CLIP 文本编码器。"
-
-    def encode(self, CLIP模型, 文本: str = "") -> tuple:
-        if CLIP模型 is None:
-            raise RuntimeError("CLIP 输入无效：未检测到 CLIP 模型。")
-        tokens = CLIP模型.tokenize(文本 or "")
-        return (CLIP模型.encode_from_tokens_scheduled(tokens),)
-
-    @classmethod
-    def IS_CHANGED(cls, CLIP模型, 文本: str = ""):
-        import hashlib
-        m = hashlib.sha256()
-        m.update(文本.encode("utf-8"))
-        clip_id = id(CLIP模型) if CLIP模型 is not None else 0
-        m.update(str(clip_id).encode("utf-8"))
-        return m.hexdigest()
-
-
 class GGCLIPText:
     _clip_cache = OrderedDict()
     _cache_lock = threading.RLock()
@@ -232,12 +200,10 @@ class GGCLIPText:
 
 NODE_CLASS_MAPPINGS = {
     "GGTextDisplayCopy": GGTextDisplayCopy,
-    "GGCLIPTextEncode": GGCLIPTextEncode,
     CLIP_TEXT_NODE_ID: GGCLIPText,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "GGTextDisplayCopy": "GG \u6587\u672c",
-    "GGCLIPTextEncode": "GG CLIP文本编码器",
     CLIP_TEXT_NODE_ID: CLIP_TEXT_DISPLAY_NAME,
 }
