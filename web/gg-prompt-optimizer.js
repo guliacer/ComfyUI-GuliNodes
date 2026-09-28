@@ -97,14 +97,6 @@ function setupNode(node) {
   normalizeImageInputs(node);
 }
 
-function markManualHeightResize(node) {
-  if (!node || (node.comfyClass !== NODE_TYPE && node.type !== NODE_TYPE)) return;
-  const canvas = app.canvas || globalThis.LGraphCanvas?.active_canvas;
-  if (canvas?.resizing_node === node) {
-    node._ggPromptOptimizerManualHeight = true;
-  }
-}
-
 // ---------------------------------------------------------------------------
 // 参考图相关参数只在接入了参考图时生效
 // （guli_nodes/prompt_optimizer.py → _encode_qwen_image21：VAE 与 分辨率 都只在
@@ -135,13 +127,14 @@ function toggleReferenceWidget(node, widget, show) {
 }
 
 function refreshReferenceNodeSize(node) {
+  // 对齐官方 Qwen 文本编码节点：完全不接管高度。切换「VAE名称」「分辨率」显隐时
+  // 只把宽度补足到能容纳控件，高度原样保留，交给原生布局与用户自由拉伸/压低
+  // （多行框随节点缩放滚动）。绝不写高度，避免任何「只增不减」的棘轮。
   if (typeof node.computeSize === "function" && typeof node.setSize === "function") {
-    const [width, height] = node.computeSize();
-      const currentHeight = Number(node.size?.[1]) || 0;
-      const preservedHeight = node._ggPromptOptimizerManualHeight === true
-        ? currentHeight
-        : height;
-      node.setSize([Math.max(Number(node.size?.[0]) || 0, width), preservedHeight]);
+    const [width] = node.computeSize();
+    const currentWidth = Number(node.size?.[0]) || 0;
+    const currentHeight = Number(node.size?.[1]) || 0;
+    node.setSize([Math.max(currentWidth, Number(width) || 0), currentHeight]);
   }
   node.setDirtyCanvas?.(true, true);
   node.graph?.setDirtyCanvas?.(true, true);
@@ -164,21 +157,6 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData.name !== NODE_TYPE || nodeType.prototype._ggPromptOptimizerInstalled) return;
     nodeType.prototype._ggPromptOptimizerInstalled = true;
-
-      const originalOnResize = nodeType.prototype.onResize;
-      nodeType.prototype.onResize = function (...args) {
-        markManualHeightResize(this);
-        return originalOnResize?.apply(this, args);
-      };
-
-      const originalComputeSize = nodeType.prototype.computeSize;
-      nodeType.prototype.computeSize = function (...args) {
-        const size = originalComputeSize?.apply(this, args);
-        if (this?._ggPromptOptimizerManualHeight === true && Array.isArray(size)) {
-          return [size[0], Number(this.size?.[1]) || size[1]];
-        }
-        return size;
-      };
 
     const originalOnConnectionsChange = nodeType.prototype.onConnectionsChange;
     nodeType.prototype.onConnectionsChange = function (...args) {
