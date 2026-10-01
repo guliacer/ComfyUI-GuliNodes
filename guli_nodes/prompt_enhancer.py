@@ -15,6 +15,7 @@ import base64
 import io as _io
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -61,6 +62,10 @@ DEFAULT_API_MODEL = "deepseek-flash"
 DEFAULT_MAX_OUTPUT_TOKENS = 4096
 DEFAULT_CONTEXT_LENGTH = 8192
 API_TIMEOUT = 600
+API_CONNECT_TIMEOUT = 30
+API_RETRY_ATTEMPTS = 3
+API_RETRY_BACKOFF = (1.5, 4.0)
+API_RETRY_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 API_TEMPERATURE = 0.6
 PE_FOLDER = "text_encoders"
 PE_TEMPERATURE = 0.7
@@ -356,6 +361,38 @@ def _extract_response_text(data: dict) -> str:
     return ""
 
 
+def _uses_system_proxy(url: str) -> bool:
+    """判断 requests 访问该地址时是否真的会走系统/环境代理（决定要不要追加直连兜底）。"""
+    try:
+        import requests
+
+        proxies = requests.utils.get_environ_proxies(url)
+    except Exception:
+        return False
+    return any(key in proxies for key in ("http", "https"))
+
+
+def _network_error_hint(exc) -> str:
+    """把底层网络异常翻译成「哪错了 + 怎么改」的中文说明。"""
+    text = f"{type(exc).__name__}: {exc}"
+    lowered = text.lower()
+    if "10053" in text or "10054" in text or "connection aborted" in lowered or "connection reset" in lowered:
+        return (
+            "连接在传输过程中被本机网络软件中断（WinError 10053/10054）。"
+            "常见原因是代理/VPN 客户端、安全软件或运营商中间设备掐断了这条 HTTPS 连接。"
+            "请确认代理软件与系统代理设置正常，或换一条网络线路后重试。"
+        )
+    if "timed out" in lowered or "timeout" in lowered:
+        return "连接 API 超时。请检查网络是否通畅、api_base_url 是否正确，或稍后重试。"
+    if "getaddrinfo" in lowered or "name or service not known" in lowered or "11001" in text:
+        return "无法解析 API 域名。请检查 api_base_url 拼写以及本机 DNS / 代理设置。"
+    if "certificate" in lowered or "ssl" in lowered:
+        return "HTTPS 证书校验失败。可能是代理或安全软件做了中间人拦截，请更换网络或关闭证书拦截类软件。"
+    if "10061" in text or "connection refused" in lowered or "actively refused" in lowered:
+        return "目标端口拒绝连接。请确认 api_base_url 正确、服务端在线。"
+    return "网络请求未能完成。请检查网络与代理设置后重试。"
+
+
 def _request_api(*, api_base_url, api_key, model, instructions, user_prompt, image_base64_list) -> str:
     import requests
 
@@ -363,18 +400,52 @@ def _request_api(*, api_base_url, api_key, model, instructions, user_prompt, ima
         raise ValueError("API 方式需要填写 API Key")
     if not str(model or "").strip():
         raise ValueError("API 方式需要填写模型名（model）")
+    url = _resolve_api_url(api_base_url)
     payload = {
         "model": model,
         "instructions": instructions,
         "input": _build_api_input(user_prompt, image_base64_list),
         "temperature": API_TEMPERATURE,
     }
-    response = requests.post(
-        _resolve_api_url(api_base_url),
-        json=payload,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        timeout=API_TIMEOUT,
-    )
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    timeout = (API_CONNECT_TIMEOUT, API_TIMEOUT)
+
+    # 瞬时网络中断（连接被掐断、超时、服务端 5xx / 429）重试同一路径；
+    # 只有在系统代理确实生效时才追加一次直连，用于绕开出问题的本地代理。
+    if _uses_system_proxy(url):
+        attempts = [(True, "系统代理")] * (API_RETRY_ATTEMPTS - 1) + [(False, "直连（绕过代理）")]
+    else:
+        attempts = [(True, "直连")] * API_RETRY_ATTEMPTS
+
+    response = None
+    last_error = None
+    for index, (trust_env, label) in enumerate(attempts, start=1):
+        session = requests.Session()
+        session.trust_env = trust_env
+        try:
+            response = session.post(url, json=payload, headers=headers, timeout=timeout)
+        except requests.exceptions.RequestException as exc:
+            response, last_error = None, exc
+        finally:
+            session.close()
+
+        if response is not None and response.status_code not in API_RETRY_STATUS:
+            break
+        if index >= len(attempts):
+            break
+        reason = (
+            f"HTTP {response.status_code}" if response is not None
+            else f"{type(last_error).__name__}：{last_error}"
+        )
+        delay = API_RETRY_BACKOFF[min(index - 1, len(API_RETRY_BACKOFF) - 1)]
+        print(f"[GG 提示词增强] API 请求失败（{label}，{reason}），{delay} 秒后重试（{index}/{len(attempts)}）")
+        time.sleep(delay)
+
+    if response is None:
+        raise RuntimeError(
+            f"GG 提示词增强失败：API 请求未送达（已尝试 {len(attempts)} 次）。"
+            f"{_network_error_hint(last_error)}\n原始错误：{last_error}"
+        ) from last_error
     if response.status_code != 200:
         raise RuntimeError(f"API 调用失败 HTTP {response.status_code}: {response.text}")
     try:

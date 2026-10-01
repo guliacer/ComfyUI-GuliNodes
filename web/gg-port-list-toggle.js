@@ -135,6 +135,15 @@ function setMultilineManualState(node, manual) {
     node._ggPortListMultilineManualSizeObserved = Boolean(manual);
 }
 
+function isMultilineLayoutActive(node) {
+    return Boolean(
+        node
+        && featureEnabled
+        && readHiddenState(node)
+        && !isNodeCollapsed(node),
+    );
+}
+
 function getMultilineMemoryKey(widget, index) {
     const name = typeof widget?.name === "string" ? widget.name.trim() : "";
     return name || `w${index}`;
@@ -177,7 +186,7 @@ function applyMultilineMemory(node) {
 
 // 拖动开始时记录锚点：节点高度与各文本框当时的记忆高度。
 function beginManualResizeAnchor(node) {
-    if (!node || node._ggPortListResizeAnchor) return;
+    if (!isMultilineLayoutActive(node) || node._ggPortListResizeAnchor) return;
     const textWidgets = getMultilineWidgets(node);
     if (!textWidgets.length) return;
     node._ggPortListResizeAnchor = {
@@ -193,7 +202,7 @@ function beginManualResizeAnchor(node) {
 // 拖高时文本框长高，拖矮时文本框跟着缩短，节点最小高度随之下移，
 // 因此节点永远可以拖回紧凑尺寸——文本框不会被记忆值定死。
 function trackManualResize(node) {
-    if (!node || !featureEnabled) return;
+    if (!isMultilineLayoutActive(node)) return;
     const anchor = node._ggPortListResizeAnchor;
     const textWidgets = getMultilineWidgets(node);
     if (!anchor || !textWidgets.length) return;
@@ -211,9 +220,10 @@ function trackManualResize(node) {
 // 拖动结束的一次性结算：把拖动后的最终文本框高度写入持久记忆。
 // 分配只在拖动过程中实时发生，这里只负责记住结果，之后高度保持稳定。
 function settleManualMultilineHeight(node) {
-    if (!node || isNodeCollapsed(node) || !featureEnabled) return;
+    if (!node) return;
     const anchor = node._ggPortListResizeAnchor;
     node._ggPortListResizeAnchor = undefined;
+    if (!isMultilineLayoutActive(node)) return;
     const textWidgets = getMultilineWidgets(node);
     if (!textWidgets.length) return;
 
@@ -610,6 +620,40 @@ function getMultilineWidgets(node) {
         : [];
 }
 
+// 多行控件只在“端口列表已隐藏”时需要固定高度来参与紧凑布局。
+// 其它状态交回 ComfyUI 原生控件；否则历史记忆高度会成为 LiteGraph 的
+// 全局最小尺寸，导致普通节点只能拉高、无法向下缩小。
+function restoreNativeMultilineWidgetLayout(node) {
+    if (!node || !Array.isArray(node.widgets)) return;
+    for (const widget of node.widgets) {
+        if (!isMultilineWidget(widget)) continue;
+
+        const wrapped = widget._ggPortListWrappedComputeSize;
+        if (wrapped && widget.computeSize === wrapped) {
+            widget.computeSize = widget._ggPortListOriginalComputeSize;
+        } else if (!wrapped
+            && widget._ggPortListTextLayoutPatched === true
+            && widget._ggPortListOriginalComputeSize) {
+            // 兼容旧会话中没有保存 wrapper 引用的节点。
+            widget.computeSize = widget._ggPortListOriginalComputeSize;
+        }
+        delete widget._ggPortListWrappedComputeSize;
+        delete widget._ggPortListTextLayoutPatched;
+        delete widget._ggPortListOriginalComputeSize;
+
+        const element = getTextAreaElement(widget);
+        const savedStyle = widget._ggPortListTextElementStyle;
+        if (element && savedStyle) {
+            element.style.height = savedStyle.height;
+            element.style.minHeight = savedStyle.minHeight;
+            element.style.maxHeight = savedStyle.maxHeight;
+            element.style.overflowY = savedStyle.overflowY;
+            element.style.boxSizing = savedStyle.boxSizing;
+        }
+        delete widget._ggPortListTextElementStyle;
+    }
+}
+
 function syncMultilineWidgetElement(widget, height) {
     const element = getTextAreaElement(widget);
     if (!element) return;
@@ -629,17 +673,12 @@ function syncMultilineWidgetElement(widget, height) {
     element.style.boxSizing = "border-box";
 }
 
-function restoreMultilineWidgetElement(widget) {
-    const element = getTextAreaElement(widget);
-    if (!element) return;
-    // Keep the compact baseline after restoring ports as well. Restoring the
-    // third-party inline height here lets a textarea's intrinsic scrollHeight
-    // expand the node again before the next layout pass can stabilize it.
-    syncMultilineWidgetElement(widget, getMultilineWidgetHeight(widget));
-}
-
 function ensureMultilineWidgetLayout(node) {
     if (!node || !Array.isArray(node.widgets)) return;
+    if (!featureEnabled || !readHiddenState(node) || isNodeCollapsed(node)) {
+        restoreNativeMultilineWidgetLayout(node);
+        return;
+    }
     for (const widget of node.widgets) {
         if (!isMultilineWidget(widget)) continue;
         if (widget._ggPortListTextLayoutPatched === true) continue;
@@ -663,6 +702,7 @@ function ensureMultilineWidgetLayout(node) {
         };
         wrappedComputeSize[TEXT_WIDGET_LAYOUT_PATCHED] = true;
         widget.computeSize = wrappedComputeSize;
+        widget._ggPortListWrappedComputeSize = wrappedComputeSize;
         widget._ggPortListTextLayoutPatched = true;
     }
 
@@ -824,13 +864,7 @@ function applyWidgetLayoutValues(layout, { includeComputedHeight = true } = {}) 
 function restoreWidgetLayout(node) {
     restoreWidgetLayoutValues(node);
     if (Array.isArray(node?.widgets)) {
-        for (const widget of node.widgets) {
-            if (!isMultilineWidget(widget)) continue;
-            restoreMultilineWidgetElement(widget);
-            // Keep the remembered text height. Deleting it used to reset the
-            // textarea to the default on every port toggle, so the same node
-            // changed height between hidden and visible states.
-        }
+        restoreNativeMultilineWidgetLayout(node);
     }
     delete node._ggPortListWidgetLayoutBeforeHide;
     delete node._ggPortListWidgetLayoutCompactValues;
@@ -929,7 +963,9 @@ function compactVisibleWidgets(node) {
         widget.last_y = nextY;
         if (isMultilineWidget(widget)) {
             widget.computedHeight = height;
-            syncMultilineWidgetElement(widget, height);
+            if (featureEnabled && readHiddenState(node) && !isNodeCollapsed(node)) {
+                syncMultilineWidgetElement(widget, height);
+            }
         }
         nextY += height + COMPACT_WIDGET_GAP;
     }
@@ -956,7 +992,10 @@ function fitMultilineWidgetsToNode(node) {
 }
 
 function syncMultilineWidgets(node) {
-    if (isNodeCollapsed(node)) return;
+    if (!featureEnabled || !readHiddenState(node) || isNodeCollapsed(node)) {
+        restoreNativeMultilineWidgetLayout(node);
+        return;
+    }
     const textWidgets = getMultilineWidgets(node);
     if (!textWidgets.length) return;
 
@@ -1387,11 +1426,14 @@ function refreshNode(node) {
     // created. Re-sync the runtime flag before drawing or sizing.
     node._ggPortListHidden = readHiddenState(node);
     cachePortState(node);
-    ensureMultilineWidgetLayout(node);
-    // Apply the remembered text height in every state (not only while the
-    // port list is hidden) so loading a workflow or toggling the port list
-    // keeps the same textarea height instead of jumping back to the default.
-    applyMultilineMemory(node);
+    // The remembered height is only a layout aid for hidden ports. In the
+    // normal visible-port state, restore the native widget so its minimum
+    // height does not block manual node resizing.
+    if (featureEnabled && readHiddenState(node) && !isNodeCollapsed(node)) {
+        ensureMultilineWidgetLayout(node);
+    } else {
+        restoreNativeMultilineWidgetLayout(node);
+    }
     syncMultilineWidgets(node);
     // 迁移老版本写入的持久手动标志：文本框高度已由 MULTILINE_HEIGHT_PROPERTY 接管，
     // 旧标志会让节点跨会话死锁在"吃满节点高度"模式，必须清除。
@@ -1552,13 +1594,13 @@ function installNode(node) {
                 // textareas will look like afterwards, so the "user owns the
                 // size" flag applies in both layouts; it only blocks the
                 // before-hide size restore, never the compact layout itself.
-                if (featureEnabled && getMultilineWidgets(this).length > 0) {
+                if (isMultilineLayoutActive(this) && getMultilineWidgets(this).length > 0) {
                     setMultilineManualState(this, true);
                 }
             }
             if (!this._ggPortListApplyingSize) markManualResizeIfNeeded(this);
             const result = originalOnResize.apply(this, args);
-            if (userResizing && !isNodeCollapsed(this)) {
+            if (userResizing && isMultilineLayoutActive(this)) {
                 // During the drag the textareas track the node-height delta
                 // from the anchor set at gesture start. Growing and shrinking
                 // both work live, so the node's minimum height (which is
@@ -1568,7 +1610,7 @@ function installNode(node) {
                 ensureMultilineWidgetLayout(this);
                 beginManualResizeAnchor(this);
                 trackManualResize(this);
-                if (featureEnabled && readHiddenState(this) && nodeHasPorts(this)) {
+                if (nodeHasPorts(this)) {
                     compactVisibleWidgets(this);
                     rememberCompactWidgetLayout(this);
                 }
@@ -1595,16 +1637,14 @@ function installNode(node) {
             const resizing = canvas?.resizing_node === this
                 || this._ggPortListUserResizeGesture === true;
             if (
-                featureEnabled
-                && readHiddenState(this)
+                resizing
                 && !isNodeCollapsed(this)
-                && resizing
                 && getMultilineWidgets(this).length > 0
             ) {
                 // LiteGraph asks computeSize for the resize clamp before it
-                // calls onResize. Use the true textarea minimum during that
-                // gesture, otherwise a previously enlarged textarea becomes
-                // a permanent lower bound and the node can never shrink back.
+                // calls onResize. Use the true textarea minimum for every
+                // multiline node during that gesture; a remembered hidden-port
+                // height must never prevent a visible node from shrinking.
                 const minimumHeight = getMultilineResizeMinimumHeight(this);
                 if (Number.isFinite(minimumHeight)) {
                     return [
