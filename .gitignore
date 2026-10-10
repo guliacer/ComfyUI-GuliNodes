@@ -30,3 +30,7 @@ desktop.ini
 # Local browser/test artifacts
 /.playwright-cli/
 /output/
+
+# WorkBuddy assistant local data
+/.workbuddy/
+/.workbuddy-ai/

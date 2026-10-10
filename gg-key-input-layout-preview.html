@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>GG 密钥输入 · 布局预览</title>
+<style>
+  :root { --gg-ui-ink: #2c2c2a; --comfy-menu-bg: #f7f7f5; }
+  body {
+    margin: 0;
+    padding: 32px;
+    background: #f2f2ef;
+    font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: #2c2c2a;
+  }
+  .caption { font-size: 13px; color: #5f5e5a; margin: 0 0 14px; }
+  .node {
+    width: 420px;
+    box-sizing: border-box;
+    background: #ffffff;
+    border: 1px solid #b4b2a9;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .node-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 14px 6px;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: #b4b2a9; }
+  .node-body { padding: 0 8px 10px; }
+  input, select, button { font-family: inherit; font-size: 12px; box-sizing: border-box; }
+  input:focus, select:focus { outline: none; }
+  .legend { margin-top: 18px; font-size: 12px; color: #5f5e5a; line-height: 1.7; }
+  .legend b { font-weight: 500; color: #2c2c2a; }
+</style>
+</head>
+<body>
+  <p class="caption">由 web/gg-key-input.js 的真实建面板代码渲染 · 节点宽度 420px · 模型下拉已展开</p>
+  <div class="node">
+    <div class="node-head"><span class="dot"></span>GG 密钥输入</div>
+    <div class="node-body">
+<div class="gg-key-input-panel" style="display:flex;flex-direction:column;justify-content:flex-start;gap:5px;height:181px;box-sizing:border-box;overflow:hidden;padding:4px 6px;pointer-events:auto;width:392px;min-width:392px;max-width:392px"><div style="display:flex;align-items:center;gap:8px;min-width:0;width:100%"><input class="gg-key-input-endpoint" style="width:100%;min-width:0;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:6px;padding:0 10px;outline:none;color:var(--input-text, #222);background:var(--comfy-input-bg, rgba(255,255,255,0.9));box-sizing:border-box;flex:1 1 auto;cursor:text;opacity:1" type="text" placeholder="输入 API Endpoint / Base URL（可选）" value="https://newapi.ima-u.org/v1"><button class="gg-key-input-import" style="flex:0 0 auto;width:32px;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:8px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--gg-ui-ink);background:var(--comfy-menu-bg, rgba(245,245,245,0.95));cursor:pointer" aria-label="快速导入端点、API Key和模型"><svg class="gg-ui-icon gg-ui-icon-paste" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.5h7"/><rect x="9" y="3.5" width="6" height="4" rx="1.5"/><rect x="5" y="6" width="14" height="15" rx="3"/><path d="M8.5 12h7"/><path d="M8.5 15.5H13"/></svg></button></div><div style="display:flex;align-items:center;gap:8px;min-width:0;width:100%"><input class="gg-key-input-secret" style="width:100%;min-width:0;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:6px;padding:0 10px;outline:none;color:var(--input-text, #222);background:var(--comfy-input-bg, rgba(255,255,255,0.9));box-sizing:border-box;flex:1 1 auto;cursor:text;opacity:1" type="text" placeholder="输入 API Key 或访问令牌" value="sk-v8P1lKQw7fTn3rXbNqdX"><button class="gg-key-input-import" style="flex:0 0 auto;width:32px;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:8px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--gg-ui-ink);background:var(--comfy-menu-bg, rgba(245,245,245,0.95));cursor:pointer" aria-label="快速导入端点、API Key和模型"><svg class="gg-ui-icon gg-ui-icon-paste" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.5h7"/><rect x="9" y="3.5" width="6" height="4" rx="1.5"/><rect x="5" y="6" width="14" height="15" rx="3"/><path d="M8.5 12h7"/><path d="M8.5 15.5H13"/></svg></button></div><div style="display:flex;align-items:center;gap:8px;min-width:0;width:100%"><input class="gg-key-input-model" style="width:100%;min-width:0;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:6px;padding:0 10px;outline:none;color:var(--input-text, #222);background:var(--comfy-input-bg, rgba(255,255,255,0.9));box-sizing:border-box;flex:1 1 auto" type="text" placeholder="输入 API 模型名称" value="grok-4.5"><button class="gg-key-input-model-fetch" style="flex:0 0 auto;width:auto;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:8px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;color:var(--gg-ui-ink);background:var(--comfy-menu-bg, rgba(245,245,245,0.95));cursor:pointer;min-width:32px;gap:4px;font-size:11px;white-space:nowrap;opacity:1" aria-label="根据端点和密钥获取模型列表"><svg class="gg-ui-icon gg-ui-icon-catModel" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l-2 4h4l-2-4z"/><path d="M4 9h16"/><rect x="6" y="12" width="12" height="9" rx="2"/><path d="M9 15.5h6"/><path d="M9 18.5h4"/></svg><span>获取模型</span></button><button class="gg-key-input-paste" style="flex:0 0 auto;width:32px;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:8px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--gg-ui-ink);background:var(--comfy-menu-bg, rgba(245,245,245,0.95));cursor:pointer" aria-label="粘贴模型名称"><svg class="gg-ui-icon gg-ui-icon-paste" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 5.5h7"/><rect x="9" y="3.5" width="6" height="4" rx="1.5"/><rect x="5" y="6" width="14" height="15" rx="3"/><path d="M8.5 12h7"/><path d="M8.5 15.5H13"/></svg></button></div><div class="gg-key-input-model-picker" style="display:flex;align-items:center;gap:8px;min-width:0;width:100%"><select class="gg-key-input-model-list" style="width:100%;min-width:0;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:6px;padding:0 8px;outline:none;color:var(--input-text, #222);background:var(--comfy-input-bg, rgba(255,255,255,0.9));box-sizing:border-box;cursor:pointer;flex:1 1 auto"><option>gemini-3.1-flash-lite-image</option><option>gemini-3.1-pro</option><option>glm-5.2</option><option>gpt-image-2</option><option>grok-4.5</option><option>grok-4.6</option><option>grok-4.7</option></select><button class="gg-key-input-model-confirm" style="flex:0 0 auto;width:auto;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:8px;padding:0 8px;display:inline-flex;align-items:center;justify-content:center;color:var(--gg-ui-ink);background:var(--comfy-menu-bg, rgba(245,245,245,0.95));cursor:pointer;min-width:32px;gap:4px;font-size:11px;white-space:nowrap" aria-label="确认选择模型"><svg class="gg-ui-icon gg-ui-icon-check" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true"><path d="m20 7-10.5 10L4 11.8"/></svg><span>确认</span></button></div><div style="display:grid;grid-template-columns:1fr auto 1fr;align-items:center;column-gap:8px;min-width:0;width:100%"><div></div><div class="gg-key-input-button-group" style="display:inline-flex;align-items:center;justify-content:center;gap:8px;grid-column:2;justify-self:center"><button class="gg-key-input-test" style="flex:0 0 auto;width:32px;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:8px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--gg-ui-ink);background:var(--comfy-menu-bg, rgba(245,245,245,0.95));cursor:pointer" aria-label="测试当前配置"><svg class="gg-ui-icon gg-ui-icon-zap" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" class="gg-ui-fill"/></svg></button><button class="gg-key-input-mask" style="flex:0 0 auto;width:32px;height:30px;border:1px solid rgba(127,127,127,0.35);border-radius:8px;padding:0;display:inline-flex;align-items:center;justify-content:center;color:var(--gg-ui-ink);background:var(--comfy-menu-bg, rgba(245,245,245,0.95));cursor:pointer" aria-label="部分隐藏端点和密钥"><svg class="gg-ui-icon gg-ui-icon-eyeOff" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4l16 16"/><path d="M8.4 8.2C5.4 9.5 3.5 12 3.5 12s3.2 5.2 8.5 5.2c1.5 0 2.8-.4 3.9-1"/><path d="M10.4 6.9c.5-.1 1-.1 1.6-.1 5.3 0 8.5 5.2 8.5 5.2s-.8 1.4-2.3 2.7"/><path d="M10.8 10.8a2.4 2.4 0 0 0 2.4 2.4"/></svg></button></div><div class="gg-key-input-test-status" style="flex:1 1 auto;min-width:0;height:26px;line-height:26px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:11px;color:var(--gg-ui-muted, #6b7280);box-sizing:border-box;grid-column:3;justify-self:stretch">未测试</div></div></div>
+    </div>
+  </div>
+  <div class="legend">
+    <div><b>1</b> 端点</div>
+    <div><b>2</b> 密钥（API Key）</div>
+    <div><b>3</b> 模型名称 + 获取模型 + 粘贴</div>
+    <div><b>4</b> 模型下拉 + 确认（紧贴模型名称下方）</div>
+    <div><b>5</b> 测试 / 遮罩 / 状态</div>
+  </div>
+</body>
+</html>
