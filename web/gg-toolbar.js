@@ -1022,7 +1022,7 @@ app.registerExtension({
         floatButtonsIcon.id = "gg-float-buttons-mini";
         floatButtonsIcon.type = "button";
         floatButtonsIcon.classList.add("gg-toolbar-top-button");
-        floatButtonsIcon.title = "关闭文本框悬浮按钮";
+        floatButtonsIcon.title = "关闭文本框与图像悬浮按钮";
         floatButtonsIcon.setAttribute("aria-label", floatButtonsIcon.title);
         floatButtonsIcon.style.cssText = miniIcon.style.cssText;
         floatButtonsIcon.innerHTML = ggIcon("floatingText", 18);
@@ -1352,7 +1352,7 @@ app.registerExtension({
             miniIcon.setAttribute("aria-label", miniIcon.title);
             miniIcon.innerHTML = ggIcon(visible ? "toolbarCollapse" : "toolbarExpand", 18);
             miniIcon.style.opacity = visible ? "0.72" : "1";
-            floatButtonsIcon.title = floatButtonsEnabled ? "关闭文本框悬浮按钮" : "启用文本框悬浮按钮";
+            floatButtonsIcon.title = floatButtonsEnabled ? "关闭文本框与图像悬浮按钮" : "启用文本框与图像悬浮按钮";
             floatButtonsIcon.setAttribute("aria-label", floatButtonsIcon.title);
             floatButtonsIcon.style.opacity = floatButtonsEnabled ? "1" : "0.58";
         };

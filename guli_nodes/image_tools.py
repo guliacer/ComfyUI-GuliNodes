@@ -1104,7 +1104,7 @@ class GGImageCompressSave(GGSaveImage):
                 "压缩模式": (["civilblur", "Caesium", "meowtec"], {"default": "civilblur"}),
                 "质量": ("INT", {"default": 85, "min": 1, "max": 100, "step": 1}),
                 "目标大小KB": ("INT", {"default": 0, "min": 0, "max": 1048576, "step": 16}),
-                "清除内存": ("BOOLEAN", {"default": False, "tooltip": "保存完成后卸载模型、清理设备缓存、Python GC 和 GuliNodes VAE 缓存。"}),
+                "清除内存": ("BOOLEAN", {"default": True, "tooltip": "保存完成后卸载模型、清理设备缓存、Python GC 和 GuliNodes VAE 缓存。"}),
             },
             "hidden": {
                 "prompt": "PROMPT",
@@ -1124,7 +1124,7 @@ class GGImageCompressSave(GGSaveImage):
         压缩模式="civilblur",
         质量=85,
         目标大小KB=0,
-        清除内存=False,
+        清除内存=True,
         prompt=None,
         extra_pnginfo=None,
     ):

@@ -121,11 +121,11 @@ app.registerExtension({
         },
         {
             id: `${SETTINGS_ID}.enableFloatButtons`,
-            category: ["GuliNodes", "\u6587\u672c\u6846\u60ac\u6d6e\u6309\u94ae"],
-            name: "\u6587\u672c\u6846\u60ac\u6d6e\u6309\u94ae",
+            category: ["GuliNodes", "\u6587\u672c\u6846\u4e0e\u56fe\u50cf\u60ac\u6d6e\u6309\u94ae"],
+            name: "\u6587\u672c\u6846\u4e0e\u56fe\u50cf\u60ac\u6d6e\u6309\u94ae",
             type: "boolean",
             defaultValue: true,
-            tooltip: "\u662f\u5426\u81ea\u52a8\u8bc6\u522b\u753b\u5e03\u4e2d\u6240\u6709\u6587\u672c\u6846\uff0c\u9f20\u6807\u60ac\u6d6e\u65f6\u663e\u793a\u590d\u5236/\u7c98\u8d34/\u6e05\u7a7a\u6309\u94ae",
+            tooltip: "\u6587\u672c\u6846\u663e\u793a\u590d\u5236/\u7c98\u8d34/\u6e05\u7a7a\u6309\u94ae\uff0c\u56fe\u50cf\u9884\u89c8\u663e\u793a\u590d\u5236\u56fe\u50cf\u6309\u94ae",
             onChange: (value) => {
                 if (window.__ggApplyFloatButtonsTopSwitch) window.__ggApplyFloatButtonsTopSwitch(value);
                 else window.__ggApplyFloatButtons?.(value);

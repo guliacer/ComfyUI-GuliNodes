@@ -5,6 +5,8 @@ const SETTINGS_ID = "GuliNodes";
 const STORAGE_KEY = "ggFloatToolbarSettings";
 const SKIP_WIDGET_NAMES = new Set(["压缩模式", "压缩模式选择"]);
 const SKIP_WIDGET_CLASSES = ["gg-compress-mode-host"];
+const TEXT_WIDGET_TYPES = new Set(["customtext", "text", "string", "textarea"]);
+const TEXT_INPUT_TYPES = new Set(["", "text", "search", "url", "email", "password"]);
 
 const SKIP_WIDGET_TYPES = new Set(["button", "toggle", "combo", "number", "slider", "ggHiddenCompressMode", "gg_compress_mode"]);
 
@@ -108,6 +110,19 @@ function getTextWidget(node, name = "文本") {
     return node.widgets?.find((w) => w.name === name);
 }
 
+function isTextInputControl(element) {
+    if (!element) return false;
+    if (element.tagName === "TEXTAREA") return true;
+    return element.tagName === "INPUT"
+        && TEXT_INPUT_TYPES.has(String(element.type || "").toLowerCase());
+}
+
+function findTextControl(element) {
+    if (isTextInputControl(element)) return element;
+    const controls = element?.querySelectorAll?.("textarea, input") || [];
+    return Array.from(controls).find(isTextInputControl) || null;
+}
+
 function findWidgetElement(widget) {
     if (!widget) return null;
     if (widget.element) return widget.element;
@@ -124,15 +139,13 @@ function findWidgetElement(widget) {
             if (label.textContent.trim() === widget.name) return ta;
         }
         if (ta.dataset.widgetName === widget.name) return ta;
-        if (widget.value !== undefined && ta.value === String(widget.value)) return ta;
     }
 
-    const inputs = nodeEl.querySelectorAll("input[type='text'], input:not([type])");
+    const inputs = nodeEl.querySelectorAll("input[type='text'], input[type='search'], input[type='url'], input[type='email'], input[type='password'], input:not([type])");
     for (const inp of inputs) {
         const label = inp.previousElementSibling;
         if (label && label.classList?.contains("widget-label") && label.textContent.trim() === widget.name) return inp;
         if (inp.dataset.widgetName === widget.name) return inp;
-        if (widget.value !== undefined && inp.value === String(widget.value)) return inp;
     }
 
     const labelEls = nodeEl.querySelectorAll(".widget-label");
@@ -160,13 +173,11 @@ function setTextWidgetValue(widget, text) {
     widget.value = text;
     const el = findWidgetElement(widget) || widget.element;
     if (el) {
-        if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-            el.value = text;
-        } else {
-            const inner = el.querySelector("textarea, input");
-            if (inner) inner.value = text;
+        const control = findTextControl(el);
+        if (control) {
+            control.value = text;
+            control.dispatchEvent(new Event("input", { bubbles: true }));
         }
-        el.dispatchEvent(new Event("input", { bubbles: true }));
     }
 }
 
@@ -174,11 +185,8 @@ function getWidgetValue(widget) {
     if (!widget) return "";
     const el = findWidgetElement(widget) || widget.element;
     if (el) {
-        if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-            return el.value;
-        }
-        const inner = el.querySelector("textarea, input");
-        if (inner) return inner.value;
+        const control = findTextControl(el);
+        if (control) return control.value;
     }
     return String(widget.value ?? "");
 }
@@ -205,6 +213,13 @@ const ICON_PASTE = ggIcon("paste", 16);
 const ICON_CLEAR = ggIcon("clear", 16);
 const ICON_CHECK = ggIcon("check", 16, "gg-ui-icon-success");
 const ICON_ERROR = ggIcon("error", 16, "gg-ui-icon-error");
+const IMAGE_PREVIEW_SELECTOR = ".image-preview";
+
+let _imageToolbar = null;
+let _imageToolbarImage = null;
+let _imageToolbarHideTimer = null;
+let _imageToolbarEventsInstalled = false;
+let _imageGraphCanvas = null;
 
 let _currentContextMenu = null;
 
@@ -401,6 +416,281 @@ function makeBtn(icon, tooltip, onClick) {
     return btn;
 }
 
+function imageBlobAsPng(blob) {
+    if (blob.type === "image/png") return Promise.resolve(blob);
+    if (typeof createImageBitmap !== "function") {
+        return Promise.reject(new Error("当前浏览器无法转换图像格式"));
+    }
+
+    return createImageBitmap(blob).then((bitmap) => new Promise((resolve, reject) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext("2d");
+        if (!context) {
+            bitmap.close?.();
+            reject(new Error("无法读取图像内容"));
+            return;
+        }
+        context.drawImage(bitmap, 0, 0);
+        bitmap.close?.();
+        canvas.toBlob((png) => {
+            if (png) resolve(png);
+            else reject(new Error("图像转换失败"));
+        }, "image/png");
+    }));
+}
+
+function writeImageToClipboard(image) {
+    if (!image?.currentSrc && !image?.src) {
+        return Promise.reject(new Error("没有可复制的图像"));
+    }
+    if (!navigator.clipboard?.write || typeof ClipboardItem !== "function") {
+        return Promise.reject(new Error("当前浏览器不支持复制图像，请使用新版 Chrome 或 Edge"));
+    }
+
+    const imageData = fetch(image.currentSrc || image.src, { credentials: "same-origin" })
+        .then((response) => {
+            if (!response.ok) throw new Error(`读取图像失败（HTTP ${response.status}）`);
+            return response.blob();
+        })
+        .then(imageBlobAsPng);
+
+    return navigator.clipboard.write([new ClipboardItem({ "image/png": imageData })]);
+}
+
+function positionImageToolbar(rect) {
+    if (!_imageToolbar || !rect) return;
+    const width = 38;
+    const height = 38;
+    _imageToolbar.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, rect.left + 8))}px`;
+    _imageToolbar.style.top = `${Math.max(8, Math.min(window.innerHeight - height - 8, rect.bottom - height - 8))}px`;
+}
+
+function showImageToolbar(image, rect) {
+    if (!image || !rect) return;
+    clearImageToolbarHideTimer();
+    ensureImageToolbar();
+    _imageToolbarImage = image;
+    positionImageToolbar(rect);
+    _imageToolbar.style.opacity = "1";
+    _imageToolbar.style.pointerEvents = "auto";
+    _imageToolbar.style.transform = "translateY(0)";
+}
+
+function clearImageToolbarHideTimer() {
+    if (_imageToolbarHideTimer == null) return;
+    clearTimer(_imageToolbarHideTimer);
+    _imageToolbarHideTimer = null;
+}
+
+function hideImageToolbar() {
+    if (!_imageToolbar) return;
+    _imageToolbar.style.opacity = "0";
+    _imageToolbar.style.pointerEvents = "none";
+    _imageToolbarImage = null;
+}
+
+function scheduleImageToolbarHide() {
+    clearImageToolbarHideTimer();
+    _imageToolbarHideTimer = managedTimeout(() => {
+        _imageToolbarHideTimer = null;
+        hideImageToolbar();
+    }, 180);
+}
+
+function ensureImageToolbar() {
+    if (_imageToolbar) return;
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "gg-image-float-toolbar";
+    Object.assign(toolbar.style, {
+        position: "fixed",
+        zIndex: "10000",
+        opacity: "0",
+        pointerEvents: "none",
+        display: "flex",
+        padding: "3px",
+        border: "1px solid rgba(148, 163, 184, 0.24)",
+        borderRadius: "9px",
+        background: "rgba(255, 255, 255, 0.88)",
+        boxShadow: "0 8px 18px rgba(15, 23, 42, 0.18)",
+        backdropFilter: "blur(12px)",
+        transition: "opacity 0.16s ease, transform 0.16s ease",
+        transform: "translateY(2px)",
+    });
+    const button = makeBtn(ICON_COPY, "复制图像到剪贴板", () => {
+        if (!_imageToolbarImage || button.disabled) return;
+        button.disabled = true;
+        button.style.cursor = "wait";
+        writeImageToClipboard(_imageToolbarImage).then(() => {
+            button.innerHTML = ICON_CHECK;
+            button.title = "图像已复制到剪贴板";
+            button.setAttribute("aria-label", button.title);
+            managedTimeout(() => {
+                if (!button.isConnected) return;
+                button.innerHTML = ICON_COPY;
+                button.title = "复制图像到剪贴板";
+                button.setAttribute("aria-label", button.title);
+            }, 1200);
+        }).catch((error) => {
+            button.innerHTML = ICON_ERROR;
+            button.title = `复制失败：${error?.message || "请检查浏览器剪贴板权限"}`;
+            button.setAttribute("aria-label", button.title);
+            managedTimeout(() => {
+                if (!button.isConnected) return;
+                button.innerHTML = ICON_COPY;
+                button.title = "复制图像到剪贴板";
+                button.setAttribute("aria-label", button.title);
+            }, 2200);
+        }).finally(() => {
+            button.disabled = false;
+            button.style.cursor = "pointer";
+        });
+    });
+    Object.assign(button.style, { width: "30px", height: "30px", minWidth: "30px" });
+    button.setAttribute("aria-label", button.title);
+    toolbar.appendChild(button);
+    toolbar.addEventListener("pointerenter", clearImageToolbarHideTimer);
+    toolbar.addEventListener("pointerleave", scheduleImageToolbarHide);
+    document.body.appendChild(toolbar);
+    _imageToolbar = toolbar;
+}
+
+function imageAtPoint(preview, x, y) {
+    for (const image of preview.querySelectorAll("img")) {
+        if (!image.complete || !image.naturalWidth || !image.naturalHeight) continue;
+        const rect = image.getBoundingClientRect();
+        if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return image;
+    }
+    return null;
+}
+
+function canvasImageAtPoint(event) {
+    const canvas = app.canvas;
+    const graphPoint = canvas?.convertEventToCanvasOffset?.(event);
+    if (!Array.isArray(graphPoint)) return null;
+
+    const nodes = app.graph?._nodes || [];
+    for (let i = nodes.length - 1; i >= 0; i--) {
+        const node = nodes[i];
+        const previewWidget = node.widgets?.find((widget) => widget.name === "$$canvas-image-preview");
+        const image = node.imgs?.find((item) => item?.complete && item.naturalWidth && item.naturalHeight);
+        if (!previewWidget || !image || node.flags?.collapsed) continue;
+
+        const previewTop = Number(previewWidget.last_y ?? previewWidget.y);
+        const nodeWidth = Number(node.size?.[0]);
+        const nodeHeight = Number(node.size?.[1]);
+        const naturalWidth = Number(image.naturalWidth);
+        const naturalHeight = Number(image.naturalHeight);
+        if (![previewTop, nodeWidth, nodeHeight, naturalWidth, naturalHeight].every(Number.isFinite)) continue;
+
+        const imageTop = previewTop + (globalThis.LiteGraph?.NODE_WIDGET_HEIGHT || 24);
+        const availableWidth = Math.max(0, nodeWidth - 16);
+        const availableHeight = Math.max(0, nodeHeight - imageTop - 8);
+        const imageScale = Math.min(availableWidth / naturalWidth, availableHeight / naturalHeight);
+        if (!(imageScale > 0)) continue;
+
+        const imageWidth = naturalWidth * imageScale;
+        const imageHeight = naturalHeight * imageScale;
+        const imageLeft = (nodeWidth - imageWidth) / 2;
+        const localX = graphPoint[0] - node.pos[0];
+        const localY = graphPoint[1] - node.pos[1];
+        if (localX < imageLeft || localX > imageLeft + imageWidth
+            || localY < imageTop || localY > imageTop + imageHeight) continue;
+
+        const canvasRect = canvas.canvas.getBoundingClientRect();
+        const screenTopLeft = canvas.convertOffsetToCanvas([
+            node.pos[0] + imageLeft,
+            node.pos[1] + imageTop,
+        ]);
+        return {
+            image,
+            rect: {
+                left: canvasRect.left + screenTopLeft[0],
+                top: canvasRect.top + screenTopLeft[1],
+                right: canvasRect.left + screenTopLeft[0] + imageWidth * canvas.ds.scale,
+                bottom: canvasRect.top + screenTopLeft[1] + imageHeight * canvas.ds.scale,
+            },
+        };
+    }
+    return null;
+}
+
+function handleCanvasPointerMove(event) {
+    if (!isFloatingEnabled()) return;
+    const preview = canvasImageAtPoint(event);
+    if (!preview) {
+        scheduleImageToolbarHide();
+        return;
+    }
+    showImageToolbar(preview.image, preview.rect);
+}
+
+function handleCanvasPointerLeave() {
+    scheduleImageToolbarHide();
+}
+
+function handlePreviewPointerOver(event) {
+    if (!isFloatingEnabled()) return;
+    if (_imageToolbar?.contains(event.target)) {
+        clearImageToolbarHideTimer();
+        return;
+    }
+
+    const preview = event.target?.closest?.(IMAGE_PREVIEW_SELECTOR);
+    if (!preview) return;
+    const image = imageAtPoint(preview, event.clientX, event.clientY);
+    if (!image) return;
+
+    showImageToolbar(image, image.getBoundingClientRect());
+}
+
+function handlePreviewPointerOut(event) {
+    const relatedTarget = event.relatedTarget;
+    if (_imageToolbar?.contains(event.target)) {
+        if (_imageToolbar.contains(relatedTarget)) return;
+        if (relatedTarget?.closest?.(IMAGE_PREVIEW_SELECTOR)) return;
+        scheduleImageToolbarHide();
+        return;
+    }
+
+    const preview = event.target?.closest?.(IMAGE_PREVIEW_SELECTOR);
+    if (!preview || preview.contains(relatedTarget) || _imageToolbar?.contains(relatedTarget)) return;
+    scheduleImageToolbarHide();
+}
+
+function installImageToolbarEvents() {
+    if (!_imageToolbarEventsInstalled) {
+        document.addEventListener("pointerover", handlePreviewPointerOver);
+        document.addEventListener("pointerout", handlePreviewPointerOut);
+        _imageToolbarEventsInstalled = true;
+    }
+
+    const graphCanvas = app.canvas?.canvas;
+    if (graphCanvas === _imageGraphCanvas) return;
+    _imageGraphCanvas?.removeEventListener("pointermove", handleCanvasPointerMove);
+    _imageGraphCanvas?.removeEventListener("pointerleave", handleCanvasPointerLeave);
+    _imageGraphCanvas = graphCanvas || null;
+    _imageGraphCanvas?.addEventListener("pointermove", handleCanvasPointerMove);
+    _imageGraphCanvas?.addEventListener("pointerleave", handleCanvasPointerLeave);
+}
+
+function removeImageToolbar() {
+    clearImageToolbarHideTimer();
+    if (_imageToolbarEventsInstalled) {
+        document.removeEventListener("pointerover", handlePreviewPointerOver);
+        document.removeEventListener("pointerout", handlePreviewPointerOut);
+        _imageToolbarEventsInstalled = false;
+    }
+    _imageGraphCanvas?.removeEventListener("pointermove", handleCanvasPointerMove);
+    _imageGraphCanvas?.removeEventListener("pointerleave", handleCanvasPointerLeave);
+    _imageGraphCanvas = null;
+    _imageToolbar?.remove();
+    _imageToolbar = null;
+    _imageToolbarImage = null;
+}
+
 function getToolbarBackground() {
     const bgColor = _currentSettings.background;
     const alpha = _currentSettings.opacity;
@@ -544,29 +834,14 @@ function isTextWidget(w) {
     if (w.options?.forceInput) return false;
 
     const element = w.element || w.inputEl;
-    const tagName = element?.tagName;
     if (element && SKIP_WIDGET_CLASSES.some((className) => element.classList?.contains(className) || element.querySelector?.(`.${className}`))) {
         return false;
     }
 
-    if (w.type === "customtext" || w.type === "text" || w.type === "string" || w.type === "textarea") return true;
-    if (tagName === "TEXTAREA" || tagName === "INPUT") return true;
-
-    if (typeof w.value === "string") {
-        if (w.type !== "combo" && w.type !== "number" && w.type !== "toggle" && w.type !== "button") {
-            return true;
-        }
-    }
-
-    if (element) {
-        if (element.classList?.contains("comfy-multiline-input")) return true;
-        if (element.classList?.contains("widget-input")) return true;
-        if (element.querySelector?.("textarea, input[type='text']")) return true;
-    }
-
-    if (typeof w.value === "string" && w.type === undefined) return true;
-
-    return false;
+    const widgetType = String(w.type || "").toLowerCase();
+    if (!TEXT_WIDGET_TYPES.has(widgetType) && w.options?.multiline !== true) return false;
+    if (!element) return true;
+    return findTextControl(element) !== null;
 }
 
 function tryAttachToWidget(widget) {
@@ -575,8 +850,10 @@ function tryAttachToWidget(widget) {
         if (!el) return false;
         if (!el.isConnected) return false;
 
-        const targetEl = (el.tagName === "TEXTAREA" || el.tagName === "INPUT")
-            ? el.parentElement : el;
+        const control = findTextControl(el);
+        if (!control) return false;
+
+        const targetEl = control.parentElement;
 
         if (!targetEl) return false;
         if (targetEl._ggFloatAttached) return false;
@@ -603,36 +880,6 @@ function attachToNodeWidgets(node) {
     }
 }
 
-function scanDomTextControls() {
-    try {
-        const nodeElements = document.querySelectorAll(".litegraph.node, [class*='node']");
-        for (const nodeEl of nodeElements) {
-            const textControls = nodeEl.querySelectorAll("textarea.comfy-multiline-input, textarea, input[type='text'], input:not([type])");
-            for (const ctrl of textControls) {
-                if (ctrl._ggFloatAttached) continue;
-                if (!ctrl.isConnected) continue;
-                if (ctrl.closest(".gg-float-toolbar")) continue;
-                if (ctrl.closest(".gg-compress-mode-host")) continue;
-
-                const parent = ctrl.parentElement;
-                if (parent && !parent._ggFloatAttached) {
-                    attachToolbarToWidget(parent, {
-                        value: ctrl.value || "",
-                        name: "",
-                    });
-                } else if (!ctrl._ggFloatAttached) {
-                    attachToolbarToWidget(ctrl, {
-                        value: ctrl.value || "",
-                        name: "",
-                    });
-                }
-            }
-        }
-    } catch (e) {
-        console.warn("[GGClipboard] scanDomTextControls error:", e);
-    }
-}
-
 function scanAllNodes() {
     if (!isFloatingEnabled()) return;
 
@@ -643,16 +890,13 @@ function scanAllNodes() {
                 attachToNodeWidgets(n);
             }
         }
-
-        managedTimeout(() => {
-            scanDomTextControls();
-        }, 300);
     } catch (e) {
         console.warn("[GGClipboard] scanAllNodes error:", e);
     }
 }
 
 function removeAllFloatToolbars() {
+    removeImageToolbar();
     document.querySelectorAll(".gg-float-toolbar").forEach((el) => {
         const parent = el.parentElement;
         if (parent?._ggCleanup) {
@@ -671,7 +915,8 @@ function removeAllFloatToolbars() {
         for (const w of allWidgets) {
             const el = findWidgetElement(w) || w.element;
             if (el) {
-                const targetEl = (el.tagName === "TEXTAREA" || el.tagName === "INPUT") ? el.parentElement : el;
+                const control = findTextControl(el);
+                const targetEl = control?.parentElement;
                 if (targetEl?._ggCleanup) {
                     try {
                         targetEl._ggCleanup();
@@ -706,6 +951,7 @@ window.__ggApplyToolbar = function(enabled) {
 
 window.__ggApplyFloatButtons = function(enabled) {
     if (enabled) {
+        installImageToolbarEvents();
         requestAnimationFrame(() => {
             scanAllNodes();
             managedTimeout(() => scanAllNodes(), 1000);
@@ -733,6 +979,7 @@ function initExtension() {
 
         setup() {
             if (!isFloatingEnabled()) return;
+            installImageToolbarEvents();
 
             managedTimeout(() => {
                 if (isToolbarEnabled()) {
