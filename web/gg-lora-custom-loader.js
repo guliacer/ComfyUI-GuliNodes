@@ -107,8 +107,14 @@ function toggleWidget(node, widget, show = false, suffix = "") {
     }
 
     const state = widgetState[widget.name];
-    widget.hidden = !show;
-    widget.type = show ? state.origType : `${HIDDEN_TAG}${suffix}`;
+    // 显示时必须先恢复 type:前端在当前 type 属于隐藏类型时会丢弃 hidden 写入。
+    if (show) {
+        widget.type = state.origType;
+        widget.hidden = false;
+    } else {
+        widget.hidden = true;
+        widget.type = `${HIDDEN_TAG}${suffix}`;
+    }
     widget.computeSize = show ? state.origComputeSize : () => [0, -4];
 
     if (show) {

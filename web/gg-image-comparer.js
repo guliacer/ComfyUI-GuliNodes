@@ -58,8 +58,16 @@ function setLabelVisible(widget, visible) {
         };
     }
     const state = widget._ggComparerLabelState;
-    widget.hidden = !visible;
-    widget.type = visible ? state.type : HIDDEN_LABEL_TYPE;
+    // The frontend mirrors `hidden` into the widget's raw options only when the
+    // current type is not a legacy hiding type, so the type must be switched
+    // before the hidden state or the write is dropped for one pass.
+    if (visible) {
+        widget.type = state.type;
+        widget.hidden = false;
+    } else {
+        widget.hidden = true;
+        widget.type = HIDDEN_LABEL_TYPE;
+    }
     widget.computeSize = visible ? state.computeSize : () => [0, -4];
 }
 

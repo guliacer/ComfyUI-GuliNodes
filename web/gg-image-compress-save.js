@@ -5,7 +5,6 @@ const FORMAT_WIDGET_NAME = "格式";
 const MODE_WIDGET_NAME = "压缩模式";
 const QUALITY_WIDGET_NAME = "质量";
 const TARGET_SIZE_WIDGET_NAME = "目标大小KB";
-const LEGACY_SEGMENT_WIDGET_NAME = "压缩模式选择";
 const PREVIEW_WIDGET_NAME = "$$canvas-image-preview";
 const DEFAULT_FORMAT = "JPEG";
 const DEFAULT_MODE = "civilblur";
@@ -118,43 +117,6 @@ function applyDefaultFormat(node) {
   node.properties._ggCompressSaveFormatInitialized = true;
 }
 
-function removeLegacySegmentWidgets(node) {
-  if (!Array.isArray(node.widgets)) return;
-  for (let index = node.widgets.length - 1; index >= 0; index -= 1) {
-    const widget = node.widgets[index];
-    if (widget?.name !== LEGACY_SEGMENT_WIDGET_NAME) continue;
-    widget.onRemoved?.();
-    node.widgets.splice(index, 1);
-  }
-}
-
-function restoreModeWidget(widget) {
-  if (!widget) return;
-  widget.hidden = false;
-  widget.serialize = true;
-
-  const hadCustomState = Boolean(
-    widget._ggOriginalType ||
-    widget._ggOriginalComputeSize ||
-    widget._ggCompressModeHidden ||
-    widget._ggCompressModeSegmentInstalled
-  );
-  if (!hadCustomState) return;
-
-  widget.type = widget._ggOriginalType || "combo";
-
-  if (widget._ggOriginalComputeSize) {
-    widget.computeSize = widget._ggOriginalComputeSize;
-  } else {
-    delete widget.computeSize;
-  }
-
-  delete widget.draw;
-  delete widget.mouse;
-  delete widget._ggCompressModeHidden;
-  delete widget._ggCompressModeSegmentInstalled;
-}
-
 function sanitizeWidgetValues(node) {
   const modeWidget = getWidget(node, MODE_WIDGET_NAME);
   const qualityWidget = getWidget(node, QUALITY_WIDGET_NAME);
@@ -211,8 +173,14 @@ function widgetOriginalState(widget) {
 function toggleHiddenWidget(widget, show) {
   if (!widget) return;
   const state = widgetOriginalState(widget);
-  widget.hidden = !show;
-  widget.type = show ? state.type : HIDDEN_TAG;
+  // 显示时必须先恢复 type:前端在当前 type 属于隐藏类型时会丢弃 hidden 写入。
+  if (show) {
+    widget.type = state.type;
+    widget.hidden = false;
+  } else {
+    widget.hidden = true;
+    widget.type = HIDDEN_TAG;
+  }
   widget.computeSize = show ? state.computeSize : () => [0, -4];
 }
 
@@ -415,8 +383,6 @@ function setupNode(node, mode) {
   node.serialize_widgets = true;
   node._ggCompressSaveSuppressResize = true;
   try {
-    removeLegacySegmentWidgets(node);
-    restoreModeWidget(getWidget(node, MODE_WIDGET_NAME));
     sanitizeWidgetValues(node);
     installPreviewGuard(node);
     installFormatVisibility(node);

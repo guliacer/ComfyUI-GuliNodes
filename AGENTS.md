@@ -101,6 +101,7 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - **`save()` / `restore()` 之间的 `globalAlpha` 会漏给下一段绘制**。同一节点内先画光环、再画高光扫过、最后画粒子时，粒子会继承上一步留下的 `globalAlpha`（曾因此整体偏暗）。每段独立绘制前显式设定自己需要的 `globalAlpha`，不要依赖上一段的遗留值。
 - **为长期存活的状态设计动画节奏**。参考实现里"分批生成"的效果（花瓣、爱心）在一次悬浮会话内用完配额就结束，因为它悬停结束即卸载；本插件节点可以长期保持选中，照抄会让效果播完第一批后**永久停止**。配额用尽后要隔一段随机时间重新补给。
 - **节点级光效必须在原始 `drawNode` 之后画**。标题栏是 `drawNode` 里画的不透明矩形，如果光效在 `original.call(...)` **之前**绘制，那么从节点上边界（y=0）出发的粒子在生命最初一段（约一个标题栏高度）会被标题栏盖住，视觉上就是"顶部扩散范围比左右两侧短一截"。正确做法是：先 `original.call(this, node, ctx, ...args)` 画节点本体（包括标题栏），再画光效，让粒子绘制在标题栏之上。坐标系仍然在节点局部（外层 `translate(node.pos)` 直到整个 `drawNode` 返回后才 `restore`），不需要额外变换。`reentrant` 重入保护要在调 `original` 之前就标记 `WeakSet`，保证原型补丁和实例补丁只会画一次。
+- **切换控件显隐时,`type` 必须先于 `hidden` 写**:隐藏时先写 `hidden = true` 再把 `type` 换成隐藏类型;显示时先把 `type` 恢复成真实类型再写 `hidden = false`。前端 `hidden` 的 setter 只在当前 `type` **不是** legacy 隐藏类型时才把值写回控件原始选项(名字含 `hidden` 的 `ggHiddenXxx` 都会被判定为隐藏类型);顺序写反时 `type` 一变、控件类被重新套用,可见性会从旧值重新派生,表现为「该显示的控件不显示,要再操作一次才出现」。仓库内所有显隐 helper 一律按此顺序。
 - 不要用全局轮询做高频重绘；用 `requestAnimationFrame`、设置变更回调或轻量事件钩子。
 - `MutationObserver` 挂在 `document.body`（尤其 `subtree: true`）时，回调必须防抖 / 节流，且回调里严禁整文档 `querySelectorAll` 或读 `offsetHeight` / `getBoundingClientRect` 等触发强制回流的操作——ComfyUI 前端启动时会疯狂构建 DOM，未节流的重回调会把主线程拖死、工作台白屏卡死（`gg-ui-icons.js` 等多个文件栽过这个模式）。能局部观察就不要观察 `body`，能只处理 `addedNodes` 就不要重扫全文档。
 
