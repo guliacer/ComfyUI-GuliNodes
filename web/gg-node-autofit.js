@@ -7,7 +7,7 @@ const TITLE_PADDING = 38;
 const WIDGET_LABEL_PADDING = 68;
 const SLOT_PADDING = 48;
 const HIDDEN_WIDGET_PREFIX = "ggHiddenLoRA";
-const AUTOFIT_EXCLUDED_NODE_NAMES = new Set(["GGTitleNode", "GGGroupControllerM", "GGGroupControllerS", "GGPromptEnhancer"]);
+const AUTOFIT_EXCLUDED_NODE_NAMES = new Set(["GGTitleNode", "GGGroupControllerM", "GGGroupControllerS", "GGPromptEnhancer", "GGOptionConfirm"]);
 
 let measureContext = null;
 const scheduledNodes = new WeakSet();
