@@ -5,11 +5,14 @@ const NODE_TYPE = "GGOptionConfirm";
 const MIN_OUTPUTS = 1;
 const MAX_OUTPUTS = 20;
 const OUTPUT_TYPE = globalThis.LiteGraph?.OUTPUT ?? 2;
+const SLOT_NAME_PROPERTY = "gg_option_slot_names";
 
 const TEXT = {
     title: "GG 选项确认",
     empty: "连接到控件输入",
     category: "GuliNodes/输入",
+    rename: "自定义名称",
+    renameHint: "右键可自定义名称",
 };
 
 function isInputSpec(value) {
@@ -159,6 +162,81 @@ function createNodeClass(LiteGraph) {
         }
     }
 
+    customSlotNames() {
+        const names = this.properties?.[SLOT_NAME_PROPERTY];
+        return Array.isArray(names) ? names : [];
+    }
+
+    // 目标控件名缺失时退回目标节点标题,否则行名只剩一个看不出作用的序号。
+    slotAutoName(info, slot) {
+        const inputName = String(info.input?.localized_name || info.input?.label || info.input?.name || "").trim();
+        const widgetName = String(info.targetWidget?.label || info.targetWidget?.name || "").trim();
+        const nodeName = String(info.targetNode?.title || info.targetNode?.type || "").trim();
+        const base = inputName || widgetName || nodeName;
+        return base ? `${base} ${slot + 1}` : `选项 ${slot + 1}`;
+    }
+
+    slotName(slot, info = this.resolveOutputTarget(slot)) {
+        const custom = String(this.customSlotNames()[slot] ?? "").trim();
+        if (custom) return custom;
+        return info ? this.slotAutoName(info, slot) : "";
+    }
+
+    setSlotName(slot, value) {
+        const names = [...this.customSlotNames()];
+        while (names.length <= slot) names.push("");
+        names[slot] = String(value ?? "").trim();
+        this.properties ||= {};
+        this.properties[SLOT_NAME_PROPERTY] = names;
+        this.refreshSlotNames();
+    }
+
+    refreshSlotNames() {
+        for (let slot = 0; slot < this.outputs.length; slot += 1) {
+            const info = this.resolveOutputTarget(slot);
+            const name = this.slotName(slot, info);
+            if (info && name) this.outputs[slot].name = name;
+            const widget = this.widgets?.find((item) => item.__ggOptionConfirmSlot === slot);
+            if (!widget) continue;
+            widget.label = name || widget.name;
+            widget.tooltip = name ? `${name}\n${TEXT.renameHint}` : TEXT.renameHint;
+        }
+        this.setDirtyCanvas?.(true, true);
+    }
+
+    renameSlot(slot, canvas) {
+        if (!canvas?.prompt) return;
+        const point = Array.isArray(canvas.last_mouse) ? canvas.last_mouse : [0, 0];
+        const rect = canvas.canvas?.getBoundingClientRect?.();
+        const event = { clientX: (rect?.left || 0) + point[0], clientY: (rect?.top || 0) + point[1] };
+        canvas.prompt(TEXT.rename, this.slotName(slot), (value) => this.setSlotName(slot, value), event);
+    }
+
+    // 按行命中的是图坐标(graph_mouse),画布与 Nodes 2.0 两种渲染下都可用。
+    slotWidgetAtPointer(canvas) {
+        const point = canvas?.graph_mouse;
+        if (!Array.isArray(point)) return null;
+        const localY = point[1] - (Number(this.pos?.[1]) || 0);
+        return (this.widgets || []).find((widget) => {
+            if (widget.__ggOptionConfirmSlot == null) return false;
+            const top = Number(widget.last_y ?? widget.y);
+            if (!Number.isFinite(top)) return false;
+            return localY >= top && localY <= top + (Number(widget.computedHeight) || 26);
+        }) ?? null;
+    }
+
+    getExtraMenuOptions(canvas, options = []) {
+        const widget = this.slotWidgetAtPointer(canvas);
+        if (widget) {
+            const slot = widget.__ggOptionConfirmSlot;
+            options.unshift(
+                { content: `${TEXT.rename}:${this.slotName(slot)}`, callback: () => this.renameSlot(slot, canvas) },
+                null,
+            );
+        }
+        return options;
+    }
+
     resolveOutputTarget(slot) {
         const output = this.outputs?.[slot];
         const linkId = output?.links?.[0];
@@ -233,8 +311,7 @@ function createNodeClass(LiteGraph) {
 
             const type = configType(info.config);
             output.type = type;
-            output.name = (info.input.localized_name || info.input.label || info.input.name || type)
-                + " " + (slot + 1);
+            output.name = this.slotName(slot, info);
             output.widget = info.input.widget || { name: info.widgetName };
             this.createSlotWidget(slot, info, previousValues);
         }
@@ -244,6 +321,8 @@ function createNodeClass(LiteGraph) {
                 if (this.widgets?.[index]) this.widgets[index].value = savedValues[index];
             }
         }
+
+        this.refreshSlotNames();
 
         const computed = this.computeSize?.() || oldSize;
         this.setSize?.([
