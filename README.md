@@ -147,6 +147,7 @@ pip install -r requirements.txt
 - **风格参考** — 使用纯 PyTorch 统计迁移和纹理混合实现，不依赖 OpenCV。
 - **图像保存与压缩** — 预览、保存、压缩保存、独立压缩，支持 JPEG/PNG/WEBP。
 - **图像对比** — 2 图和最多 20 图拼接预览，适合参数对比和 A/B 测试。
+- **图像混淆** — 用 4 位密码按 Hilbert 曲线置换图像像素，用于上传前遮挡或还原；V3 会在底部写入宽高条码，缩放后仍能自动识别原尺寸，V2 不改变尺寸且逐像素无损。
 - **Latent 尺寸** — `GG Latent` 支持按边长、按 K 数分辨率、按 Latent 接入、按图像接入四种生成方式；按边长用边长与边长类型做自定义尺寸，按 K 数分辨率含 1K–4K 档位，另有输入尺寸倍率缩放、图像缩放方法与尺寸读取；另提供 Latent 缩放、VAE 编码/解码缓存。
 
 ### 模型、LoRA、采样与视频
@@ -161,7 +162,7 @@ pip install -r requirements.txt
 
 ## 节点清单
 
-当前版本实际注册 37 个节点。
+当前版本实际注册 38 个节点。
 
 ### 图像、尺寸与 Latent
 
@@ -187,6 +188,7 @@ pip install -r requirements.txt
 | `GG 图像压缩` | 输出压缩后的图像。 |
 | `GG 图像对比 2张` | 双图对比预览。 |
 | `GG 图像对比 N张` | 默认一个图像输入，连接后自动增加下一个，最多 20 张；标签只显示已连接图像源，断开后自动收起。 |
+| `GG 图像混淆` | 按 4 位密码置换或还原图像像素。V3 在底部写入宽高条码，缩放后仍可自动识别原尺寸并解码；V2 不改变尺寸且逐像素无损，但缩放后无法还原。 |
 
 ### 文本、输入与工作流组织
 
@@ -237,6 +239,7 @@ pip install -r requirements.txt
 | 主插件节点 | 无额外 Python 包 | 仅依赖 ComfyUI 自带 Python 环境中的常规库。 |
 | `GG 密钥输入` 模型获取 | Python 标准库 `urllib` + 服务商兼容的 `/models` 接口 | 支持常见 OpenAI 兼容模型列表响应；不增加额外 Python 依赖。浏览器剪贴板粘贴需要 ComfyUI 页面允许读取剪贴板。 |
 | 图像处理 | ComfyUI 环境内的 `torch`、`PIL`、`numpy` | 不需要 `cv2`、`mediapipe`、`kornia` 或 `color-matcher`。 |
+| `GG 图像混淆` | ComfyUI 环境内的 `numpy`、`torch` | 纯本地像素置换，不联网、不增加额外依赖；V3 的像素备份仅能恢复自身条码区，部分尺寸/密码组合在混淆时会丢失少量像素（与网页版行为一致），要求无损请用 V2。 |
 | 发送到素言 | ComfyUI 前端 API + 素言本地收件服务 | 需要素言监听 `http://127.0.0.1:9477/guli/suyan/import`；提示词按服务端执行历史、队列快照、图片元数据顺序回退，不增加 Python 依赖。 |
 | GG Latent 尺寸计算 | 无额外 Python 依赖 | 按 K 数分辨率时由后端按预设 K 数、宽高比例和画面方向直接计算尺寸，不显示边长/边长类型；按边长时才按边长和边长类型计算。 |
 | 视频加载/压缩/保存 | `ffmpeg`，可选 `ffprobe` | 需要系统命令可调用，或把 ffmpeg 放到 PATH。 |
@@ -306,8 +309,9 @@ pip install -r requirements.txt
 
 ## 更新记录
 
-### 最近更新
+### 未发布
 
+- 新增 `GG 图像混淆`：按 4 位密码（前两位混淆步数、第三位右侧填充、第四位底部填充，留空等同 `0100`）用 Hilbert 曲线置换或还原图像像素，可用于上传前遮挡。「V3 防缩放」在底部写入宽高条码与像素备份，图片被缩放后仍能自动识别原尺寸并解码，少数尺寸/密码组合会损失极少量像素；「V2 无损」不改变尺寸且逐像素无损，但缩放后无法还原。解码时自动检测条码，同批次内尺寸不一致会提示拆分批次。
 - `GG 多组控制` 新增「选择组」按钮：在节点旁的下拉列表中勾选需要控制的编组（选中项带勾选标识），点击列表外区域自动收起；列表与「全部跳过」「全部启用」及右键菜单只作用于所选编组。新节点默认不控制任何编组，旧工作流未保存选择时仍默认选中全部编组。「全部跳过」「全部启用」两个按钮和每个已选编组的行都新增了可连接端口，接入 `GG 选项确认` 的布尔输出后，顶部端口在值为开时批量跳过/启用所选编组，行端口按对应编组的启用状态切换；连线随工作流保存，增减所选编组时按编组名重新对应。
 - `GG 单组控制` 新增可连接的「启用」输入：把 `GG 选项确认` 的输出连接到该端口即可切换整组跳过/启用，自定义下拉框与启停按钮的外观和点击行为保持不变。
 - `GG 选项确认` 的选项行不再只显示 `value_1` 这类编号：默认用目标控件名（取不到时用目标节点名）命名，右键行上的「自定义名称」可以改成自己的说明文字，名称随工作流保存，清空后回退到自动命名。
@@ -432,6 +436,7 @@ pip install -r requirements.txt
 | 节点插件名称自动隐藏 | ComfyUI_frontend、LiteGraph 官方节点徽章 API | 通过官方 `drawBadges` 绘制入口和 Nodes 2.0 节点徽章 DOM 做显示层适配，不修改节点数据或工作流序列化。 |
 | `GG 色彩校正` | ColorCorrect 类色彩校正功能 | 参数设计和功能目标参考 ColorCorrect 的温度、色调、明度、对比度、饱和度、伽马调节思路；当前实现改写为 torch 张量批处理，不依赖额外 OpenCV/kornia 包。 |
 | `GG 图像压缩保存`、`GG 图像压缩` | [civilblur/mazanoke](https://github.com/civilblur/mazanoke)、[Lymphatus/caesium-image-compressor](https://github.com/Lymphatus/caesium-image-compressor)、[meowtec/Imagine](https://github.com/meowtec/Imagine) | 三档压缩模式（civilblur / Caesium / meowtec）的命名与「按质量或目标大小压缩 JPEG/PNG/WEBP」的功能形态分别受这三个开源图像压缩工具启发；GuliNodes 用 ComfyUI 环境自带的 Pillow 重新实现（optimize/progressive/subsampling、WEBP method=6、目标大小二分搜索质量），不调用也不内置这些项目的源码。 |
+| `GG 图像混淆` | [大番茄混淆工具](https://dfqtphx.netlify.app) | 算法思路参考：广义 Hilbert 曲线像素置换、4 位密码（前两位步数、后两位右侧/底部填充）、V3 底部宽高条码与像素备份自愈结构；本项目用 numpy/torch 重新实现并适配为 ComfyUI 节点，不复制其源码。 |
 | `GG 图像对比 2张` | ComfyUI-KJNodes、[ComfyUI_JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes) | 双图对比节点的交互形态和使用场景参考了 KJNodes 与 JosiaNodes 的相关实现；本项目按 GuliNodes 的预览、保存和前端交互方式重新整理。 |
 | 文本框悬浮按钮 | [ComfyUI-Prompt-Assistant](https://github.com/yawiii/ComfyUI-Prompt-Assistant) | 文本框悬浮复制、粘贴、清空按钮的交互灵感来源于 Prompt Assistant；本项目按 GuliNodes 的全局文本框识别、设置开关和前端按钮样式重新实现。 |
 | `GG 标题` | rgthree、Anything Everywhere、Reroute 等社区常见工作流形态 | 这些节点借鉴了社区里“画布标注”的交互思路，但前后端逻辑按 GuliNodes 的中文体验和序列化方式重写。 |

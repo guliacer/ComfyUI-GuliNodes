@@ -10,6 +10,7 @@ FAILED_MODULES = {}
 _NODE_MODULES = (
     "aspect_ratio",
     "image_tools",
+    "image_obfuscate",
     "video_tools",
     "lora_tools",
     "text_tools",
