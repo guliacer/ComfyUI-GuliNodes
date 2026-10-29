@@ -13,6 +13,22 @@ let measureContext = null;
 const scheduledNodes = new WeakSet();
 const scheduledOptions = new WeakMap();
 const initializedNodes = new WeakSet();
+// 用户手动拖过的节点尺寸。只存在节点对象上，不写 properties：
+// 尺寸本身随工作流存进 node.size，重开时还在，这里只要别去改它就够了。
+// 标记的意义是「这个人自己定过尺寸，autofit 从今往后只许撑大、不许收小」。
+const MANUAL_SIZE_FLAG = "_ggAutoFitManualSize";
+
+function readManualSize(node) {
+    const size = node?.[MANUAL_SIZE_FLAG];
+    return Array.isArray(size) && size.length >= 2 ? size : null;
+}
+
+// node.size 在这个前端里是 Float64Array，不是数组——用 Array.isArray 判会一直判假，
+// 手动尺寸就永远记不下来。两边都认的写法是「有 length 且能取到两个数」。
+function readNodeSize(node) {
+    const size = node?.size;
+    return size && typeof size.length === "number" && size.length >= 2 ? size : null;
+}
 
 function getMeasureContext() {
     if (measureContext) {
@@ -224,15 +240,23 @@ function fitNode(node, options = {}) {
     const minimumHeight = heightOwnedByPortLayout || customHeight
         ? currentHeight
         : Math.max(MIN_NODE_HEIGHT, Number(computed[1]) || 0);
-    const allowShrink = options.allowShrink !== false;
-    let width = allowShrink ? minimumWidth : Math.max(currentWidth, minimumWidth);
+    // 用户手动拖过尺寸的节点一律只增不减：宽高都是他自己定的，autofit 只负责别让内容被裁。
+    // GGLoRACustomLoader 例外：它的高度本来就该跟着槽位数量精确贴合（见上），
+    // 那是功能不是 bug，所以不参与这条保护。
+    const manual = heightLocked ? null : readManualSize(node);
+    const allowShrink = options.allowShrink !== false && !manual;
+    // 下限要用「手动尺寸」而不是「当前尺寸」：前端 ComboWidget 换了选项会直接把 node.size
+    // 写成内容高度（绕开所有扩展逻辑），这时 current 已经被改小了，拿它当下限等于认账。
+    const floorWidth = Math.max(currentWidth, Number(manual?.[0]) || 0);
+    const floorHeight = Math.max(currentHeight, Number(manual?.[1]) || 0);
+    let width = allowShrink ? minimumWidth : Math.max(floorWidth, minimumWidth);
     let height = heightOwnedByPortLayout
         ? currentHeight
         : customHeight
         ? currentHeight
         : heightLocked
         ? computed[1]
-        : allowShrink ? minimumHeight : Math.max(currentHeight, minimumHeight);
+        : allowShrink ? minimumHeight : Math.max(floorHeight, minimumHeight);
 
     width = Math.max(width, minimumWidth);
     height = Math.max(height, minimumHeight);
@@ -319,6 +343,19 @@ app.registerExtension({
             return [constrainedWidth, Math.max(MIN_NODE_HEIGHT, Number(size[1]) || MIN_NODE_HEIGHT)];
         };
 
+        const originalOnResize = nodeType.prototype.onResize;
+        nodeType.prototype.onResize = function (size) {
+            const result = originalOnResize?.apply(this, arguments);
+            // 只有画布正握着这个节点的边在拖，才算用户自己定的尺寸。
+            // ComfyUI 与其它扩展的布局也会走 onResize，把那些值记成手动尺寸，节点就再也收不回去了。
+            const canvas = app?.canvas || globalThis.LGraphCanvas?.active_canvas;
+            const liveSize = readNodeSize(this);
+            if (canvas?.resizing_node === this && liveSize) {
+                this[MANUAL_SIZE_FLAG] = [Math.round(Number(liveSize[0]) || 0), Math.round(Number(liveSize[1]) || 0)];
+            }
+            return result;
+        };
+
         const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function (...args) {
             const result = originalOnNodeCreated?.apply(this, args);
@@ -335,8 +372,9 @@ app.registerExtension({
             if (isFirstLoad) {
                 initializedNodes.add(this);
             }
-            scheduleFit(this, { allowShrink: isFirstLoad });
-            setTimeout(() => scheduleFit(this, { allowShrink: isFirstLoad }), 0);
+            // 工作流里存的就是上次的尺寸（用户可能特意拉过），加载后一律只增不减。
+            scheduleFit(this, { allowShrink: false });
+            setTimeout(() => scheduleFit(this, { allowShrink: false }), 0);
             return result;
         };
     },
@@ -348,7 +386,9 @@ app.registerExtension({
 
     loadedGraphNode(node) {
         initializedNodes.add(node);
-        scheduleFit(node, { allowShrink: true });
-        setTimeout(() => scheduleFit(node, { allowShrink: true }), 0);
+        // 重开工作流不许把节点缩回内容尺寸：用户拉出来的宽高要留住，
+        // 否则每次打开工作流都得重新拉一遍。
+        scheduleFit(node, { allowShrink: false });
+        setTimeout(() => scheduleFit(node, { allowShrink: false }), 0);
     },
 });

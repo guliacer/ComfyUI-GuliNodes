@@ -721,33 +721,23 @@ app.registerExtension({
                 right: 18px;
                 z-index: 99999;
                 padding: 2px;
-                border: 1px solid rgba(148,163,184,0.22);
+                border: 1px solid var(--gg-divider);
                 border-radius: 10px;
-                background: rgba(255,255,255,0.84);
-                box-shadow: 0 8px 22px rgba(15,23,42,0.1);
+                background: var(--gg-panel);
+                box-shadow: 0 8px 22px rgba(15,23,42,0.18);
                 backdrop-filter: blur(14px);
             }
+            /* 尺寸留在这里；开关三态（开 / 关 / 悬停）统一由设计层的 .gg-ui-top-button 提供 */
             #gg-taprelay-toggle-button {
                 width: 34px !important;
                 min-width: 34px !important;
                 max-width: 34px !important;
                 height: 34px !important;
                 padding: 0 !important;
-                border-radius: 8px !important;
                 box-sizing: border-box;
                 line-height: 0 !important;
                 appearance: none;
                 cursor: pointer;
-            }
-            #gg-taprelay-toggle-button.gg-state-on {
-                color: var(--gg-ui-accent) !important;
-                background: var(--gg-ui-accent-soft) !important;
-                border-color: var(--gg-ui-accent-border) !important;
-            }
-            #gg-taprelay-toggle-button.gg-state-off {
-                color: var(--gg-ui-muted) !important;
-                background: rgba(148,163,184,0.08) !important;
-                border-color: rgba(148,163,184,0.18) !important;
             }
             #gg-taprelay-toggle-button .gg-ui-icon {
                 width: 18px;

@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { growOnlyHeight } from "./gg-port-list-layout.js";
 
 const NODE_NAME = "GGSeedGenerator";
 const SOURCE_WIDGET = "种子来源";
@@ -93,7 +94,8 @@ function toggleWidget(node, widget, show) {
 function refreshNode(node) {
     if (typeof node.computeSize === "function" && typeof node.setSize === "function") {
         const [width, height] = node.computeSize();
-        node.setSize([Math.max(Number(node.size?.[0]) || 0, width), height]);
+        // 只增不减：用户拉高的高度不被偏移模式切换压回去（规则见 gg-port-list-layout.js）
+        node.setSize([Math.max(Number(node.size?.[0]) || 0, width), growOnlyHeight(node.size?.[1], height)]);
     }
     node.setDirtyCanvas?.(true, true);
     node.graph?.setDirtyCanvas?.(true, true);

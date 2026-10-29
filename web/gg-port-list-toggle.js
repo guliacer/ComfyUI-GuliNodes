@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
 import {
     DEFAULT_MULTILINE_WIDGET_HEIGHT,
     MIN_MULTILINE_WIDGET_HEIGHT,
@@ -1793,15 +1794,8 @@ function updateTopButton() {
     topButton.classList.toggle("active", featureEnabled);
     topButton.classList.toggle("gg-state-on", featureEnabled);
     topButton.classList.toggle("gg-state-off", !featureEnabled);
-    topButton.style.color = featureEnabled
-        ? "var(--gg-ui-accent, #3b82f6)"
-        : "var(--gg-ui-ink, #3f4856)";
-    topButton.style.background = featureEnabled
-        ? "rgba(59,130,246,0.17)"
-        : "var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))";
-    topButton.style.borderColor = featureEnabled
-        ? "var(--gg-ui-accent-border, rgba(59,130,246,0.28))"
-        : "rgba(148,163,184,0.24)";
+    // 颜色由设计层按 `active` / `gg-state-*` 决定，这里不再逐个改 style：
+    // 以前这三行把「关」写成 `rgba(255,255,255,0.94)`，深色主题里就是一块白板。
     topButton.innerHTML = ggIcon("portList", 18);
 }
 
@@ -1814,15 +1808,6 @@ function updateCollapseTopButton() {
     collapseTopButton.classList.toggle("active", collapseFeatureEnabled);
     collapseTopButton.classList.toggle("gg-state-on", collapseFeatureEnabled);
     collapseTopButton.classList.toggle("gg-state-off", !collapseFeatureEnabled);
-    collapseTopButton.style.color = collapseFeatureEnabled
-        ? "var(--gg-ui-accent, #3b82f6)"
-        : "var(--gg-ui-ink, #3f4856)";
-    collapseTopButton.style.background = collapseFeatureEnabled
-        ? "rgba(59,130,246,0.17)"
-        : "var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))";
-    collapseTopButton.style.borderColor = collapseFeatureEnabled
-        ? "var(--gg-ui-accent-border, rgba(59,130,246,0.28))"
-        : "rgba(148,163,184,0.24)";
     collapseTopButton.innerHTML = ggIcon(collapseFeatureEnabled ? "nodeCollapse" : "nodeExpand", 18);
 }
 
@@ -1880,15 +1865,6 @@ function updatePinTopButton() {
     pinTopButton.classList.toggle("active", pinFeatureEnabled);
     pinTopButton.classList.toggle("gg-state-on", pinFeatureEnabled);
     pinTopButton.classList.toggle("gg-state-off", !pinFeatureEnabled);
-    pinTopButton.style.color = pinFeatureEnabled
-        ? "var(--gg-ui-accent, #3b82f6)"
-        : "var(--gg-ui-ink, #3f4856)";
-    pinTopButton.style.background = pinFeatureEnabled
-        ? "rgba(59,130,246,0.17)"
-        : "var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))";
-    pinTopButton.style.borderColor = pinFeatureEnabled
-        ? "var(--gg-ui-accent-border, rgba(59,130,246,0.28))"
-        : "rgba(148,163,184,0.24)";
     pinTopButton.innerHTML = ggIcon(pinFeatureEnabled ? "nodePin" : "nodePinOff", 18);
 }
 
@@ -1911,28 +1887,29 @@ function placePinTopButton() {
     pinTopHost.style.zIndex = "100002";
 }
 
+// 顶栏这几个按钮只声明「尺寸 + 动效」，颜色/边框/圆角/四态全部交给设计层
+// （`.gg-ui-top-button`，见 gg-ui-icons.js）。以前每个按钮各写一份白底 + 各写一遍
+// `style.background = 开 ? 蓝 : 白`，深色主题下「关」态就是一块白板。
+const TOP_BUTTON_CSS = [
+    "width: 40px",
+    "min-width: 40px",
+    "height: 40px",
+    "padding: 0",
+    "display: inline-flex",
+    "align-items: center",
+    "justify-content: center",
+    "cursor: pointer",
+    "box-shadow: var(--gg-top-switch-shadow, 0 8px 22px rgba(15,23,42,0.14))",
+    "transition: transform 0.16s ease, background-color 0.16s ease, border-color 0.16s ease, opacity 0.16s ease",
+].join(";");
+
 function createTopButton() {
     if (topButton) return;
     topButton = document.createElement("button");
     topButton.id = TOP_BUTTON_ID;
     topButton.type = "button";
-    topButton.className = "gg-toolbar-top-button gg-port-list-top-button";
-    topButton.style.cssText = [
-        "width: 40px",
-        "min-width: 40px",
-        "height: 40px",
-        "border: 1px solid rgba(148,163,184,0.24)",
-        "border-radius: 10px",
-        "padding: 0",
-        "display: inline-flex",
-        "align-items: center",
-        "justify-content: center",
-        "cursor: pointer",
-        "color: var(--gg-ui-ink, #3f4856)",
-        "background: var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))",
-        "box-shadow: var(--gg-top-switch-shadow, 0 8px 22px rgba(15,23,42,0.14))",
-        "transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, opacity 0.16s ease",
-    ].join(";");
+    topButton.className = "gg-toolbar-top-button gg-ui-top-button gg-port-list-top-button";
+    topButton.style.cssText = TOP_BUTTON_CSS;
     topButton.addEventListener("mouseenter", () => { topButton.style.transform = "scale(1.08)"; });
     topButton.addEventListener("mouseleave", () => { topButton.style.transform = "none"; });
     topButton.addEventListener("click", async (event) => {
@@ -1965,34 +1942,29 @@ function installCollapseSettingsStyles() {
     if (document.getElementById("gg-node-collapse-settings-style")) return;
     const style = document.createElement("style");
     style.id = "gg-node-collapse-settings-style";
+    // 外壳（底色 / 描边 / 圆角 / 阴影）交给设计层的 `.gg-popover`，
+    // 这里只留「这一个面板特有」的定位与内容排版。
     style.textContent = `
         #${COLLAPSE_SETTINGS_PANEL_ID} {
-            position: fixed;
-            z-index: 100006;
             display: none;
             width: 260px;
             padding: 14px;
-            border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3));
-            border-radius: 14px;
-            background: color-mix(in srgb, var(--comfy-menu-bg, #fff) 94%, var(--gg-ui-accent, #3b82f6));
-            color: var(--gg-ui-ink, #3f4856);
-            box-shadow: 0 16px 36px rgba(15,23,42,0.2);
             box-sizing: border-box;
         }
         #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-title {
             padding-bottom: 9px; margin-bottom: 10px;
-            border-bottom: 1px solid color-mix(in srgb, var(--gg-ui-accent-border, rgba(100,116,139,0.3)) 55%, transparent);
+            border-bottom: 1px solid var(--gg-divider);
             font-size: 13px; font-weight: 700;
         }
         #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-row {
             display: flex; align-items: center; gap: 10px; font-size: 12px;
         }
-        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-row label { color: var(--gg-ui-muted, #6b7280); flex: 0 0 auto; }
-        #${COLLAPSE_SETTINGS_PANEL_ID} input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--gg-ui-accent, #3b82f6); }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-row label { color: var(--gg-muted); flex: 0 0 auto; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--gg-accent); }
         #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-value {
             flex: 0 0 auto; min-width: 34px; text-align: right; font-weight: 650; font-variant-numeric: tabular-nums;
         }
-        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-hint { margin-top: 9px; font-size: 11px; color: var(--gg-ui-muted, #6b7280); line-height: 1.4; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-hint { margin-top: 9px; font-size: 11px; color: var(--gg-muted); line-height: 1.4; }
     `;
     document.head.appendChild(style);
 }
@@ -2010,6 +1982,9 @@ function createCollapseSettingsPanel() {
     installCollapseSettingsStyles();
     const panel = document.createElement("div");
     panel.id = COLLAPSE_SETTINGS_PANEL_ID;
+    panel.className = "gg-surface gg-popover";
+    ensureGGDesign();
+    applySurface(panel);
     panel.setAttribute("role", "dialog");
     panel.setAttribute("aria-label", "节点折叠设置");
     panel.innerHTML = `
@@ -2057,6 +2032,8 @@ function toggleCollapseSettings(event) {
     createCollapseSettingsPanel();
     const opening = collapseSettingsPanel.style.display !== "block";
     if (opening) {
+        // 宿主可能中途切过主题，每次打开重新取一次皮肤
+        applySurface(collapseSettingsPanel);
         collapseSettingsPanel.style.display = "block";
         const menuOpen = window.__ggTopToolsMenuOpen?.() === true;
         const embedded = menuOpen && window.__ggEmbedTopDetailPanel?.(COLLAPSE_TOP_BUTTON_ID) === true;
@@ -2079,22 +2056,8 @@ function createCollapseTopButton() {
 
     collapseTopButton = document.createElement("button");
     collapseTopButton.type = "button";
-    collapseTopButton.className = "gg-toolbar-top-button gg-node-collapse-top-button";
-    collapseTopButton.style.cssText = [
-        "width: 40px",
-        "min-width: 40px",
-        "height: 40px",
-        "border: 1px solid rgba(148,163,184,0.24)",
-        "border-radius: 10px",
-        "padding: 0",
-        "display: inline-flex",
-        "align-items: center",
-        "justify-content: center",
-        "cursor: pointer",
-        "color: var(--gg-ui-ink, #3f4856)",
-        "background: var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))",
-        "box-shadow: var(--gg-top-switch-shadow, 0 8px 22px rgba(15,23,42,0.14))",
-    ].join(";");
+    collapseTopButton.className = "gg-toolbar-top-button gg-ui-top-button gg-node-collapse-top-button";
+    collapseTopButton.style.cssText = TOP_BUTTON_CSS;
     collapseTopButton.addEventListener("click", async (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -2105,24 +2068,10 @@ function createCollapseTopButton() {
 
     collapseSettingsButton = document.createElement("button");
     collapseSettingsButton.type = "button";
-    collapseSettingsButton.className = "gg-toolbar-top-button gg-node-collapse-settings-button";
+    collapseSettingsButton.className = "gg-toolbar-top-button gg-ui-top-button gg-node-collapse-settings-button";
     collapseSettingsButton.title = "节点折叠设置";
     collapseSettingsButton.setAttribute("aria-label", "节点折叠设置");
-    collapseSettingsButton.style.cssText = [
-        "width: 40px",
-        "min-width: 40px",
-        "height: 40px",
-        "border: 1px solid rgba(148,163,184,0.24)",
-        "border-radius: 10px",
-        "padding: 0",
-        "display: inline-flex",
-        "align-items: center",
-        "justify-content: center",
-        "cursor: pointer",
-        "color: var(--gg-ui-ink, #3f4856)",
-        "background: var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))",
-        "box-shadow: var(--gg-top-switch-shadow, 0 8px 22px rgba(15,23,42,0.14))",
-    ].join(";");
+    collapseSettingsButton.style.cssText = TOP_BUTTON_CSS;
     collapseSettingsButton.innerHTML = ggIcon("settings", 18);
     collapseSettingsButton.addEventListener("click", toggleCollapseSettings);
 
@@ -2141,22 +2090,8 @@ function createPinTopButton() {
 
     pinTopButton = document.createElement("button");
     pinTopButton.type = "button";
-    pinTopButton.className = "gg-toolbar-top-button gg-node-pin-top-button";
-    pinTopButton.style.cssText = [
-        "width: 40px",
-        "min-width: 40px",
-        "height: 40px",
-        "border: 1px solid rgba(148,163,184,0.24)",
-        "border-radius: 10px",
-        "padding: 0",
-        "display: inline-flex",
-        "align-items: center",
-        "justify-content: center",
-        "cursor: pointer",
-        "color: var(--gg-ui-ink, #3f4856)",
-        "background: var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))",
-        "box-shadow: var(--gg-top-switch-shadow, 0 8px 22px rgba(15,23,42,0.14))",
-    ].join(";");
+    pinTopButton.className = "gg-toolbar-top-button gg-ui-top-button gg-node-pin-top-button";
+    pinTopButton.style.cssText = TOP_BUTTON_CSS;
     pinTopButton.addEventListener("click", async (event) => {
         event.preventDefault();
         event.stopPropagation();

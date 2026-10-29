@@ -1363,22 +1363,23 @@ function setupButton() {
             right: 18px;
             z-index: 99999;
             padding: 2px;
-            border: 1px solid rgba(148,163,184,0.22);
+            border: 1px solid var(--gg-divider);
             border-radius: 10px;
-            background: rgba(255,255,255,0.84);
-            box-shadow: 0 8px 22px rgba(15,23,42,0.1);
+            background: var(--gg-panel);
+            box-shadow: 0 8px 22px rgba(15,23,42,0.18);
             backdrop-filter: blur(14px);
         }
         #gg-send-to-suyan-host.gg-suyan-hidden {
             display: none !important;
         }
+        /* 尺寸留在这里，颜色 / 边框 / 悬停态一律交给设计层的 .gg-ui-top-button，
+           否则每个功能各写一份，深色主题下就会出现「白底按钮」这种走样。 */
         #gg-send-to-suyan-btn {
             width: 34px !important;
             min-width: 34px !important;
             max-width: 34px !important;
             height: 34px !important;
             padding: 0 !important;
-            border-radius: 8px !important;
             box-sizing: border-box;
             line-height: 0 !important;
             appearance: none;
@@ -1386,8 +1387,6 @@ function setupButton() {
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
-            border: 1px solid rgba(148,163,184,0.22) !important;
-            background: rgba(255,255,255,0.42) !important;
         }
         #gg-send-to-suyan-btn:hover {
             transform: scale(1.08);

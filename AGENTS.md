@@ -16,7 +16,7 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 后端模块按能力划分，**完整清单以 `guli_nodes/__init__.py` 的 `_NODE_MODULES` 为准**（不要在本文件里维护副本，容易过期）：
 
 - 尺寸与潜空间：`aspect_ratio.py`｜图像：`image_tools.py`｜视频：`video_tools.py`｜VAE 缓存与显存清理：`model_loaders.py`
-- 文本与输入：`text_tools.py`、`clipboard.py`、`prompt_optimizer.py`、`key_tools.py`
+- 文本与输入：`text_tools.py`、`clipboard.py`、`prompt_optimizer.py`、`prompt_lighting.py`、`prompt_library.py`、`key_tools.py`
 - 模型与采样：`lora_tools.py`、`zimage_sampler.py`、`seed_tools.py`
 - 其它：`numeric_tools.py`、`title_node.py`、`web_ai_tools.py`、`taprelay.py`
 
@@ -102,6 +102,22 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - **为长期存活的状态设计动画节奏**。参考实现里"分批生成"的效果（花瓣、爱心）在一次悬浮会话内用完配额就结束，因为它悬停结束即卸载；本插件节点可以长期保持选中，照抄会让效果播完第一批后**永久停止**。配额用尽后要隔一段随机时间重新补给。
 - **节点级光效必须在原始 `drawNode` 之后画**。标题栏是 `drawNode` 里画的不透明矩形，如果光效在 `original.call(...)` **之前**绘制，那么从节点上边界（y=0）出发的粒子在生命最初一段（约一个标题栏高度）会被标题栏盖住，视觉上就是"顶部扩散范围比左右两侧短一截"。正确做法是：先 `original.call(this, node, ctx, ...args)` 画节点本体（包括标题栏），再画光效，让粒子绘制在标题栏之上。坐标系仍然在节点局部（外层 `translate(node.pos)` 直到整个 `drawNode` 返回后才 `restore`），不需要额外变换。`reentrant` 重入保护要在调 `original` 之前就标记 `WeakSet`，保证原型补丁和实例补丁只会画一次。
 - **切换控件显隐时,`type` 必须先于 `hidden` 写**:隐藏时先写 `hidden = true` 再把 `type` 换成隐藏类型;显示时先把 `type` 恢复成真实类型再写 `hidden = false`。前端 `hidden` 的 setter 只在当前 `type` **不是** legacy 隐藏类型时才把值写回控件原始选项(名字含 `hidden` 的 `ggHiddenXxx` 都会被判定为隐藏类型);顺序写反时 `type` 一变、控件类被重新套用,可见性会从旧值重新派生,表现为「该显示的控件不显示,要再操作一次才出现」。仓库内所有显隐 helper 一律按此顺序。
+- **原型上的安装标记不能和实例标记同名**。`nodeType.prototype._xInstalled = true` 之后，实例里读 `node._xInstalled` 会顺着原型链拿到 `true`，于是「每个节点装一次」的逻辑被整段跳过，而且**不报错、测试台里也看不出来**（`GG 文本拼接` 的控件回调包装曾因此完全没生效，表现为「填了第一个框却不增行」）。原型用 `_xProtoPatched`、实例用 `_xWrapped` 这类不同名字，测试台要走 `beforeRegisterNodeDef` 建原型再实例化，否则测不到。
+- **不要只靠 `widget.callback` 感知文本改动**。新版前端（Vue 渲染的文本控件）改字时不一定回调 `widget.callback`，只挂回调会出现「输入了但界面不响应」。做法是回调 + 节点绘制钩子双保险：在 `onDrawForeground` 里比对一次状态，用「上次结果」做缓存，数量没变时只花一次比较，不算高频重绘。
+- **面板类 DOM 控件的高度一律走 `web/gg-panel-fit.js`**（`measurePanelHeight` / `nextWidgetHeight` / `lockPanelChildren` / `scheduleRefit`），不要自己读 `host.scrollHeight` 定高。面板高度是「量内容 → 交给节点定高 → 前端再按它给面板定高」的闭环，在受限状态下量到的是被挤压后的值，会被当成正确值锁死；而且前端分配的高度比 `computeSize` 请求的少约 16px，不补就裁掉面板底部。`GG 镜头打光提示词` 的 72 个光效曾整块消失（光效区被压成 0 高、顶栏还写着「共 72 种」），就是这两件事叠在一起。**判断「面板有没有被裁」只看 `host.scrollHeight` 与 `host.parentElement.offsetHeight`**：面板容器的高度是跟着**内容**走的（≈ `computeSize` − 16），不是跟着节点高度走，所以 `node.size[1] - wrapper.offsetHeight` 不是固定的「节点 chrome」——内容变矮时 wrapper 立刻缩、节点还没缩，算出来的差额会跟着膨胀，`height = 自然高度 + 差额` 恒等于当前高度，`fitNode` 从此永远提前返回、节点再也缩不回去（这个改法试过，已回退）。
+- **面板宽度只能跟着节点走，不许有独立的最小宽度**。面板比节点宽时，它不会把节点撑大，只会从右边戳出去（`GG 提示词库` 曾把「面板最小宽度 380」当默认宽度用，节点拖到 240 时面板还是 352，溢出 112px）。做法是 `panelWidth = nodeWidth - 内边距`，最小值只加在**节点**上；`computeSize` / `onResize` / 重贴合三处都要按同一个口径算，否则换个入口又冒出来。
+- **栅格按条数平均分布，别固定列数**。固定 3 列时 4 条排成 3 + 1，最后一行孤零零一个、右边空一大片。先按可用宽度算出最多能放几列 `maxCols`，再按 `ceil(count / ceil(count / maxCols))` 反推列数：3 条 → 1 行 3 列、4 条 → 2 行 2 列、5 条 → 3 + 2。列数要跟着宽度重算（宽度变了要重新 `gridTemplateColumns`），并且栅格项必须 `min-width: 0`，否则卡片不会低于内容宽度、整列被撑出去。卡片上的操作按钮用绝对定位浮在右端，别当 flex 兄弟——隐藏时它照样占宽度，三列下名字会被挤成省略号。
+- **面板里带滚动的那一段必须 `flex: 0 0 auto`**（由 `lockPanelChildren` 统一加）。CSS 规定 `overflow` 不是 `visible` 的元素其 `min-height: auto` 解析为 0，父级高度只要比内容小一点，挤压就全落在它身上，直接归零；其它段落有最小高度保护反而毫发无伤——所以现象是「只有那一块消失」，很容易误判成数据没了。
+- **面板配色一律走 CSS 变量 + `[data-*]` 属性，不写内联颜色**。悬停 / 键盘焦点 / 选中 / 禁用这些状态没法用内联样式表达，写进内联就再也盖不住，只能靠 JS 逐个切色——`GG 镜头打光提示词` 的按钮曾因此看着像「已经按下去的输入框」，与选中态分不清。深 / 浅两套调色板都写在样式表里，JS 只决定用哪套（用户手动指定优先，否则跟随宿主主题）并写到 `data-*` 上；宿主主题按 `Comfy.ColorPalette` → 画布底色 → `body` 背景判定，**按秒缓存**（`getComputedStyle` 每帧调用会拖死主线程）。注意宿主变量挂在祖先作用域，用 `:root` / `body` 读不到实际值，别拿它判断主题。
+- **用户拖出来的宽高只增不减，自动布局不许替他收回去**。统一入口是 `web/gg-node-autofit.js`（对所有 `GG*` 节点生效）：手动拖过的节点记 `_ggAutoFitManualSize`，之后所有贴合都按「不低于它」算，`loadedGraphNode` / `onConfigure` 也一律只增不减，否则重开工作流就按内容重排一次、用户得反复拉。判断「用户真的拖过」只用 `app.canvas.resizing_node === node`，其它布局引起的 `onResize` 不算，否则节点再也收不回去。面板节点另有 `web/gg-panel-fit.js` 的 `trackManualHeight` / `captureManualHeight` / `resolveNodeHeight` / `resolveNodeWidth`，内容异步加载的面板还必须加 `panel.ready` 闸（加载完再贴合），并从 `onConfigure(info)` 的 `info.size` 认领存档尺寸——前端 `addDOMWidget` 会用 `expandToFitContent` 先压一次，事后认领已经晚了。两个坑：**`node.size` 在这个前端是 `Float64Array`**（`Array.isArray` 恒为假，守卫会静默失效），判尺寸要用「有 `length` 且能取到两个数」；**前端下拉控件换选项会直接写 `node.size`**，扩展拦不住，恢复时的下限必须用手动尺寸而不是当前尺寸。例外：`GG LoRA自定义加载`（跟随槽位精确贴合）、`GG 图像压缩保存`（切格式保留多余高度）本来就按内容调整，不要统一进来。
+- **调色板只有一处：`web/gg-ui-design.js` 的 `PALETTES`**。新增界面时 `import { applySurface, ensureGGDesign }`，容器加 `gg-surface`（弹层再加 `gg-popover`），色值一律取 `--gg-panel` / `--gg-card` / `--gg-btn` / `--gg-btn-hover` / `--gg-ink` / `--gg-muted` / `--gg-faint` / `--gg-divider` / `--gg-accent` / `--gg-field` / `--gg-ok` / `--gg-danger`，**不要在业务文件里再写十六进制或 `--comfy-*`**——猜宿主变量名就是「深色主题里一行灰字 / 一块白底」的来源（密钥面板与提示词库都栽过）。按钮统一用 `.gg-ui-top-button`（顶栏 30px）、`.gg-btn`、`.gg-icon-btn`（`.is-outline` 描边变体）；尺寸由使用方内联给，**颜色与四态留给设计层**，不要在 JS 里写 `style.background = 开 ? 蓝 : 白`。用户可选颜色的地方，默认值必须是「空 = 跟随主题」，并且提供回退入口；把「没选过」存成 `#ffffff` 的旧数据要迁移。
+- **「自动」主题不许把判定结果钉成属性**。`applySurface` 在 auto 模式必须 `removeAttribute(THEME_ATTRIBUTE)`，让 `.gg-surface` 继承 `<html>` 上的全局令牌；只有用户手动指定深/浅时才写属性。钉死一次之后，宿主切主题旧面板会停在原来的皮肤上（实测底部工具栏在深色主题里一直是浅色，而且不报错、看代码也「有主题逻辑」）。
+- **CSS 自定义属性只能 `style.setProperty("--x", v)` 写**。`style["--x"] = v` 和 `Object.assign(style, {"--x": v})` 都静默无效，变量读出来是空的，表现为「颜色没生效但也没报错」。
+- **JS 模板字符串里写 CSS 注释时不能出现反引号**。样式表整段塞在模板字符串里，注释里写 `.gg-btn` 这类反引号包裹的类名会提前结束字符串，`node --check` 报 `SyntaxError: Unexpected identifier`，而报错位置看起来毫不相关。
+- **「基础 / 高级」这类显示模式只改显示**：不得清除已选项、不得改变输出内容。被模式藏起来的项若已被选中，必须保持可见可取消，否则会出现「标题写着已选 2、列表里却找不到是哪两项」；分组计数也要跟着写成「6 / 8 项」，与眼前的按钮对得上。模式与主题属于用户偏好，跟着工作流存进 `properties`；折叠 / 滚动位置才是纯浏览状态，不存。
+- **判断「控件是否已接线」必须看 `input.link != null`，不能只看 `node.inputs` 里有没有同名条目**。新版前端会把**每一个控件**都镜像成一条 `node.inputs` 条目（`widget: { name }`、`link: null`），只按名字匹配等于把所有控件都当成端口：`GG 文本拼接` 曾因此一次性把 20 个文本框全放出来（每个都被判定为「已接线、必须可见」）。测试台必须专门造一组「全部镜像 + 全部 `link: null`」的节点来覆盖这条，否则桩里没有镜像条目，测不出这个 bug。
+- **已接线槽位的控件显隐归前端，我们只交还类型与尺寸，不碰 `hidden`**。实测前端对已接线控件只改 `hidden`（接线置 `true`、`removeLink` 置 `false`），**从不改 `type`**。我们若连 `hidden` 一起改，就是和前端抢同一个开关：要么接线后空框冒出来，要么断开后 `type` 还停在 `ggHiddenXxx`、前端把 `hidden` 放开也渲染不出高度。做法是「还原 `type` / `computeSize` + 清掉自己的隐藏标记 + 留一个『已交还』标记」，断开后若看到该标记且 `hidden` 仍为真就补一次——因为前端只有 `removeLink` 这条路会自己放开，`disconnectOutput` 不会。**这个标记要在「看到接线」时无条件写上，不能只在「我们曾经藏过它」时才写**：接线前它本来可见的控件我们没有隐藏标记，一旦漏写，`disconnectOutput` 断开后控件就永远藏着、而我们以为它已经显示了。这类改动**必须让 `onConnectionsChange` 走强制重算**，否则「可见数量没变、缓存命中」会让交还逻辑整段跳过。
+- **自动增长的槽位，接线也要算「在用」**。只按文本框内容计数时，把第一个槽位转成输入端口并接线之后，节点上就只剩一个端口、一个能打字的框都没有（`GG 文本拼接` 用户实测报的缺陷）。但也不能「有连线就参与计数」——那会隔着空位接线时把前面的空框一起撑出来。正确口径是**只在可见范围末尾顺延**：先按内容算出范围，若范围正好停在一个已接线的槽位上就往后挪，直到落到未接线的槽位；隔着空位接第 3 个槽位时范围仍停在 1。接线槽位控件里的残留文字是死数据，一律不参与计数。
 - 不要用全局轮询做高频重绘；用 `requestAnimationFrame`、设置变更回调或轻量事件钩子。
 - `MutationObserver` 挂在 `document.body`（尤其 `subtree: true`）时，回调必须防抖 / 节流，且回调里严禁整文档 `querySelectorAll` 或读 `offsetHeight` / `getBoundingClientRect` 等触发强制回流的操作——ComfyUI 前端启动时会疯狂构建 DOM，未节流的重回调会把主线程拖死、工作台白屏卡死（`gg-ui-icons.js` 等多个文件栽过这个模式）。能局部观察就不要观察 `body`，能只处理 `addedNodes` 就不要重扫全文档。
 
@@ -138,7 +154,8 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 
 - `README.md`：主要能力、节点清单、依赖与兼容、致谢与借鉴说明、更新记录。
 - `pyproject.toml`：`tool.gulinodes.node_count`。
-- 后端注册节点数当前为 **37**。新增前端扩展不计入；只有新增 Python 后端节点才需要改这个数字。
+- 后端注册节点数当前为 **41**（另有 1 个由前端生成：`GG 选项确认`，所以清单是 42 行）。新增前端扩展不计入；只有新增 Python 后端节点才需要改这个数字。
+- 数节点**不能按显示名数**：本机 `custom_nodes` 下还有配套包 `ComfyUI-GuliNodes-Dependencies`，它的显示名同样以 `GG` 开头（`GG 人脸磨皮`、`GG 智能人脸美化`、`GG 色彩匹配`、`GG 提示词优化`、`GG 图像反推`、`GG 反推模型`、`GG 图像风格参考`），按名字做差集会把这 7 个算进本仓库。可靠做法：`import guli_nodes` 后读 `NODE_DISPLAY_NAME_MAPPINGS`，或 `/object_info` 里按 `python_module.startswith('guli_nodes.')` 过滤。
 
 **所有改动一律写进 `README.md`「更新记录」顶部的 `### 未发布` 小节**（没有就新建），不另开小节，也不自己编版本号——写 `v1.1.3`、`v1.2.0` 这类未授权版本号、或顺手改 `pyproject.toml` 的 `version` 都算越权。
 
@@ -161,6 +178,11 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - 本机用 ComfyUI 自带解释器：`W:\AIphotograph\ComfyUI_windows_portable\python_embeded\python.exe`，并把 `<ComfyUI 根>` 与 `<插件根>` 都加进 `sys.path`。
 - 前端绘制 / 叠加类改动：用无头 Node 测试台（stub `LGraphCanvas` / `app` 后 `import()` 真实扩展文件、驱动 `canvas.drawNode`）确认五件事——真的画出来了、一次调用只画一次、配色在当前画布背景上读得出来、效果确实从节点边界向外扩散、扩散是随机的而不是固定排布。跑 setups 后必须 flush 定时器队列，否则延迟安装的实例补丁还没生效，会测出假 PASS。
 - 无头测试台本身有两个容易造出**假 FAIL** 的坑：stub 的 2D context 必须跟踪 `translate()`（花瓣是 `translate(x,y)` 后的 `ellipse(0,0)`，不跟踪就一律记成原点）；仿真时长必须长于最长粒子生命周期（否则长寿命粒子还在半路，测出的扩散距离偏小）。另外"逐帧画面不同"只能证明在动、**证明不了随机**——要额外断言同节点同效果的两次全新会话排布不同。现测试台还断言各效果的形态可辨识：花瓣为贝塞尔轮廓（非椭圆）、音符为刻制谱号字形（无 `fillText`、多形态）、爱心存在被箭射中形态、流星方位随机覆盖多数罗盘扇区、浅色主题 ink 占比不过淡。
+- **无头测试台的桩必须复现真实 DOM 的完整 API**，少一个方法就测出「假 FAIL」，而且是崩在桩的缺口上、看起来像产品的 bug。`document.createElement` 返回的对象至少要具备 `style` / `dataset` / `classList`（`add` / `remove` / `contains` / `toggle`）/ `setAttribute` / `getAttribute` / `hasAttribute` / `removeAttribute` / `appendChild` / `addEventListener` / `dispatch`：设计层只要调一次 `applySurface`，缺 `hasAttribute` 就会整个面板崩掉。同理，桩里只造最小 `node.inputs` 会让「镜像条目」这类 bug 完全测不出来。造桩前先问「真实前端还多塞了什么」。
+- **断言必须做反向验证**：故意把关键规则改坏（例如让 `applySurface` 在 auto 模式重新钉属性、让色板退回空串），确认对应断言真的 FAIL，再改回来。一次全绿不可信，报 0 条 FAIL 往往说明断言在空跑。
+- **界面类改动要跑两个真实环境工具**：`probe-surfaces.mjs [dark|light]` 盘点页面上所有 `gg-*` 界面的底色 / 文字色 / 亮度 / 对比度（深色主题里任何 `lum > 0.5` 的块会被标成「深色主题里的浅底」），`run-surfaces-live.mjs` 做深浅两套断言（开关四态、菜单、底部工具栏 / 折叠设置弹层 / 密钥面板 / 悬浮工具条 / 剪贴板右键菜单）。改完先盘点、再断言，最后 `shot-surfaces.mjs` 拍图肉眼复核——**「亮着像开着」「深色里一块白」「色板显示纯黑」这三类问题只有眼睛能发现**。
+- **截图类脚本要显式收拾造景**：`pointerdown` 才收起的弹层在脚本里不会自己关（`el.click()` 只派发 click），`opacity: 0` 的悬浮条要 `dispatchEvent(new MouseEvent("mouseenter"))` 才会浮出来。不收拾就会拍出「同一个按钮两种样子」的假象，或者拍到一块空背景。
+- **别依赖宿主或上一次测试留下的状态**：`GuliNodes.enableFloatButtons` 这类开关存在服务端设置里，被关过一次之后，后面每次跑都报「悬浮工具条不存在」——看着像回归，其实是造景没保证。测试台开局把需要的开关显式设成期望值，需要的节点自己 `createNode` 造（别指望「默认工作流里正好有个 CLIPTextEncode」）。同理，`el.dispatchEvent(new MouseEvent("mouseenter"))` 触发不了 CSS `:hover`，要验悬停样式必须用真实鼠标移动（`page.mouse.move`）。
 - ComfyUI 实测：重启后确认右键菜单、节点参数、前端设置、画布交互正常。
 
 ## 十、工作方式

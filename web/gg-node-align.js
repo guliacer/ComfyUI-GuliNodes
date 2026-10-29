@@ -96,8 +96,18 @@ function isDraggingNodes(canvas) {
   return canvas.isDragging === true || canvas.state?.draggingItems === true;
 }
 
+// 这个前端的 node.size 是 Float64Array 不是数组，用 Array.isArray 判会把真节点漏掉。
+// 只放宽到「数组或定型数组」，不要放宽成任意带 length 的对象——selectedItems 里还有别的可选物。
+function isCoordinatePair(value) {
+  return Boolean(value)
+    && (Array.isArray(value) || ArrayBuffer.isView(value))
+    && value.length >= 2
+    && Number.isFinite(Number(value[0]))
+    && Number.isFinite(Number(value[1]));
+}
+
 function isNodeLike(item) {
-  return item && Array.isArray(item.pos) && Array.isArray(item.size) && typeof item.id !== "undefined";
+  return item && isCoordinatePair(item.pos) && isCoordinatePair(item.size) && typeof item.id !== "undefined";
 }
 
 function draggedNodes(canvas) {
@@ -318,9 +328,8 @@ function updateTopButton() {
   topButton.setAttribute("aria-label", title);
   topButton.setAttribute("aria-pressed", enabled ? "true" : "false");
   topButton.classList.toggle("active", enabled);
-  topButton.style.color = enabled ? "var(--gg-ui-accent, #3b82f6)" : "var(--gg-ui-ink, #3f4856)";
-  topButton.style.background = enabled ? "rgba(59,130,246,0.17)" : "var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))";
-  topButton.style.borderColor = enabled ? "var(--gg-ui-accent-border, rgba(59,130,246,0.28))" : "rgba(148,163,184,0.24)";
+  topButton.classList.toggle("gg-state-on", enabled);
+  topButton.classList.toggle("gg-state-off", !enabled);
   topButton.innerHTML = ggIcon("nodeAlign", 18);
 }
 
@@ -351,12 +360,11 @@ function createTopButton() {
   topHost = host;
   topButton = document.createElement("button");
   topButton.type = "button";
-  topButton.className = "gg-toolbar-top-button gg-node-align-top-button";
+  topButton.className = "gg-toolbar-top-button gg-ui-top-button gg-node-align-top-button";
   topButton.style.cssText = [
     "width: 40px", "min-width: 40px", "height: 40px",
-    "border: 1px solid rgba(148,163,184,0.24)", "border-radius: 10px", "padding: 0",
+    "padding: 0",
     "display: inline-flex", "align-items: center", "justify-content: center", "cursor: pointer",
-    "color: var(--gg-ui-ink, #3f4856)", "background: var(--gg-toolbar-button-bg, rgba(255,255,255,0.94))",
     "box-shadow: var(--gg-top-switch-shadow, 0 8px 22px rgba(15,23,42,0.14))",
   ].join(";");
   topButton.addEventListener("click", async (event) => {

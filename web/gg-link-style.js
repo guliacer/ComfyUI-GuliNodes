@@ -2079,6 +2079,8 @@ function installLinkStyleTopControlsStyles() {
     #gg-link-style-buttons.gg-link-hidden {
       display: none !important;
     }
+    /* 颜色 / 边框 / 悬停 / 选中态统一由设计层的 .gg-ui-top-button 提供，
+       这里只留尺寸、图标大小与一点点按压缩放。 */
     #gg-link-style-buttons .gg-link-style-btn {
       width: 34px;
       height: 34px;
@@ -2086,10 +2088,6 @@ function installLinkStyleTopControlsStyles() {
       max-width: 34px;
       padding: 0 !important;
       margin: 0 !important;
-      border-radius: 8px;
-      border: 1px solid rgba(148, 163, 184, 0.28) !important;
-      background: rgba(148, 163, 184, 0.10) !important;
-      color: var(--gg-ui-muted, #64748b) !important;
       box-shadow: none !important;
       appearance: none;
       display: inline-flex !important;
@@ -2099,21 +2097,12 @@ function installLinkStyleTopControlsStyles() {
       line-height: 0 !important;
       cursor: pointer;
       overflow: hidden;
-      transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+      transition: transform 0.16s ease, opacity 0.16s ease;
     }
     #gg-link-style-buttons .gg-link-style-btn:hover,
-    #gg-link-style-buttons .gg-link-style-btn:focus-visible {
-      background: rgba(148, 163, 184, 0.18) !important;
-      transform: scale(1.06);
-    }
+    #gg-link-style-buttons .gg-link-style-btn:focus-visible,
     #gg-link-style-buttons .gg-link-style-btn.active {
-      color: var(--gg-ui-accent) !important;
-      background: rgba(59, 130, 246, 0.17) !important;
-      border-color: var(--gg-ui-accent-border) !important;
       transform: scale(1.06);
-    }
-    #gg-link-style-buttons .gg-link-style-btn.active:hover {
-      background: rgba(59, 130, 246, 0.26) !important;
     }
     #gg-link-style-buttons .gg-link-style-btn .gg-ui-icon {
       width: 18px;

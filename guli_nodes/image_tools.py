@@ -1700,7 +1700,7 @@ class GG图像缩放:
     RETURN_TYPES = ("IMAGE",)
     RETURN_NAMES = ("图像",)
     FUNCTION = "execute"
-    CATEGORY = "GuliNodes/潜空间"
+    CATEGORY = "GuliNodes/图像"
 
     def execute(self, 图像, 缩放方法="lanczos", 缩放倍率=1.5):
         return (_缩放图像(图像, 缩放方法, 缩放倍率),)
@@ -1771,7 +1771,7 @@ if io is not None:
             return io.Schema(
                 node_id="GG图像缩放",
                 display_name="GG 图像缩放",
-                category="GuliNodes/潜空间",
+                category="GuliNodes/图像",
                 description=(
                     "根据输入图像的实际宽度和高度，在像素空间中按倍率和指定算法缩放。"
                     "仅输出缩放后的图像。"

@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
 
 const SETTINGS_ID = "GuliNodes";
 const STORAGE_KEY = "ggFloatToolbarSettings";
@@ -18,7 +19,14 @@ let _currentSettings = loadSettings();
 function loadSettings() {
     try {
         const saved = localStorage.getItem(STORAGE_KEY);
-        return saved ? JSON.parse(saved) : getDefaultSettings();
+        if (!saved) return getDefaultSettings();
+        const parsed = JSON.parse(saved);
+        // 迁移：老版本把「没选过颜色」也存成 #ffffff / 0.92，
+        // 结果深色主题里悬浮条是白的。这一对正好等于旧默认值，视为「跟随主题」。
+        if (parsed?.background === "#ffffff" && Number(parsed?.opacity) === 0.92) {
+            parsed.background = "";
+        }
+        return { ...getDefaultSettings(), ...parsed };
     } catch {
         return getDefaultSettings();
     }
@@ -26,7 +34,8 @@ function loadSettings() {
 
 function getDefaultSettings() {
     return {
-        background: "#ffffff",
+        // 空 = 跟随主题（由设计层给底色）；只有用户真的选了颜色才写具体值
+        background: "",
         opacity: 0.92
     };
 }
@@ -229,22 +238,22 @@ function createContextMenu(e) {
     }
 
     const menu = document.createElement("div");
-    menu.className = "gg-context-menu";
+    // 外壳交给设计层：底色 / 描边 / 阴影 / 圆角都按当前主题给，
+    // 以前这里猜的是 `--comfy-menu-bg`，深色主题下会拿到一块近白的底。
+    menu.className = "gg-context-menu gg-surface gg-popover";
+    ensureGGDesign();
+    applySurface(menu);
     Object.assign(menu.style, {
         position: "fixed",
         top: `${e.clientY}px`,
         left: `${e.clientX}px`,
-        background: "var(--comfy-menu-bg, rgba(255, 255, 255, 0.96))",
-        border: "1px solid var(--border-color, rgba(148, 163, 184, 0.3))",
-        borderRadius: "12px",
         padding: "8px 0",
         minWidth: "220px",
+        // `.gg-popover` 默认宽 360px，这个菜单按内容宽度排
+        width: "auto",
         zIndex: "100000",
-        boxShadow: "0 18px 40px rgba(15, 23, 42, 0.16)",
         backdropFilter: "blur(12px)",
-        fontFamily: "system-ui, -apple-system, sans-serif",
         fontSize: "13px",
-        color: "var(--fg-color, #1f2937)",
     });
 
     const closeMenu = () => {
@@ -269,8 +278,8 @@ function createContextMenu(e) {
         padding: "8px 14px 12px",
         fontWeight: "600",
         fontSize: "12px",
-        color: "var(--gg-ui-muted)",
-        borderBottom: "1px solid rgba(148, 163, 184, 0.22)",
+        color: "var(--gg-muted)",
+        borderBottom: "1px solid var(--gg-divider)",
         marginBottom: "4px",
         letterSpacing: "0",
     });
@@ -292,7 +301,12 @@ function createContextMenu(e) {
 
     const colorInput = document.createElement("input");
     colorInput.type = "color";
-    colorInput.value = _currentSettings.background;
+    // 「跟随主题」时 background 是空串，而 input[type=color] 拿到空串会自己退回 #000000：
+    // 菜单里就永远是那块黑，深色下像「已选黑色」，浅色下干脆是错的。
+    // 空值就显示当前解析出来的面板底色，所见即所得。
+    const panelColor = getComputedStyle(document.documentElement)
+        .getPropertyValue("--gg-panel").trim() || "#171B24";
+    colorInput.value = _currentSettings.background || panelColor;
     Object.assign(colorInput.style, {
         width: "36px",
         height: "24px",
@@ -306,7 +320,32 @@ function createContextMenu(e) {
         _currentSettings.background = colorInput.value;
         saveSettings();
         updateAllToolbars();
+        syncFollowChip();
     });
+
+    // 回退入口：选过颜色之后以前没有任何办法回到「跟随主题」，只能清 localStorage。
+    // 颜色与四态交给设计层的 `.gg-chip`，这里只留一句 aria-pressed 说明当前状态。
+    const followChip = document.createElement("button");
+    followChip.type = "button";
+    followChip.className = "gg-chip gg-follow-theme-chip";
+    followChip.textContent = "跟随主题";
+    followChip.title = "清掉自定义颜色，跟随深浅主题";
+    const syncFollowChip = () => {
+        const following = !_currentSettings.background;
+        followChip.setAttribute("aria-pressed", following ? "true" : "false");
+        followChip.disabled = following;
+    };
+    followChip.addEventListener("click", () => {
+        _currentSettings.background = "";
+        colorInput.value = getComputedStyle(document.documentElement)
+            .getPropertyValue("--gg-panel").trim() || "#171B24";
+        saveSettings();
+        updateAllToolbars();
+        syncFollowChip();
+    });
+    syncFollowChip();
+
+    colorItem.appendChild(followChip);
     colorItem.appendChild(colorInput);
     menu.appendChild(colorItem);
 
@@ -372,25 +411,20 @@ function makeBtn(icon, tooltip, onClick) {
     btn.innerHTML = icon;
     btn.title = tooltip;
     btn.type = "button";
+    // 颜色 / 悬停 / 禁用全部交给设计层（`.gg-icon-btn.is-outline`）。
+    // 以前这里把白底写在 style 里、悬停靠 JS 改色：深色主题下就是三个白方块，
+    // 而且 JS 改的内联样式永远盖不住样式表的伪类，越改越乱。
+    btn.className = "gg-icon-btn is-outline";
     Object.assign(btn.style, {
         width: "24px",
         height: "24px",
         minWidth: "24px",
-        border: "1px solid rgba(148, 163, 184, 0.18)",
-        borderRadius: "7px",
-        backgroundColor: "rgba(255, 255, 255, 0.62)",
-        color: "var(--gg-ui-ink)",
         cursor: "pointer",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        transition: "transform 0.16s ease, color 0.16s ease, background-color 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease",
-        outline: "none",
-        boxShadow: "none",
         padding: "1px",
         lineHeight: "0",
         boxSizing: "border-box",
         touchAction: "manipulation",
+        transition: "transform 0.16s ease",
     });
     btn.addEventListener("click", (e) => {
         e.preventDefault();
@@ -398,20 +432,6 @@ function makeBtn(icon, tooltip, onClick) {
         btn.style.transform = "scale(0.92)";
         setTimeout(() => { btn.style.transform = "scale(1)"; }, 100);
         onClick?.();
-    });
-    btn.addEventListener("mouseenter", () => {
-        btn.style.backgroundColor = "var(--gg-ui-accent-soft)";
-        btn.style.color = "var(--gg-ui-accent)";
-        btn.style.borderColor = "var(--gg-ui-accent-border)";
-        btn.style.boxShadow = "0 6px 14px rgba(59, 130, 246, 0.12)";
-        btn.style.transform = "translateY(-1px)";
-    });
-    btn.addEventListener("mouseleave", () => {
-        btn.style.backgroundColor = "rgba(255, 255, 255, 0.62)";
-        btn.style.color = "var(--gg-ui-ink)";
-        btn.style.borderColor = "rgba(148, 163, 184, 0.18)";
-        btn.style.boxShadow = "none";
-        btn.style.transform = "translateY(0)";
     });
     return btn;
 }
@@ -503,7 +523,10 @@ function ensureImageToolbar() {
     if (_imageToolbar) return;
 
     const toolbar = document.createElement("div");
-    toolbar.className = "gg-image-float-toolbar";
+    // 跟随主题：以前写死白底，深色主题下图像上方会浮出一个白方块
+    toolbar.className = "gg-image-float-toolbar gg-surface";
+    ensureGGDesign();
+    applySurface(toolbar);
     Object.assign(toolbar.style, {
         position: "fixed",
         zIndex: "10000",
@@ -511,9 +534,9 @@ function ensureImageToolbar() {
         pointerEvents: "none",
         display: "flex",
         padding: "3px",
-        border: "1px solid rgba(148, 163, 184, 0.24)",
+        border: "1px solid var(--gg-divider)",
         borderRadius: "9px",
-        background: "rgba(255, 255, 255, 0.88)",
+        background: "var(--gg-panel)",
         boxShadow: "0 8px 18px rgba(15, 23, 42, 0.18)",
         backdropFilter: "blur(12px)",
         transition: "opacity 0.16s ease, transform 0.16s ease",
@@ -693,6 +716,8 @@ function removeImageToolbar() {
 
 function getToolbarBackground() {
     const bgColor = _currentSettings.background;
+    // 没自定义就返回空串：调用方清掉内联底色，交给 `.gg-float-toolbar` 的 CSS 按主题取色
+    if (!bgColor) return "";
     const alpha = _currentSettings.opacity;
     const r = parseInt(bgColor.slice(1, 3), 16);
     const g = parseInt(bgColor.slice(3, 5), 16);
@@ -704,10 +729,9 @@ function updateAllToolbars() {
     const toolbars = document.querySelectorAll(".gg-float-toolbar");
     const bgColor = getToolbarBackground();
     toolbars.forEach((tb) => {
-        tb.style.background = bgColor;
-        tb.style.borderColor = _currentSettings.opacity < 0.35
-            ? "rgba(148, 163, 184, 0.32)"
-            : "rgba(148, 163, 184, 0.18)";
+        if (bgColor) tb.style.background = bgColor;
+        else tb.style.removeProperty("background");
+        tb.style.removeProperty("border-color");
     });
 }
 
@@ -719,7 +743,10 @@ function attachToolbarToWidget(targetEl, widget) {
     targetEl.style.position = "relative";
 
     const container = document.createElement("div");
-    container.className = "gg-float-toolbar";
+    // 底色 / 描边 / 圆角由设计层按主题给；用户选过颜色才由 getToolbarBackground() 覆盖
+    container.className = "gg-float-toolbar gg-surface";
+    ensureGGDesign();
+    applySurface(container);
     Object.assign(container.style, {
         position: "absolute",
         left: "5px",
@@ -730,9 +757,9 @@ function attachToolbarToWidget(targetEl, widget) {
         transition: "opacity 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease",
         zIndex: "100",
         pointerEvents: "none",
-        background: getToolbarBackground(),
+        background: getToolbarBackground() || "var(--gg-panel)",
         padding: "3px",
-        border: "1px solid rgba(148, 163, 184, 0.18)",
+        border: "1px solid var(--gg-divider)",
         borderRadius: "9px",
         boxShadow: "0 8px 18px rgba(15, 23, 42, 0.12)",
         backdropFilter: "blur(12px)",

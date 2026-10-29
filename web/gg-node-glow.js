@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
 
 const PREFIX = "GuliNodes.nodeGlow";
 const SETTINGS = {
@@ -1295,6 +1296,11 @@ function createGlowSettingsPanel() {
   if (glowSettingsPanel) return;
   const panel = document.createElement("div");
   panel.id = "gg-node-glow-settings-panel";
+  // 外壳交给设计层：以前是「宿主菜单底 + 6% 主题色」混出来的中间色，
+  // 深色主题下发灰、浅色主题下发蓝，跟其它弹层不是一个东西。
+  panel.className = "gg-surface gg-popover";
+  ensureGGDesign();
+  applySurface(panel);
   panel.setAttribute("role", "dialog");
   panel.setAttribute("aria-label", "节点光效设置");
   panel.innerHTML = `
@@ -1398,6 +1404,8 @@ function toggleGlowSettings(event) {
   createGlowSettingsPanel();
   const opening = glowSettingsPanel.style.display !== "block";
   if (opening) {
+    // 宿主可能中途切过主题，每次打开重新取一次皮肤
+    applySurface(glowSettingsPanel);
     glowSettingsPanel.style.display = "block";
     const menuOpen = window.__ggTopToolsMenuOpen?.() === true;
     const embedded = menuOpen
@@ -1424,6 +1432,7 @@ function installTopStyles() {
       flex: 0 0 auto;
       margin-inline: 2px;
     }
+    /* 颜色 / 边框 / 悬停 / 选中态统一由设计层的 .gg-ui-top-button 提供，这里只留尺寸。 */
     #gg-node-glow-buttons .gg-node-glow-btn {
       width: 34px;
       height: 34px;
@@ -1431,47 +1440,23 @@ function installTopStyles() {
       max-width: 34px;
       padding: 0 !important;
       margin: 0 !important;
-      border-radius: 8px;
-      border: 1px solid rgba(148,163,184,0.28) !important;
-      background: rgba(148,163,184,0.10) !important;
-      color: var(--gg-ui-muted, #64748b) !important;
       display: inline-flex !important;
       align-items: center !important;
       justify-content: center !important;
       box-sizing: border-box;
       line-height: 0 !important;
       cursor: pointer;
-      transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
-    }
-    #gg-node-glow-buttons .gg-node-glow-btn:hover {
-      background: rgba(148,163,184,0.18) !important;
-    }
-    #gg-node-glow-buttons .gg-node-glow-btn.active {
-      border: 1px solid var(--gg-ui-accent-border) !important;
-      background: rgba(59,130,246,0.17) !important;
-      color: var(--gg-ui-accent) !important;
-    }
-    #gg-node-glow-buttons .gg-node-glow-btn.active:hover {
-      background: rgba(59,130,246,0.26) !important;
     }
     #gg-node-glow-settings-panel {
-      position: fixed;
-      z-index: 100004;
       display: none;
       width: 292px;
       padding: 14px;
-      border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3));
-      border-radius: 14px;
-      background: color-mix(in srgb, var(--comfy-menu-bg, #fff) 94%, var(--gg-ui-accent, #3b82f6));
-      color: var(--gg-ui-ink, #3f4856);
-      box-shadow: 0 16px 36px rgba(15,23,42,0.2);
-      backdrop-filter: blur(16px);
       box-sizing: border-box;
     }
     #gg-node-glow-settings-panel .gg-node-glow-settings-title {
       padding-bottom: 9px;
       margin-bottom: 2px;
-      border-bottom: 1px solid color-mix(in srgb, var(--gg-ui-accent-border, rgba(100,116,139,0.3)) 55%, transparent);
+      border-bottom: 1px solid var(--gg-divider);
       font-size: 13px;
       font-weight: 700;
       letter-spacing: 0.02em;
@@ -1504,9 +1489,9 @@ function installTopStyles() {
     #gg-node-glow-settings-panel .gg-node-glow-intensity button {
       min-width: 0;
       padding: 6px 4px;
-      border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3));
+      border: 1px solid var(--gg-divider);
       border-radius: 8px;
-      background: color-mix(in srgb, var(--comfy-menu-bg, #fff) 70%, transparent);
+      background: var(--gg-btn);
       color: inherit;
       font-weight: 550;
       cursor: pointer;
@@ -1560,9 +1545,9 @@ function installTopStyles() {
       align-items: center;
       min-width: 0;
       padding: 6px 9px 6px 28px;
-      border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3));
+      border: 1px solid var(--gg-divider);
       border-radius: 9px;
-      background: color-mix(in srgb, var(--comfy-menu-bg, #fff) 70%, transparent);
+      background: var(--gg-btn);
       color: inherit;
       cursor: pointer;
       user-select: none;

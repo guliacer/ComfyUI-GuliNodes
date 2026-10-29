@@ -34,11 +34,15 @@ RESOLUTION_EDGE_LENGTHS = {
     "3K": 3072,
     "4K": 4096,
 }
-LATENT_MODE_OPTIONS = ["按边长", "按K数分辨率", "按Latent接入", "按图像接入"]
+# 「按宽高」放在两个计算方式和两个接入方式之间：前三项都是「从参数算出尺寸」，
+# 后两项才是「从上游数据读尺寸」。
+LATENT_MODE_OPTIONS = ["按边长", "按K数分辨率", "按宽高", "按Latent接入", "按图像接入"]
 IMAGE_RESIZE_METHODS = ["nearest-exact", "bilinear", "lanczos", "area", "bicubic"]
 
-# GG 图像宽高 与 GG Latent 共用同一套接入方式，只是输出不同（宽高 vs Latent）。
-ADAPTER_MODE_OPTIONS = list(LATENT_MODE_OPTIONS)
+# GG 图像宽高 与 GG Latent 大部分方式重合，只是输出不同（宽高 vs Latent）。
+# 但「按宽高」只属于 GG Latent：宽高节点本来就是产出宽高的，再让它吃宽高等于空转，
+# 因此这里单独列一份，不再 alias Latent 的列表（否则新增方式会顺带漏进宽高节点）。
+ADAPTER_MODE_OPTIONS = ["按边长", "按K数分辨率", "按Latent接入", "按图像接入"]
 ADAPTER_MODE_INPUT = "宽高方式"
 # 宽高节点保留原有的 3:2/16:9/21:9 等横向比例，同时补齐 Latent 侧的 1:2/5:7/10:16。
 ADAPTER_ASPECT_RATIOS = list(dict.fromkeys([*ASPECT_RATIOS, *LATENT_ASPECT_RATIOS]))
@@ -93,6 +97,22 @@ def _positive_scale(value: float, name: str = "缩放倍率") -> float:
     if not math.isfinite(scale) or scale <= 0:
         raise ValueError(f"{name}必须大于 0。")
     return scale
+
+
+# 宽高可以来自控件，也可以从 GG 图像宽高 之类的上游直接连线接入，
+# 因此不能假定它是干净的 int。上限与控件声明的 8192 保持一致：
+# 一个被外部推到十万级的尺寸会直接在建空 Latent 那一步把显存吃光。
+_LATENT_EDGE_MAX = 8192
+
+
+def _edge_pixels(value, name: str = "宽度") -> int:
+    try:
+        edge = int(round(float(value)))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name}必须是有效数字。") from exc
+    if edge <= 0:
+        raise ValueError(f"{name}必须大于 0。")
+    return min(_LATENT_EDGE_MAX, edge)
 
 
 def _empty_latent(batch_size: int, width: int, height: int, device=None, dtype=torch.float32) -> dict:
@@ -186,6 +206,15 @@ def _generate_latent_by_mode(mode_value, align_to_eight, apply_orientation) -> d
             align_to_eight,
         )
 
+    # 宽高直连：给定确切像素就照办，不再按比例推算，也不看画面方向——
+    # 方向已经由宽高本身决定了，再翻一次会把 1920×1080 变成 1080×1920。
+    if mode == "按宽高":
+        return _empty_latent(
+            values.get("批量大小", 1),
+            align_to_eight(_edge_pixels(values.get("宽度", 1024), "宽度")),
+            align_to_eight(_edge_pixels(values.get("高度", 1024), "高度")),
+        )
+
     ratio = values.get("宽高比例", "9:16")
     batch_size = values.get("批量大小", 1)
     orientation = values.get("画面方向", "横屏")
@@ -219,6 +248,25 @@ def _latent_mode_inputs(io_module):
             io_module.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏"),
             io_module.Combo.Input("分辨率", options=RESOLUTION_OPTIONS, default="1K"),
         ]),
+        io_module.DynamicCombo.Option(key="按宽高", inputs=[
+            io_module.Int.Input(
+                "宽度",
+                default=1024,
+                min=64,
+                max=_LATENT_EDGE_MAX,
+                step=8,
+                tooltip="直接给像素宽度，可接入 GG 图像宽高 的宽度输出。不是 8 的倍数时自动对齐到 8。",
+            ),
+            io_module.Int.Input(
+                "高度",
+                default=1024,
+                min=64,
+                max=_LATENT_EDGE_MAX,
+                step=8,
+                tooltip="直接给像素高度，可接入 GG 图像宽高 的高度输出。不是 8 的倍数时自动对齐到 8。",
+            ),
+            io_module.Int.Input("批量大小", default=1, min=1, max=64),
+        ]),
         io_module.DynamicCombo.Option(key="按Latent接入", inputs=[
             io_module.Latent.Input("Latent", tooltip="按输入 Latent 的空间尺寸和缩放倍率生成输出。"),
             io_module.Float.Input("缩放倍率", default=1.0, min=0.1, max=100.0, step=0.05),
@@ -240,6 +288,8 @@ def _legacy_latent_mode_inputs():
         "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
         "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
         "分辨率": (RESOLUTION_OPTIONS, {"default": "1K"}),
+        "宽度": ("INT", {"default": 1024, "min": 64, "max": _LATENT_EDGE_MAX, "step": 8}),
+        "高度": ("INT", {"default": 1024, "min": 64, "max": _LATENT_EDGE_MAX, "step": 8}),
         "Latent": ("LATENT",),
         "图像": ("IMAGE",),
         "缩放方法": (IMAGE_RESIZE_METHODS, {"default": "lanczos"}),

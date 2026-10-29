@@ -26,8 +26,7 @@ export function shouldLockHiddenNodeSize({
         && Array.isArray(lockedSize);
 }
 
-export function getVisibleContentHeight(
-    widgets,
+export function getVisibleContentHeight(    widgets,
     titleHeight,
     bottomPadding = 10,
 ) {
@@ -46,4 +45,17 @@ export function getVisibleContentHeight(
         Number(titleHeight) + Number(bottomPadding),
         Math.max(...visible) + Number(bottomPadding),
     );
+}
+
+// 自动布局只许把节点撑大，不许替用户收小。
+// 用户拉高节点是为了看清内容，切一次下拉框（显隐控件、改槽位数量）就被压回内容高度，
+// 等于每次都要重新拉一遍。没拉过时照常按内容贴合，所以不用额外的「记住」状态。
+export function growOnlyHeight(current, content) {
+    const now = Number(current);
+    const need = Number(content);
+    if (!Number.isFinite(need) || need <= 0) {
+        return Number.isFinite(now) && now > 0 ? now : need;
+    }
+    if (!Number.isFinite(now) || now <= 0) return need;
+    return Math.max(now, need);
 }

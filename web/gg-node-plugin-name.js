@@ -293,7 +293,7 @@ function createTopButton() {
     topButton = document.createElement("button");
     topButton.id = TOP_BUTTON_ID;
     topButton.type = "button";
-    topButton.className = "comfyui-button gg-node-plugin-name-top-button";
+    topButton.className = "comfyui-button gg-ui-top-button gg-node-plugin-name-top-button";
     topButton.addEventListener("click", (event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -318,6 +318,7 @@ function installTopStyles() {
             height: 34px;
             margin-inline: 2px;
         }
+        /* 只留尺寸：开 / 关 / 悬停的配色由设计层的 .gg-ui-top-button 统一给 */
         #${TOP_BUTTON_ID} {
             width: 34px;
             min-width: 34px;
@@ -326,20 +327,12 @@ function installTopStyles() {
             min-height: 34px;
             padding: 0 !important;
             border-radius: 8px;
-            border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3)) !important;
-            background: var(--gg-ui-accent-soft, rgba(100,116,139,0.1)) !important;
-            color: var(--gg-ui-accent, #64748b) !important;
             display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
             box-sizing: border-box;
             line-height: 0 !important;
             cursor: pointer;
-        }
-        #${TOP_BUTTON_ID}.gg-state-off {
-            color: var(--gg-ui-muted, #64748b) !important;
-            background: rgba(148,163,184,0.08) !important;
-            border-color: rgba(148,163,184,0.18) !important;
         }
         #${TOP_BUTTON_ID} .gg-ui-icon {
             width: 18px;

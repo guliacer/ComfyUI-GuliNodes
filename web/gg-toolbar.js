@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
 
 app.registerExtension({
     name: "ComfyUI.GGNodes.Toolbar",
@@ -191,8 +192,12 @@ app.registerExtension({
 
         const installTopToolsMenu = () => {
             if (topToolsGroup) return;
+            ensureGGDesign();
             const style = document.createElement("style");
             style.id = "gg-top-tools-menu-style";
+            // 外壳（位置、尺寸、圆角、阴影、内边距、滚动条）全部由设计层的
+            // `.gg-popover` + `.gg-surface` 提供，这里只写「菜单特有」的结构与状态。
+            // 以前这里复制了一整套外壳样式，改一处要改三个文件，深色主题下还会走样。
             style.textContent = `
                 #gg-top-tools-group {
                     position: relative;
@@ -202,63 +207,39 @@ app.registerExtension({
                     margin-inline: 2px;
                     flex: 0 0 auto;
                 }
+                /* 尺寸比菜单内的 30px 开关略大，跟 ComfyUI 顶栏按钮齐平 */
                 #gg-top-tools-button {
                     width: 34px;
                     min-width: 34px;
                     height: 34px;
                     min-height: 34px;
                     padding: 0;
-                    border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3));
-                    border-radius: 8px;
-                    background: var(--gg-toolbar-button-bg, var(--comfy-menu-bg, rgba(255,255,255,0.94)));
-                    color: var(--gg-ui-ink, #3f4856);
-                    display: inline-flex;
-                    align-items: center;
-                    justify-content: center;
-                    cursor: pointer;
-                }
-                #gg-top-tools-button.active,
-                #gg-top-tools-button:hover {
-                    color: var(--gg-ui-accent, #3b82f6);
-                    background: var(--gg-ui-accent-soft, rgba(59,130,246,0.13));
-                    border-color: var(--gg-ui-accent-border, rgba(59,130,246,0.3));
                 }
                 #gg-top-tools-menu {
-                    position: fixed;
                     display: none;
-                    z-index: 100006;
-                    width: min(360px, calc(100vw - 16px));
-                    max-height: min(82vh, 700px);
-                    overflow: auto;
-                    padding: 0;
-                    border: 1px solid var(--gg-ui-accent-border, rgba(100,116,139,0.3));
-                    border-radius: 10px;
-                    background: color-mix(in srgb, var(--comfy-menu-bg, #fff) 95%, var(--gg-ui-accent, #3b82f6));
-                    box-shadow: 0 18px 44px rgba(15,23,42,0.22);
-                    backdrop-filter: blur(16px);
+                    padding: 8px;
                 }
                 #gg-top-tools-menu[data-open="true"] { display: block; }
-                #gg-top-tools-content {
-                    display: block;
-                }
                 #gg-top-tools-nav {
                     min-width: 0;
                     min-height: 0;
-                    padding: 8px;
+                    padding: 0;
                 }
                 #gg-top-tools-nav::before {
                     content: "GuliNodes 工具";
                     display: block;
                     padding: 2px 8px 7px;
-                    color: var(--gg-ui-muted, #6b7280);
+                    color: var(--gg-muted);
                     font-size: 11px;
                     font-weight: 700;
+                    letter-spacing: .2px;
                 }
                 #gg-top-tools-nav .gg-top-tool-entry {
                     display: block;
                     min-width: 0;
                     border: 1px solid transparent;
                     border-radius: 8px;
+                    transition: background-color .14s ease, border-color .14s ease;
                 }
                 #gg-top-tools-nav .gg-top-tool-entry + .gg-top-tool-entry {
                     margin-top: 2px;
@@ -267,8 +248,8 @@ app.registerExtension({
                     display: none !important;
                 }
                 #gg-top-tools-nav .gg-top-tool-entry[data-expanded="true"] {
-                    border-color: var(--gg-ui-accent-border, rgba(59,130,246,0.3));
-                    background: var(--gg-ui-accent-soft, rgba(59,130,246,0.08));
+                    border-color: var(--gg-picked-border);
+                    background: var(--gg-picked-bg);
                 }
                 #gg-top-tools-nav .gg-top-tool-row {
                     width: 100%;
@@ -281,13 +262,18 @@ app.registerExtension({
                     border: 0;
                     border-radius: 7px;
                     background: transparent;
-                    color: var(--gg-ui-ink, #3f4856);
+                    color: var(--gg-ink);
                     text-align: left;
                     box-sizing: border-box;
                     font: inherit;
+                    cursor: pointer;
                 }
                 #gg-top-tools-nav .gg-top-tool-row:hover {
-                    background: var(--gg-ui-accent-soft, rgba(59,130,246,0.12));
+                    background: var(--gg-btn-hover);
+                }
+                #gg-top-tools-nav .gg-top-tool-row:focus-visible {
+                    outline: 2px solid var(--gg-accent);
+                    outline-offset: -2px;
                 }
                 #gg-top-tools-nav .gg-top-tool-row-label {
                     display: block;
@@ -295,8 +281,8 @@ app.registerExtension({
                     overflow: hidden;
                     text-overflow: ellipsis;
                     white-space: nowrap;
-                    font-size: 13px;
-                    font-weight: 650;
+                    font-size: 12.5px;
+                    font-weight: 600;
                 }
                 #gg-top-tools-nav .gg-top-tool-controls {
                     display: inline-flex;
@@ -317,6 +303,10 @@ app.registerExtension({
                     flex: 0 0 auto !important;
                 }
                 #gg-top-tools-nav [data-gg-top-tool-source] > button,
+                /* 有的功能把「按钮本身」交给工具箱托管（它自己就是 source 容器），
+                   上面那条 width:auto 会把它压成图标的宽度（实测 19px）。
+                   下面这条用同等的 !important + 多一个 button 选择器把它拽回 30px。 */
+                #gg-top-tools-nav button[data-gg-top-tool-source],
                 #gg-top-tools-nav [data-gg-top-tool-source] .gg-ui-top-button,
                 #gg-top-tools-nav [data-gg-top-tool-source] .gg-toolbar-top-button {
                     width: 30px !important;
@@ -350,11 +340,6 @@ app.registerExtension({
                     border-radius: 12px !important;
                     box-sizing: border-box !important;
                 }
-                @media (max-width: 620px) {
-                    #gg-top-tools-menu {
-                        width: min(360px, calc(100vw - 16px));
-                    }
-                }
             `;
             document.head.appendChild(style);
 
@@ -363,12 +348,16 @@ app.registerExtension({
             topToolsButton = document.createElement("button");
             topToolsButton.id = "gg-top-tools-button";
             topToolsButton.type = "button";
+            topToolsButton.className = "gg-switch";
             topToolsButton.title = "GuliNodes 工具";
             topToolsButton.setAttribute("aria-label", "GuliNodes 工具");
             topToolsButton.setAttribute("aria-expanded", "false");
             topToolsButton.innerHTML = ggIcon("toolGrid", 18);
             topToolsMenu = document.createElement("div");
             topToolsMenu.id = "gg-top-tools-menu";
+            // 外壳与配色交给设计层：这一层只负责结构与状态
+            topToolsMenu.className = "gg-surface gg-popover";
+            applySurface(topToolsMenu);
             topToolsMenu.setAttribute("role", "menu");
             topToolsContent = document.createElement("div");
             topToolsContent.id = "gg-top-tools-content";
@@ -442,6 +431,8 @@ app.registerExtension({
                 topToolsButton.setAttribute("aria-expanded", open ? "true" : "false");
                 topToolsButton.classList.toggle("active", open);
                 if (open) {
+                    // 每次打开都重算皮肤：宿主可能中途切了深/浅色
+                    applySurface(topToolsMenu);
                     collectTopGroups();
                     positionMenu();
                 } else {
@@ -485,12 +476,19 @@ app.registerExtension({
         // 创建单个工具栏面板
         const panel = document.createElement("div");
         panel.id = "gg-nodes-panel";
+        // 底色 / 描边由设计层按当前主题给；这里只留布局。
+        // 以前写死 `background: #ffffff`，深色主题下就是一条纯白长条。
+        panel.className = "gg-surface";
+        ensureGGDesign();
+        applySurface(panel);
         panel.style.cssText = `
             position: fixed; left: 50%; bottom: 30px; transform: translateX(-50%);
-            background: #ffffff; padding: 8px 12px; border-radius: 12px;
+            padding: 8px 12px; border-radius: 12px;
+            border: 1px solid var(--gg-divider);
+            box-shadow: 0 10px 28px rgba(15, 23, 42, 0.18);
             z-index: 99999; font-size: 13px;
             user-select: none; display: flex; flex-direction: column; gap: 6px;
-            border: 1px solid #e0e0e0; cursor: grab; box-shadow: none;
+            cursor: grab;
             max-width: 90vw;
             align-items: center;
             justify-content: center;
@@ -527,7 +525,7 @@ app.registerExtension({
                 <button id="btn-color-title" class="tool-btn color-mode-btn" data-mode="title" data-tooltip="上色模式：节点标题栏" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("title", 21)}
                 </button>
-                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <div class="divider" style="width:1px;height:24px;background:var(--gg-divider);"></div>
                 <button id="btn-pick-color" class="tool-btn" data-tooltip="取色：复制节点/分组上色" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("pipette", 21)}
                 </button>
@@ -537,7 +535,7 @@ app.registerExtension({
                 <button id="btn-clear-color" class="tool-btn" data-tooltip="删除节点颜色" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("trash", 21)}
                 </button>
-                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <div class="divider" style="width:1px;height:24px;background:var(--gg-divider);"></div>
                 <div id="gg-color-presets" style="display:flex;align-items:center;gap:2px;"></div>
                 <button id="btn-custom-color-1" class="tool-btn custom-color-btn" data-index="1" data-tooltip="自定义颜色 1" style="background:transparent;border:none;padding:4px;">
                     <span class="color-dot custom-dot" style="background:#8fa39b;"></span>
@@ -548,7 +546,7 @@ app.registerExtension({
                 <input id="gg-custom-color-input-1" type="color" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
                 <input id="gg-custom-color-input-2" type="color" style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
             </div>
-            <div class="toolbar-row-divider" style="width:100%;height:1px;background:#e0e0e0;"></div>
+            <div class="toolbar-row-divider" style="width:100%;height:1px;background:var(--gg-divider);"></div>
             <!-- 尺寸调节工具栏 -->
             <div class="main-section" style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;justify-content:center;">
                 <button id="btn-copy-size" class="tool-btn" data-tooltip="复制节点尺寸" style="background:transparent;border:none;padding:4px;">
@@ -557,14 +555,14 @@ app.registerExtension({
                 <button id="btn-paste-size" class="tool-btn" data-tooltip="粘贴尺寸到选中节点" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("paste", 21)}
                 </button>
-                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <div class="divider" style="width:1px;height:24px;background:var(--gg-divider);"></div>
                 <button id="btn-same-width" class="tool-btn" data-tooltip="自动宽度" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("width", 21)}
                 </button>
                 <button id="btn-same-height" class="tool-btn" data-tooltip="自动高度" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("height", 21)}
                 </button>
-                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <div class="divider" style="width:1px;height:24px;background:var(--gg-divider);"></div>
                 <button id="btn-align-left" class="tool-btn" data-tooltip="最左对齐" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("alignLeft", 21)}
                 </button>
@@ -574,7 +572,7 @@ app.registerExtension({
                 <button id="btn-align-hcenter" class="tool-btn" data-tooltip="水平居中" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("alignHCenter", 21)}
                 </button>
-                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <div class="divider" style="width:1px;height:24px;background:var(--gg-divider);"></div>
                 <button id="btn-align-top" class="tool-btn" data-tooltip="最顶对齐" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("alignTop", 21)}
                 </button>
@@ -584,15 +582,15 @@ app.registerExtension({
                 <button id="btn-align-vcenter" class="tool-btn" data-tooltip="垂直居中" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("alignVCenter", 21)}
                 </button>
-                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <div class="divider" style="width:1px;height:24px;background:var(--gg-divider);"></div>
                 <button id="btn-auto-spacing" class="tool-btn" data-tooltip="自动间距" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("spacing", 21)}
                 </button>
-                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <div class="divider" style="width:1px;height:24px;background:var(--gg-divider);"></div>
                 <button id="btn-auto-fit" class="tool-btn" data-tooltip="自适应尺寸（紧凑）" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("fit", 21)}
                 </button>
-                <div class="divider" style="width:1px;height:24px;background:#e0e0e0;"></div>
+                <div class="divider" style="width:1px;height:24px;background:var(--gg-divider);"></div>
                 <button id="btn-close-toolbar" class="tool-btn" data-tooltip="关闭工具栏" style="background:transparent;border:none;padding:4px;">
                     ${ggIcon("close", 21)}
                 </button>
@@ -603,16 +601,14 @@ app.registerExtension({
 
         const toolbarSettings = document.createElement("div");
         toolbarSettings.id = "gg-toolbar-settings";
+        // 外壳交给设计层；这里只留尺寸与定位
+        toolbarSettings.className = "gg-surface gg-popover";
+        applySurface(toolbarSettings);
         toolbarSettings.style.cssText = `
             position: fixed; display: none; z-index: 100002;
             width: 248px; padding: 14px;
             border-radius: 16px;
-            border: 1px solid rgba(148,163,184,0.28);
-            background: linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,250,252,0.94) 100%);
-            box-shadow: 0 18px 42px rgba(15,23,42,0.14), 0 4px 14px rgba(15,23,42,0.08);
-            backdrop-filter: blur(16px);
             user-select: none;
-            color: var(--gg-ui-ink);
         `;
         toolbarSettings.innerHTML = `
             <div class="gg-toolbar-settings-head">
@@ -682,19 +678,14 @@ app.registerExtension({
             #gg-nodes-panel .tool-btn:hover {
                 transform: translateY(-1px);
             }
-            #gg-nodes-mini:hover,
-            #gg-nodes-mini.active,
-            #gg-float-buttons-mini:hover,
-            #gg-float-buttons-mini.active {
-                color: var(--gg-ui-accent) !important;
-                background: var(--gg-ui-accent-soft) !important;
-                border-color: var(--gg-ui-accent-border) !important;
-            }
+            /* 迷你按钮的配色交给设计层（.gg-ui-top-button），这里不再单写一份。 */
             #gg-toolbar-top-switch {
                 --gg-top-control-size: 34px;
                 --gg-top-control-radius: 8px;
-                --gg-top-switch-bg: rgba(255,255,255,0.84);
-                --gg-top-switch-border: rgba(148,163,184,0.22);
+                /* 只在「顶栏宿主找不到、退回固定定位」时才用到，默认跟主题走 */
+                --gg-top-switch-bg: var(--gg-panel, rgba(23,27,36,0.94));
+                --gg-top-switch-border: var(--gg-divider, rgba(148,163,184,0.22));
+                --gg-top-switch-shadow: 0 8px 22px rgba(15,23,42,0.18);
                 --gg-top-switch-shadow: 0 8px 22px rgba(15,23,42,0.1);
                 display: inline-flex;
                 align-items: center;
@@ -747,25 +738,9 @@ app.registerExtension({
                 touch-action: manipulation;
                 transform-origin: center;
             }
-            #gg-toolbar-top-switch .gg-toolbar-top-button::after {
-                content: "";
-                position: absolute;
-                inset: 3px;
-                border-radius: calc(var(--gg-top-control-radius) - 2px);
-                opacity: 0;
-                pointer-events: none;
-                box-shadow: inset 0 0 0 1px rgba(255,255,255,0.5);
-                transition: opacity 0.18s ease;
-            }
-            #gg-toolbar-top-switch .gg-toolbar-top-button.active::after,
-            #gg-toolbar-top-switch .gg-toolbar-top-button.gg-state-on::after {
-                opacity: 1;
-            }
-            #gg-toolbar-top-switch .gg-toolbar-top-button.gg-state-off {
-                color: var(--gg-ui-muted) !important;
-                background: rgba(148,163,184,0.08) !important;
-                border-color: rgba(148,163,184,0.18) !important;
-            }
+            /* 开 / 关 / 悬停的配色由设计层（.gg-ui-top-button）统一决定。
+               这里以前还写了一份 gg-state-off 的白底和一圈 ::after 白色内描边，
+               深色主题下「关」就成了白板、开态还多一道亮白线。 */
             #gg-toolbar-top-switch .gg-toolbar-top-button .gg-ui-icon {
                 width: 18px;
                 height: 18px;
@@ -800,9 +775,9 @@ app.registerExtension({
                 min-width: 156px;
                 padding: 10px;
                 border-radius: 14px;
-                border: 1px solid rgba(148,163,184,0.28);
-                background: linear-gradient(180deg, rgba(255,255,255,0.97) 0%, rgba(248,250,252,0.94) 100%);
-                box-shadow: 0 16px 36px rgba(15,23,42,0.14), 0 4px 12px rgba(15,23,42,0.08);
+                border: 1px solid var(--gg-divider);
+                background: var(--gg-panel);
+                box-shadow: 0 16px 36px rgba(15,23,42,0.22);
                 backdrop-filter: blur(14px);
             }
             #gg-color-mode-menu::after {
@@ -813,8 +788,8 @@ app.registerExtension({
                 width: 14px;
                 height: 14px;
                 background: inherit;
-                border-right: 1px solid rgba(148,163,184,0.28);
-                border-bottom: 1px solid rgba(148,163,184,0.28);
+                border-right: 1px solid var(--gg-divider);
+                border-bottom: 1px solid var(--gg-divider);
                 transform: translateX(-50%) rotate(45deg);
                 border-bottom-right-radius: 4px;
             }
@@ -827,21 +802,20 @@ app.registerExtension({
                 width: 40px;
                 height: 40px;
                 border-radius: 12px;
-                border: 1px solid rgba(148,163,184,0.18);
-                background: rgba(255,255,255,0.78) !important;
-                box-shadow: inset 0 1px 0 rgba(255,255,255,0.76);
-                color: var(--gg-ui-ink);
+                border: 1px solid var(--gg-divider);
+                background: var(--gg-btn) !important;
+                color: var(--gg-ink);
                 transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease, background 0.16s ease;
             }
             #gg-color-mode-menu .tool-btn:hover {
                 transform: translateY(-1px);
-                box-shadow: 0 6px 12px rgba(15,23,42,0.1), inset 0 1px 0 rgba(255,255,255,0.82);
+                background: var(--gg-btn-hover) !important;
             }
             #gg-color-mode-menu .tool-btn.active {
                 transform: translateY(-1px);
-                color: var(--gg-ui-accent) !important;
-                border-color: var(--gg-ui-accent-border);
-                box-shadow: 0 0 0 2px var(--gg-ui-accent-soft), inset 0 1px 0 rgba(255,255,255,0.88);
+                color: var(--gg-accent) !important;
+                border-color: color-mix(in srgb, var(--gg-accent) 55%, transparent);
+                background: color-mix(in srgb, var(--gg-accent) 16%, transparent) !important;
             }
             #gg-nodes-panel .color-dot {
                 width: 18px;
@@ -899,16 +873,14 @@ app.registerExtension({
                 color: var(--gg-ui-muted);
             }
             #gg-toolbar-settings .gg-toolbar-icon-btn {
-                border: 1px solid rgba(148,163,184,0.22);
-                background: rgba(255,255,255,0.78);
-                box-shadow: inset 0 1px 0 rgba(255,255,255,0.72);
+                border: 1px solid var(--gg-divider);
+                background: var(--gg-btn);
             }
             #gg-toolbar-settings .gg-toolbar-settings-card {
                 padding: 12px;
                 border-radius: 12px;
-                background: rgba(255,255,255,0.72);
-                border: 1px solid rgba(148,163,184,0.2);
-                box-shadow: inset 0 1px 0 rgba(255,255,255,0.8);
+                background: var(--gg-card);
+                border: 1px solid var(--gg-divider);
             }
             #gg-toolbar-settings .gg-toolbar-settings-card + .gg-toolbar-settings-card {
                 margin-top: 10px;
@@ -939,24 +911,23 @@ app.registerExtension({
                 width: 42px;
                 height: 42px;
                 border-radius: 12px;
-                border: 1px solid rgba(148,163,184,0.22);
-                background: rgba(255,255,255,0.78);
+                border: 1px solid var(--gg-divider);
+                background: var(--gg-btn);
                 flex: 0 0 auto;
             }
             #gg-toolbar-settings .gg-toolbar-color-chip .color-dot {
                 width: 24px;
                 height: 24px;
                 border-radius: 8px;
-                border: 1px solid rgba(0,0,0,0.12);
-                box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
+                border: 1px solid var(--gg-divider);
             }
             #gg-toolbar-settings .gg-toolbar-color-input {
                 width: 44px;
                 height: 42px;
                 padding: 4px;
                 border-radius: 12px;
-                border: 1px solid rgba(148,163,184,0.22);
-                background: rgba(255,255,255,0.78);
+                border: 1px solid var(--gg-divider);
+                background: var(--gg-btn);
                 cursor: pointer;
             }
             #gg-toolbar-settings .gg-toolbar-color-presets {
@@ -969,8 +940,7 @@ app.registerExtension({
                 width: 100%;
                 aspect-ratio: 1;
                 border-radius: 10px;
-                border: 1px solid rgba(0,0,0,0.08);
-                box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+                border: 1px solid var(--gg-divider);
                 cursor: pointer;
                 transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
             }
@@ -978,8 +948,8 @@ app.registerExtension({
                 transform: translateY(-1px);
             }
             #gg-toolbar-settings .gg-toolbar-swatch.active {
-                border-color: var(--gg-ui-accent-border);
-                box-shadow: 0 0 0 2px var(--gg-ui-accent-soft), inset 0 1px 0 rgba(255,255,255,0.65);
+                border-color: color-mix(in srgb, var(--gg-accent) 55%, transparent);
+                box-shadow: 0 0 0 2px color-mix(in srgb, var(--gg-accent) 22%, transparent);
                 transform: translateY(-1px);
             }
             #gg-toolbar-settings .gg-toolbar-slider-row {
@@ -1000,14 +970,13 @@ app.registerExtension({
         const miniIcon = document.createElement("button");
         miniIcon.id = "gg-nodes-mini";
         miniIcon.type = "button";
-        miniIcon.classList.add("gg-toolbar-top-button");
+        miniIcon.classList.add("gg-toolbar-top-button", "gg-ui-top-button");
         miniIcon.title = "收起工具栏";
         miniIcon.style.cssText = `
-            width: 34px; height: 34px; background: var(--comfy-menu-bg, rgba(255,255,255,0.95));
-            border: 1px solid var(--border-color, rgba(0,0,0,0.1));
-            border-radius: 8px; color: var(--gg-ui-ink); cursor: pointer; display: none;
+            width: 34px; height: 34px;
+            border-radius: 8px; cursor: pointer; display: none;
             align-items: center; justify-content: center; padding: 0;
-            box-shadow: none; transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
+            transition: transform 0.16s ease, background-color 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
         `;
         miniIcon.innerHTML = ggIcon("toolbarCollapse", 18);
         miniIcon.addEventListener("mouseenter", () => {
@@ -1021,7 +990,7 @@ app.registerExtension({
         const floatButtonsIcon = document.createElement("button");
         floatButtonsIcon.id = "gg-float-buttons-mini";
         floatButtonsIcon.type = "button";
-        floatButtonsIcon.classList.add("gg-toolbar-top-button");
+        floatButtonsIcon.classList.add("gg-toolbar-top-button", "gg-ui-top-button");
         floatButtonsIcon.title = "关闭文本框与图像悬浮按钮";
         floatButtonsIcon.setAttribute("aria-label", floatButtonsIcon.title);
         floatButtonsIcon.style.cssText = miniIcon.style.cssText;
@@ -1131,7 +1100,51 @@ app.registerExtension({
             localStorage.setItem(TOOLBAR_SETTINGS_STATE_KEY, JSON.stringify(nextState));
         }
 
-        function applyToolbarStyle() {
+        // 用户没动过「工具栏外观」时，一切跟着主题走；动过才用他选的颜色覆盖。
+        // 以前默认值就是 #ffffff / 100%，于是深色主题里整个工具栏、每个顶栏按钮都被涂成白色。
+        let toolbarStyleCustomized = false;
+
+        function clearToolbarStyleOverrides() {
+            for (const element of [panel, miniIcon, floatButtonsIcon, toolbarSettings]) {
+                if (!element) continue;
+                element.style.removeProperty("background");
+                element.style.removeProperty("border-color");
+                element.style.removeProperty("color");
+                element.style.removeProperty("box-shadow");
+            }
+            const root = document.documentElement.style;
+            root.removeProperty("--gg-toolbar-button-bg");
+            root.removeProperty("--gg-toolbar-button-border");
+            root.removeProperty("--gg-toolbar-button-color");
+            topSwitchHost.style.removeProperty("--gg-top-switch-bg");
+            topSwitchHost.style.removeProperty("--gg-top-switch-border");
+            topSwitchHost.style.removeProperty("--gg-top-switch-shadow");
+            document.getElementById("gg-color-mode-menu")?.querySelectorAll(".tool-btn").forEach((element) => {
+                element.style.removeProperty("border-color");
+                element.style.removeProperty("background");
+                element.style.removeProperty("color");
+                element.style.removeProperty("box-shadow");
+            });
+            toolbarSettings.querySelectorAll(".gg-toolbar-settings-title, .gg-toolbar-settings-subtitle, .gg-toolbar-settings-label, .gg-toolbar-settings-value").forEach((element) => {
+                element.style.removeProperty("color");
+            });
+            toolbarSettings.querySelectorAll(".gg-toolbar-settings-card, .gg-toolbar-icon-btn, .gg-toolbar-color-chip, .gg-toolbar-color-input").forEach((element) => {
+                element.style.removeProperty("border-color");
+                element.style.removeProperty("background");
+                element.style.removeProperty("box-shadow");
+            });
+            localStorage.removeItem("ggNodes_toolbarStyle");
+        }
+
+        function applyToolbarStyle(customized = true) {
+            toolbarStyleCustomized = customized === true;
+            if (!toolbarStyleCustomized) {
+                clearToolbarStyleOverrides();
+                toolbarOpacityLabel.textContent = `${toolbarOpacityInput.value}%`;
+                toolbarColorHex.textContent = String(toolbarBgInput.value || "#ffffff").toUpperCase();
+                refreshToolbarSwatches(toolbarBgInput.value || "#ffffff");
+                return;
+            }
             const color = toolbarBgInput.value || "#ffffff";
             const opacity = Number(toolbarOpacityInput.value || 100) / 100;
             const background = hexToRgba(color, opacity);
@@ -1142,9 +1155,6 @@ app.registerExtension({
             const borderTone = hexToRgba(shadeHex(color, -18), 0.18);
             const shadowTone = hexToRgba(shadeHex(color, -64), 0.18);
             const modeMenu = document.getElementById("gg-color-mode-menu");
-            document.documentElement.style.setProperty("--gg-toolbar-button-bg", background);
-            document.documentElement.style.setProperty("--gg-toolbar-button-border", borderTone);
-            document.documentElement.style.setProperty("--gg-toolbar-button-color", "var(--gg-ui-accent)");
             panel.style.background = background;
             miniIcon.style.background = background;
             miniIcon.style.borderColor = borderTone;
@@ -1203,14 +1213,16 @@ app.registerExtension({
         }
 
         function loadToolbarStyle() {
+            let savedStyle = {};
             try {
-                const savedStyle = JSON.parse(localStorage.getItem("ggNodes_toolbarStyle") || "{}");
+                savedStyle = JSON.parse(localStorage.getItem("ggNodes_toolbarStyle") || "{}");
                 if (savedStyle.color) toolbarBgInput.value = savedStyle.color;
                 if (savedStyle.opacity) toolbarOpacityInput.value = savedStyle.opacity;
             } catch (e) {
                 console.error("Failed to load toolbar style:", e);
             }
-            applyToolbarStyle();
+            // 只有用户真的选过颜色/透明度才覆盖主题；没选过就跟着深浅色走。
+            applyToolbarStyle(Boolean(savedStyle.color || savedStyle.opacity));
         }
 
         function showToolbarSettings(event) {
@@ -1240,12 +1252,15 @@ app.registerExtension({
             saveToolbarSettingsState({ open: false });
         }
 
-        toolbarBgInput.oninput = applyToolbarStyle;
-        toolbarOpacityInput.oninput = applyToolbarStyle;
+        // 注意：这两个回调会被当成事件处理函数调用，第一个参数是 Event，
+        // 所以必须包一层显式传 true，否则「是否自定义」会被事件对象污染。
+        toolbarBgInput.oninput = () => applyToolbarStyle(true);
+        toolbarOpacityInput.oninput = () => applyToolbarStyle(true);
         toolbarResetButton.onclick = () => {
             toolbarBgInput.value = "#ffffff";
             toolbarOpacityInput.value = "100";
-            applyToolbarStyle();
+            // 重置 = 回到跟随主题，不是「把主题钉成白色」
+            applyToolbarStyle(false);
         };
         toolbarCloseButton.onclick = hideToolbarSettings;
         toolbarSettings.querySelectorAll(".gg-toolbar-swatch").forEach(button => {

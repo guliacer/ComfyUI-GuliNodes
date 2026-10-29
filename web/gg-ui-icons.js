@@ -1,3 +1,5 @@
+import { ensureGGDesign } from "./gg-ui-design.js";
+
 const ICONS = {
     brush: '<path d="m16.5 3.5 4 4L8 20l-5 1 1-5L16.5 3.5z"/><path d="m13.2 6.8 4 4"/>',
     toolGrid: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2" class="gg-ui-fill"/>',
@@ -82,6 +84,8 @@ const CATEGORY_COLORS = {
 let styleInstalled = false;
 
 export function ensureGGIconStyles() {
+    // 图标与按钮的颜色都来自设计层令牌，先把设计层装上（幂等）。
+    ensureGGDesign();
     if (styleInstalled || document.getElementById("gg-ui-icon-system")) return;
     styleInstalled = true;
 
@@ -93,14 +97,16 @@ export function ensureGGIconStyles() {
     style.id = "gg-ui-icon-system";
     style.textContent = `
         :root {
-            --gg-ui-ink: #3f4856;
-            --gg-ui-muted: #6b7280;
-            --gg-ui-accent: #3b82f6;
-            --gg-ui-accent-soft: rgba(59, 130, 246, 0.13);
-            --gg-ui-accent-border: rgba(59, 130, 246, 0.28);
-            --gg-ui-danger: #ef4444;
-            --gg-ui-success: #22c55e;
-            --gg-ui-warning: #f59e0b;
+            /* 颜色全部从设计层取（gg-ui-design.js 会把令牌挂到 <html data-gg-theme>），
+               没装设计层时退到浅色兜底值，至少不会变成透明字。 */
+            --gg-ui-ink: var(--gg-ink, #3f4856);
+            --gg-ui-muted: var(--gg-muted, #6b7280);
+            --gg-ui-accent: var(--gg-accent, #3b82f6);
+            --gg-ui-accent-soft: color-mix(in srgb, var(--gg-accent, #3b82f6) 13%, transparent);
+            --gg-ui-accent-border: color-mix(in srgb, var(--gg-accent, #3b82f6) 30%, transparent);
+            --gg-ui-danger: var(--gg-danger, #ef4444);
+            --gg-ui-success: var(--gg-ok, #22c55e);
+            --gg-ui-warning: var(--gg-warning, #f59e0b);
         }
         ${categoryCSSEntries}
         .gg-ui-icon {
@@ -120,50 +126,62 @@ export function ensureGGIconStyles() {
         }
         #gg-nodes-panel .tool-btn,
         #gg-toolbar-settings .tool-btn,
-        .gg-float-toolbar button,
-        .gg-key-input-toggle,
-        .gg-key-input-mask,
-        .gg-key-input-test,
         .gg-ui-top-button {
             color: var(--gg-ui-ink);
         }
+        /* 密钥面板的输入框与图标按钮已经改用设计层的 .gg-field / .gg-icon-btn，
+           这里不再单独给它们上色——两套规则并存时 !important 会互相打架。 */
         #gg-nodes-panel .tool-btn:hover,
-        #gg-toolbar-settings .tool-btn:hover,
-        .gg-float-toolbar button:hover,
-        .gg-key-input-toggle:hover,
-        .gg-key-input-mask:hover,
-        .gg-key-input-test:hover {
+        #gg-toolbar-settings .tool-btn:hover {
             color: var(--gg-ui-accent) !important;
             background: var(--gg-ui-accent-soft) !important;
             border-color: var(--gg-ui-accent-border) !important;
         }
-        /* 顶栏开关按钮：悬停只加深底色，不改变颜色，避免「未开启悬停时像已开启」 */
+        /* 顶栏开关按钮：外观全部交给设计层。
+           只统一「颜色 / 边框 / 圆角」，不碰尺寸与 display——
+           尺寸跟着 ComfyUI 自己的 .comfyui-button 走才不会跟原生按钮错位，
+           display 一旦写 !important，各功能想隐藏按钮时就藏不掉了。 */
+        .gg-ui-top-button {
+            border: 1px solid var(--gg-divider, rgba(100, 116, 139, 0.3)) !important;
+            border-radius: 7px !important;
+            background: transparent !important;
+            color: var(--gg-muted, #6b7280) !important;
+            box-shadow: none !important;
+            transition: color 0.14s ease, background-color 0.14s ease, border-color 0.14s ease;
+        }
+        /* 悬停只加深底色、不改颜色：否则「没开」的按钮一悬停就像「开了」 */
         .gg-ui-top-button:hover,
         .gg-ui-top-button:focus-visible {
-            background: rgba(148, 163, 184, 0.16) !important;
+            color: var(--gg-ink, #3f4856) !important;
+            background: var(--gg-btn-hover, rgba(148, 163, 184, 0.16)) !important;
+            border-color: var(--gg-divider, rgba(100, 116, 139, 0.3)) !important;
         }
-        /* 开关两态：关 = 灰，开 = 主题色 */
+        /* 关 = 灰：显式写出来，免得 .comfyui-button 的默认白底把「关」显示成「开」 */
         .gg-ui-top-button.gg-state-off {
-            color: var(--gg-ui-muted, #6b7280) !important;
-            background: rgba(148, 163, 184, 0.08) !important;
-            border-color: rgba(148, 163, 184, 0.18) !important;
+            color: var(--gg-muted, #6b7280) !important;
+            background: transparent !important;
+            border-color: var(--gg-divider, rgba(100, 116, 139, 0.3)) !important;
         }
-        .gg-ui-top-button.gg-state-on,
-        .gg-ui-top-button.active {
+        .gg-ui-top-button.gg-state-off:hover {
+            color: var(--gg-ink, #3f4856) !important;
+            background: var(--gg-btn-hover, rgba(148, 163, 184, 0.16)) !important;
+        }
+        /* 开 = 主题色 */
+        .gg-ui-top-button.active,
+        .gg-ui-top-button.gg-state-on {
             color: var(--gg-ui-accent) !important;
-            background: rgba(59, 130, 246, 0.17) !important;
+            background: var(--gg-ui-accent-soft) !important;
             border-color: var(--gg-ui-accent-border) !important;
         }
-        .gg-ui-top-button.gg-state-on:hover,
-        .gg-ui-top-button.active:hover {
-            background: rgba(59, 130, 246, 0.26) !important;
+        .gg-ui-top-button.active:hover,
+        .gg-ui-top-button.gg-state-on:hover {
+            background: color-mix(in srgb, var(--gg-ui-accent) 24%, transparent) !important;
         }
         #gg-nodes-panel .tool-btn.active,
         #gg-toolbar-settings .tool-btn.active,
-        .gg-float-toolbar button.gg-state-success,
         .gg-ui-top-button.active {
             color: var(--gg-ui-accent) !important;
-            background: rgba(59, 130, 246, 0.17) !important;
+            background: var(--gg-ui-accent-soft) !important;
             border-color: var(--gg-ui-accent-border) !important;
         }
         .gg-ui-icon-success { color: var(--gg-ui-success); }

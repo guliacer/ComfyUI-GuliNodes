@@ -22,6 +22,8 @@ _NODE_MODULES = (
     "clipboard",
     "prompt_optimizer",
     "prompt_enhancer",
+    "prompt_lighting",
+    "prompt_library",
     "web_ai_tools",
     "model_loaders",
     "zimage_sampler",

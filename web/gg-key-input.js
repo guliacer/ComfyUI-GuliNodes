@@ -343,34 +343,28 @@ function hideConfigWidget(widget) {
 }
 
 function inputStyle() {
+  // 颜色 / 描边 / 焦点环交给设计层的 `.gg-field`，这里只定尺寸。
+  // 以前猜的是 `--comfy-input-bg` / `--input-text`：宿主变量在不同主题下取值不同，
+  // 猜错就是深色主题里一行灰字（提示词库踩过同一个坑）。
   return {
     width: "100%",
     minWidth: "0",
     height: "30px",
-    border: "1px solid rgba(127,127,127,0.35)",
     borderRadius: "6px",
     padding: "0 10px",
-    outline: "none",
-    color: "var(--input-text, #222)",
-    background: "var(--comfy-input-bg, rgba(255,255,255,0.9))",
     boxSizing: "border-box",
   };
 }
 
 function buttonStyle() {
+  // 颜色 / 描边 / 悬停 / 禁用交给 `.gg-icon-btn.is-outline`
   return {
     flex: "0 0 auto",
     width: "32px",
     height: "30px",
-    border: "1px solid rgba(127,127,127,0.35)",
-    borderRadius: "8px",
     padding: "0",
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "var(--gg-ui-ink)",
-    background: "var(--comfy-menu-bg, rgba(245,245,245,0.95))",
     cursor: "pointer",
+    boxSizing: "border-box",
   };
 }
 
@@ -426,16 +420,15 @@ function setTestStatus(panel, state, message) {
 function setTestBusy(panel, busy) {
   if (!panel?.testButton) return;
   panel.testButton.disabled = busy;
-  panel.testButton.style.cursor = busy ? "wait" : "pointer";
-  panel.testButton.style.opacity = busy ? "0.72" : "1";
+  // 变淡与禁用态由 `.gg-icon-btn.is-outline:disabled` 负责，这里只改忙碌光标
+  panel.testButton.style.cursor = busy ? "wait" : "";
   panel.testButton.innerHTML = ggIcon(busy ? "more" : "zap", 16);
 }
 
 function setModelFetchBusy(panel, busy) {
   if (!panel?.modelFetchButton) return;
   panel.modelFetchButton.disabled = busy;
-  panel.modelFetchButton.style.cursor = busy ? "wait" : "pointer";
-  panel.modelFetchButton.style.opacity = busy ? "0.72" : "1";
+  panel.modelFetchButton.style.cursor = busy ? "wait" : "";
   panel.modelFetchButton.innerHTML = `${ggIcon(busy ? "more" : "catModel", 15)}<span>${busy ? "获取中" : "获取模型"}</span>`;
 }
 
@@ -737,6 +730,7 @@ function createInput({ type = "text", placeholder = "", value = "" } = {}) {
   input.spellcheck = false;
   input.placeholder = placeholder;
   input.value = String(value || "");
+  input.classList.add("gg-field");
   Object.assign(input.style, inputStyle());
   return input;
 }
@@ -756,7 +750,7 @@ function createRow() {
 function createPasteButton(label, className = "gg-key-input-paste") {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = className;
+  button.className = `gg-icon-btn is-outline ${className}`;
   button.innerHTML = ggIcon("paste", 16);
   button.title = label;
   button.setAttribute("aria-label", label);
@@ -784,13 +778,13 @@ function createPanel(node, keyWidget, endpointWidget, modelWidget) {
     placeholder: "输入 API Endpoint / Base URL（可选）",
     value: normalizeEndpointUrl(endpointWidget?.value || stored.endpoint) || endpointWidget?.value || stored.endpoint,
   });
-  endpointInput.className = "gg-key-input-endpoint";
+  endpointInput.className = "gg-field gg-key-input-endpoint";
 
   const modelInput = createInput({
     placeholder: "输入 API 模型名称",
     value: modelWidget?.value || stored.model,
   });
-  modelInput.className = "gg-key-input-model";
+  modelInput.className = "gg-field gg-key-input-model";
 
   const endpointRow = createRow();
   endpointInput.style.flex = "1 1 auto";
@@ -802,7 +796,7 @@ function createPanel(node, keyWidget, endpointWidget, modelWidget) {
   const modelPaste = createPasteButton("粘贴模型名称");
   const modelFetchButton = document.createElement("button");
   modelFetchButton.type = "button";
-  modelFetchButton.className = "gg-key-input-model-fetch";
+  modelFetchButton.className = "gg-icon-btn is-outline gg-key-input-model-fetch";
   modelFetchButton.title = "根据端点和密钥获取模型列表";
   modelFetchButton.setAttribute("aria-label", modelFetchButton.title);
   Object.assign(modelFetchButton.style, actionButtonStyle());
@@ -813,7 +807,7 @@ function createPanel(node, keyWidget, endpointWidget, modelWidget) {
     placeholder: "输入 API Key 或访问令牌",
     value: keyWidget.value || stored.key,
   });
-  keyInput.className = "gg-key-input-secret";
+  keyInput.className = "gg-field gg-key-input-secret";
   keyInput.style.flex = "1 1 auto";
   const keyRow = createRow();
   const keyImport = createPasteButton("快速导入端点、API Key和模型", "gg-key-input-import");
@@ -822,11 +816,11 @@ function createPanel(node, keyWidget, endpointWidget, modelWidget) {
   const modelPicker = createRow();
   modelPicker.className = "gg-key-input-model-picker";
   const modelSelect = document.createElement("select");
-  modelSelect.className = "gg-key-input-model-list";
+  modelSelect.className = "gg-field gg-key-input-model-list";
   Object.assign(modelSelect.style, selectStyle(), { flex: "1 1 auto" });
   const confirmModelButton = document.createElement("button");
   confirmModelButton.type = "button";
-  confirmModelButton.className = "gg-key-input-model-confirm";
+  confirmModelButton.className = "gg-icon-btn is-outline gg-key-input-model-confirm";
   confirmModelButton.innerHTML = `${ggIcon("check", 15)}<span>确认</span>`;
   confirmModelButton.title = "确认选择模型";
   confirmModelButton.setAttribute("aria-label", confirmModelButton.title);
@@ -857,7 +851,7 @@ function createPanel(node, keyWidget, endpointWidget, modelWidget) {
 
   const testButton = document.createElement("button");
   testButton.type = "button";
-  testButton.className = "gg-key-input-test";
+  testButton.className = "gg-icon-btn is-outline gg-key-input-test";
   testButton.innerHTML = ggIcon("zap", 16);
   testButton.title = "测试当前配置";
   testButton.setAttribute("aria-label", "测试当前配置");
@@ -865,7 +859,7 @@ function createPanel(node, keyWidget, endpointWidget, modelWidget) {
 
   const maskButton = document.createElement("button");
   maskButton.type = "button";
-  maskButton.className = "gg-key-input-mask";
+  maskButton.className = "gg-icon-btn is-outline gg-key-input-mask";
   Object.assign(maskButton.style, buttonStyle());
 
   const status = document.createElement("div");

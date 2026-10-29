@@ -167,6 +167,8 @@ app.registerExtension({
                 opacity: 0.68;
                 pointer-events: none;
             }
+            /* 颜色 / 边框 / 悬停 / 禁用态由设计层的 .gg-ui-top-button 统一提供，
+               这里只留尺寸与图标大小。 */
             #gg-memory-cleanup-buttons .gg-memory-cleanup-btn {
                 width: 34px;
                 height: 34px;
@@ -174,10 +176,6 @@ app.registerExtension({
                 max-width: 34px;
                 padding: 0 !important;
                 margin: 0 !important;
-                border-radius: 8px;
-                border: 1px solid rgba(148,163,184,0.28) !important;
-                background: rgba(148,163,184,0.10) !important;
-                color: var(--gg-ui-muted, #64748b) !important;
                 box-shadow: none !important;
                 appearance: none;
                 display: inline-flex !important;
@@ -187,18 +185,11 @@ app.registerExtension({
                 line-height: 0 !important;
                 cursor: pointer;
                 overflow: hidden;
-                transition: transform 0.16s ease, background 0.16s ease, border-color 0.16s ease, color 0.16s ease, opacity 0.16s ease;
+                transition: transform 0.16s ease, opacity 0.16s ease;
             }
             #gg-memory-cleanup-buttons .gg-memory-cleanup-btn:hover,
             #gg-memory-cleanup-buttons .gg-memory-cleanup-btn:focus-visible {
-                color: var(--gg-ui-accent) !important;
-                background: var(--gg-ui-accent-soft) !important;
-                border-color: var(--gg-ui-accent-border) !important;
                 transform: scale(1.08);
-            }
-            #gg-memory-cleanup-buttons .gg-memory-cleanup-btn:focus-visible {
-                outline: 2px solid var(--gg-ui-accent-border);
-                outline-offset: 2px;
             }
             #gg-memory-cleanup-buttons .gg-memory-cleanup-btn:disabled {
                 cursor: wait;

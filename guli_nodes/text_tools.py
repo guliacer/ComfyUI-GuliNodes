@@ -10,6 +10,14 @@ TXT_CATEGORY = "GuliNodes/文本"
 NO_TXT_FILE = "无"
 TXT_EXTENSIONS = {".txt", ".md", ".text"}
 
+CONCAT_NODE_ID = "GGTextConcat"
+CONCAT_DISPLAY_NAME = "GG 文本拼接"
+MAX_SLOTS = 20
+SLOT_PREFIX = "文本"
+SEPARATOR_NAME = "分隔符"
+# 默认分隔：换行 + 空白行（两段之间空一行）。
+DEFAULT_SEPARATOR = "\n\n"
+
 
 def _list_txt_files() -> list[str]:
     input_dir = folder_paths.get_input_directory()
@@ -116,10 +124,85 @@ class GGTextFileLoad:
         return True if path and os.path.isfile(path) else f"找不到 TXT 文件：{TXT文件}"
 
 
+def _concat_slot_name(index: int) -> str:
+    return f"{SLOT_PREFIX}{index}"
+
+
+def _clean_part(value) -> str:
+    """去掉每段首尾空白，避免和分隔符叠出多余空行；段内换行原样保留。"""
+    return str(value or "").strip()
+
+
+def _separator_text(separator) -> str:
+    """默认「换行 + 空白行」；填了自定义分隔符时，让分隔符单独占一行、上下各留一个空白行。"""
+    custom = str(separator or "").strip()
+    if not custom:
+        return DEFAULT_SEPARATOR
+    return f"{DEFAULT_SEPARATOR}{custom}{DEFAULT_SEPARATOR}"
+
+
+def _join_texts(parts, separator="") -> str:
+    cleaned = [text for text in (_clean_part(part) for part in parts) if text]
+    if not cleaned:
+        return ""
+    if len(cleaned) == 1:
+        return cleaned[0]
+    return _separator_text(separator).join(cleaned)
+
+
+class GGTextConcat:
+    """把多段文本按分隔符合并成一段。
+
+    槽位 `文本1` … `文本20` 全部声明成可选：前端只展示「用到最后一个 + 2」个，
+    填字或接上线都会自动多出下一个空槽（见 web/gg-text-concat.js）。
+    拼接规则只写在这里，前端不重复实现一份。
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        # 顺序即控件顺序：20 个文本槽在前，分隔符在最后（与 Concatenate Text 一致）。
+        optional = {
+            _concat_slot_name(index): (
+                "STRING",
+                {
+                    "default": "",
+                    "multiline": True,
+                    "dynamicPrompts": False,
+                    "tooltip": f"第 {index} 段文本；留空会被跳过。",
+                },
+            )
+            for index in range(1, MAX_SLOTS + 1)
+        }
+        optional[SEPARATOR_NAME] = (
+            "STRING",
+            {
+                "default": "",
+                "multiline": False,
+                "tooltip": "留空时用「换行 + 空白行」分隔；填写后分隔符单独占一行，上下各留一个空白行。",
+            },
+        )
+        return {"required": {}, "optional": optional}
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("文本",)
+    FUNCTION = "concat"
+    CATEGORY = TXT_CATEGORY
+    DESCRIPTION = (
+        f"把最多 {MAX_SLOTS} 段文本按顺序拼成一段：默认用换行 + 空白行分隔，"
+        "填了自定义分隔符时让它单独占一行、上下各空一行；空段自动跳过。"
+    )
+
+    def concat(self, 分隔符="", **kwargs):
+        parts = [kwargs.get(_concat_slot_name(index), "") for index in range(1, MAX_SLOTS + 1)]
+        return (_join_texts(parts, 分隔符),)
+
+
 NODE_CLASS_MAPPINGS = {
     TXT_NODE_ID: GGTextFileLoad,
+    CONCAT_NODE_ID: GGTextConcat,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     TXT_NODE_ID: TXT_DISPLAY_NAME,
+    CONCAT_NODE_ID: CONCAT_DISPLAY_NAME,
 }
