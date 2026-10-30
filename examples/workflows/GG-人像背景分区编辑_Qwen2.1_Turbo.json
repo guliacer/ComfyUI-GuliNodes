@@ -1,8 +1,8 @@
 {
   "id": "ff2efab8-a663-4b23-8f94-64c05ed16101",
   "revision": 0,
-  "last_node_id": 54,
-  "last_link_id": 72,
+  "last_node_id": 57,
+  "last_link_id": 76,
   "nodes": [
     {
       "id": 1,
@@ -3887,6 +3887,163 @@
       "widgets_values_named": {
         "text": "1. 先上传原图，右键加载图像→遮罩编辑器，只涂人物并保存。\n2. 白色=人物；背景会自动反转，不需再画一次。\n3. 编辑需求清空/只留空格=跳过该区域。\n4. AI优化为独立开关；未验证本地模型兼容前保持关闭。\n5. 本版按原像素裁剪（不再压成正方形），保持原图比例，恢复到原坐标和原画幅。\n6. 最终合成严格按原蒙版限域，人物外轮廓不扩大；人物内部姿态仍依赖模型。\n7. 背景降噪0.6、人像0.35为默认；想要更强改0.7/0.45，更保守改0.5/0.25。降噪低于0.4基本看不出变化。\n8. 未涂蒙版会中文报错，而不是自动重绘全图。\n9. 超大图（长边超2000）建议先缩小，原像素采样会更慢。"
       }
+    },
+    {
+      "id": 55,
+      "type": "GGMaskCheck",
+      "title": "① 蒙版诊断（颜色落在人物身上才算涂对）",
+      "pos": [
+        40,
+        760
+      ],
+      "size": [
+        430,
+        300
+      ],
+      "flags": {},
+      "order": 37,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "图像",
+          "type": "IMAGE",
+          "link": 73
+        },
+        {
+          "name": "人像遮罩",
+          "type": "MASK",
+          "link": 74
+        },
+        {
+          "name": "叠加颜色",
+          "type": "COMBO",
+          "widget": {
+            "name": "叠加颜色"
+          },
+          "link": null
+        },
+        {
+          "name": "叠加不透明度",
+          "type": "FLOAT",
+          "widget": {
+            "name": "叠加不透明度"
+          },
+          "link": null
+        },
+        {
+          "name": "背景压暗",
+          "type": "FLOAT",
+          "widget": {
+            "name": "背景压暗"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "预览图",
+          "type": "IMAGE",
+          "links": [
+            75
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "诊断",
+          "type": "STRING",
+          "links": [
+            76
+          ],
+          "slot_index": 1
+        },
+        {
+          "name": "是否可用",
+          "type": "BOOLEAN",
+          "links": null,
+          "slot_index": 2
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GGMaskCheck"
+      },
+      "widgets_values": [
+        "青绿",
+        0.35,
+        0.12
+      ],
+      "widgets_values_named": {
+        "叠加颜色": "青绿",
+        "叠加不透明度": 0.35,
+        "背景压暗": 0.12
+      }
+    },
+    {
+      "id": 56,
+      "type": "PreviewImage",
+      "title": "蒙版诊断预览（青绿=会编辑的人物区）",
+      "pos": [
+        490,
+        760
+      ],
+      "size": [
+        470,
+        540
+      ],
+      "flags": {},
+      "order": 38,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 75
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 57,
+      "type": "GGTextDisplayCopy",
+      "title": "蒙版诊断说明（占比／改法）",
+      "pos": [
+        490,
+        1330
+      ],
+      "size": [
+        470,
+        220
+      ],
+      "flags": {},
+      "order": 39,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "文本输入",
+          "type": "STRING",
+          "link": 76
+        }
+      ],
+      "outputs": [
+        {
+          "name": "文本",
+          "type": "STRING",
+          "links": null,
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "GGTextDisplayCopy"
+      },
+      "widgets_values": [
+        ""
+      ],
+      "widgets_values_named": {
+        "文本": ""
+      }
     }
   ],
   "links": [
@@ -4465,6 +4622,38 @@
       53,
       0,
       "IMAGE"
+    ],
+    [
+      73,
+      1,
+      0,
+      55,
+      0,
+      "IMAGE"
+    ],
+    [
+      74,
+      1,
+      1,
+      55,
+      1,
+      "MASK"
+    ],
+    [
+      75,
+      55,
+      0,
+      56,
+      0,
+      "IMAGE"
+    ],
+    [
+      76,
+      55,
+      1,
+      57,
+      0,
+      "STRING"
     ]
   ],
   "groups": [

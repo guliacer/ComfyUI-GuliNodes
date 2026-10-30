@@ -11,6 +11,7 @@ _NODE_MODULES = (
     "aspect_ratio",
     "image_tools",
     "mask_tools",
+    "mask_check",
     "region_edit",
     "image_obfuscate",
     "video_tools",
