@@ -132,8 +132,8 @@
         0
       ],
       "人像遮罩": [
-        "1",
-        1
+        "73",
+        0
       ]
     },
     "_meta": {
@@ -426,8 +426,8 @@
         0
       ],
       "人像遮罩": [
-        "1",
-        1
+        "73",
+        0
       ]
     },
     "_meta": {
@@ -744,8 +744,8 @@
     "class_type": "MaskToImage",
     "inputs": {
       "mask": [
-        "1",
-        1
+        "73",
+        0
       ]
     },
     "_meta": {
@@ -772,8 +772,8 @@
         0
       ],
       "人像遮罩": [
-        "1",
-        1
+        "73",
+        0
       ],
       "叠加颜色": "青绿",
       "叠加不透明度": 0.35,
@@ -796,6 +796,56 @@
       "文本输入": [
         "60",
         1
+      ]
+    }
+  },
+  "70": {
+    "class_type": "easy sam3ModelLoader",
+    "inputs": {
+      "model": "sam3.pt",
+      "segmentor": "image",
+      "device": "cuda",
+      "precision": "fp16"
+    }
+  },
+  "71": {
+    "class_type": "easy sam3ImageSegmentation",
+    "inputs": {
+      "sam3_model": [
+        "70",
+        0
+      ],
+      "images": [
+        "1",
+        0
+      ],
+      "prompt": "person",
+      "threshold": 0.4,
+      "keep_model_loaded": false,
+      "add_background": "none",
+      "detection_limit": -1
+    }
+  },
+  "72": {
+    "class_type": "PrimitiveBoolean",
+    "inputs": {
+      "value": true
+    }
+  },
+  "73": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "72",
+        0
+      ],
+      "on_false": [
+        "1",
+        1
+      ],
+      "on_true": [
+        "71",
+        2
       ]
     }
   }

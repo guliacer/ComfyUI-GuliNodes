@@ -59,19 +59,34 @@ class RegionWorkflowContractTests(unittest.TestCase):
 
     def test_only_core_and_gg_node_types_are_used(self):
         _, nodes, _, _ = self.load_graph()
-        allowed_core = {"LoadImage", "UNETLoader", "CLIPLoader", "VAELoader", "VAEEncode", "VAEDecode", "SetLatentNoiseMask", "KSampler", "ComfySwitchNode", "PrimitiveBoolean", "PrimitiveInt", "PrimitiveString", "Note", "PreviewImage", "MaskToImage"}
+        allowed_core = {"LoadImage", "UNETLoader", "CLIPLoader", "VAELoader", "VAEEncode", "VAEDecode", "SetLatentNoiseMask", "KSampler", "ComfySwitchNode", "PrimitiveBoolean", "PrimitiveInt", "PrimitiveString", "Note", "PreviewImage", "MaskToImage",
+                        "easy sam3ModelLoader", "easy sam3ImageSegmentation"}
         for node in nodes.values():
             self.assertTrue(node["type"].startswith("GG") or node["type"] in allowed_core, node["type"])
         self.assertEqual(sum(n["type"] == "GGRegionEditPrepare" for n in nodes.values()), 2)
 
     def test_region_preparation_precedes_all_crop_and_inversion(self):
         _, _, roles, links = self.load_graph()
+        pick = roles["mask_pick"]
+        self.assertEqual(pick["type"], "ComfySwitchNode")
+        # 手绘来源必须仍直连原图 MASK，自动来源必须是 SAM3 的 obj_masks
+        self.assertEqual(self.source(pick, "on_false", links), (roles["original"]["id"], 1))
+        self.assertEqual(self.source(pick, "on_true", links), (roles["auto_mask"]["id"], 2))
         for region in ("background", "person"):
             prep = roles[region + "_prepare"]
             self.assertEqual(prep["type"], "GGRegionEditPrepare")
-            self.assertEqual(self.source(prep, "人像遮罩", links), (roles["original"]["id"], 1))
+            self.assertEqual(self.source(prep, "人像遮罩", links), (pick["id"], 0))
             self.assertEqual(self.source(roles[region + "_crop"], "遮罩", links), (prep["id"], 1))
             self.assertEqual(self.source(roles[region + "_crop"], "图像", links), (prep["id"], 0))
+
+    def test_auto_mask_branch_is_text_driven_and_on_by_default(self):
+        _, _, roles, links = self.load_graph()
+        seg = roles["auto_mask"]
+        self.assertEqual(seg["widgets_values"][0], "person")
+        switch = roles["auto_mask_switch"]
+        self.assertEqual(switch["type"], "PrimitiveBoolean")
+        self.assertIs(switch["widgets_values"][0], True)
+        self.assertEqual(self.source(roles["mask_pick"], "switch", links), (switch["id"], 0))
 
     def test_person_stage_uses_selected_background_as_canvas(self):
         _, _, roles, links = self.load_graph()

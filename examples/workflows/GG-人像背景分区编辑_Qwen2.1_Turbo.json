@@ -1,8 +1,8 @@
 {
   "id": "ff2efab8-a663-4b23-8f94-64c05ed16101",
   "revision": 0,
-  "last_node_id": 57,
-  "last_link_id": 76,
+  "last_node_id": 61,
+  "last_link_id": 85,
   "nodes": [
     {
       "id": 1,
@@ -38,17 +38,15 @@
             28,
             29,
             69,
-            73
+            73,
+            84
           ]
         },
         {
           "name": "MASK",
           "type": "MASK",
           "links": [
-            3,
-            36,
-            71,
-            74
+            82
           ]
         }
       ],
@@ -1002,7 +1000,7 @@
         {
           "name": "人像遮罩",
           "type": "MASK",
-          "link": 3
+          "link": 77
         },
         {
           "name": "处理区域",
@@ -2329,7 +2327,7 @@
         {
           "name": "人像遮罩",
           "type": "MASK",
-          "link": 36
+          "link": 78
         },
         {
           "name": "处理区域",
@@ -3795,7 +3793,7 @@
         {
           "name": "mask",
           "type": "MASK",
-          "link": 71
+          "link": 79
         }
       ],
       "outputs": [
@@ -3914,7 +3912,7 @@
         {
           "name": "人像遮罩",
           "type": "MASK",
-          "link": 74
+          "link": 80
         },
         {
           "name": "叠加颜色",
@@ -4048,6 +4046,273 @@
       "widgets_values_named": {
         "文本": ""
       }
+    },
+    {
+      "id": 58,
+      "type": "easy sam3ModelLoader",
+      "title": "自动蒙版：SAM3 模型",
+      "pos": [
+        -560,
+        760
+      ],
+      "size": [
+        380,
+        160
+      ],
+      "flags": {},
+      "order": 40,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "COMBO",
+          "widget": {
+            "name": "model"
+          },
+          "link": null
+        },
+        {
+          "name": "segmentor",
+          "type": "COMBO",
+          "widget": {
+            "name": "segmentor"
+          },
+          "link": null
+        },
+        {
+          "name": "device",
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        },
+        {
+          "name": "precision",
+          "type": "COMBO",
+          "widget": {
+            "name": "precision"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "sam3_model",
+          "type": "EASY_SAM3_MODEL",
+          "links": [
+            83
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "easy sam3ModelLoader"
+      },
+      "widgets_values": [
+        "sam3.pt",
+        "image",
+        "cuda",
+        "fp16"
+      ]
+    },
+    {
+      "id": 59,
+      "type": "easy sam3ImageSegmentation",
+      "title": "自动蒙版：文本识别人像（person）",
+      "pos": [
+        -560,
+        1000
+      ],
+      "size": [
+        380,
+        330
+      ],
+      "flags": {},
+      "order": 41,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "sam3_model",
+          "type": "EASY_SAM3_MODEL",
+          "link": 83
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 84
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt"
+          },
+          "link": null
+        },
+        {
+          "name": "threshold",
+          "type": "FLOAT",
+          "widget": {
+            "name": "threshold"
+          },
+          "link": null
+        },
+        {
+          "name": "keep_model_loaded",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "keep_model_loaded"
+          },
+          "link": null
+        },
+        {
+          "name": "add_background",
+          "type": "COMBO",
+          "widget": {
+            "name": "add_background"
+          },
+          "link": null
+        },
+        {
+          "name": "detection_limit",
+          "type": "INT",
+          "widget": {
+            "name": "detection_limit"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "masks",
+          "type": "MASK",
+          "links": null,
+          "slot_index": 0
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": null,
+          "slot_index": 1
+        },
+        {
+          "name": "obj_masks",
+          "type": "MASK",
+          "links": [
+            85
+          ],
+          "slot_index": 2
+        },
+        {
+          "name": "boxes",
+          "type": "BBOX",
+          "links": null,
+          "slot_index": 3
+        },
+        {
+          "name": "scores",
+          "type": "FLOAT",
+          "links": null,
+          "slot_index": 4
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "easy sam3ImageSegmentation",
+        "gg_region_role": "auto_mask"
+      },
+      "widgets_values": [
+        "person",
+        0.4,
+        false,
+        "none",
+        -1
+      ]
+    },
+    {
+      "id": 60,
+      "type": "PrimitiveBoolean",
+      "title": "自动识别人像（关掉=用手绘蒙版）",
+      "pos": [
+        -1000,
+        760
+      ],
+      "size": [
+        400,
+        90
+      ],
+      "flags": {},
+      "order": 42,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "BOOLEAN",
+          "type": "BOOLEAN",
+          "links": [
+            81
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "PrimitiveBoolean",
+        "gg_region_role": "auto_mask_switch"
+      },
+      "widgets_values": [
+        true
+      ]
+    },
+    {
+      "id": 61,
+      "type": "ComfySwitchNode",
+      "title": "蒙版来源：自动 / 手绘",
+      "pos": [
+        -560,
+        1380
+      ],
+      "size": [
+        380,
+        120
+      ],
+      "flags": {},
+      "order": 43,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "switch",
+          "type": "BOOLEAN",
+          "link": 81
+        },
+        {
+          "name": "on_false",
+          "type": "MASK",
+          "link": 82
+        },
+        {
+          "name": "on_true",
+          "type": "MASK",
+          "link": 85
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "MASK",
+          "links": [
+            77,
+            78,
+            79,
+            80
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ComfySwitchNode",
+        "gg_region_role": "mask_pick"
+      },
+      "widgets_values": []
     }
   ],
   "links": [
@@ -4066,14 +4331,6 @@
       10,
       0,
       "IMAGE"
-    ],
-    [
-      3,
-      1,
-      1,
-      10,
-      1,
-      "MASK"
     ],
     [
       4,
@@ -4330,14 +4587,6 @@
       30,
       0,
       "IMAGE"
-    ],
-    [
-      36,
-      1,
-      1,
-      30,
-      1,
-      "MASK"
     ],
     [
       37,
@@ -4612,14 +4861,6 @@
       "IMAGE"
     ],
     [
-      71,
-      1,
-      1,
-      52,
-      0,
-      "MASK"
-    ],
-    [
       72,
       52,
       0,
@@ -4636,14 +4877,6 @@
       "IMAGE"
     ],
     [
-      74,
-      1,
-      1,
-      55,
-      1,
-      "MASK"
-    ],
-    [
       75,
       55,
       0,
@@ -4658,6 +4891,78 @@
       57,
       0,
       "STRING"
+    ],
+    [
+      77,
+      61,
+      0,
+      10,
+      1,
+      "MASK"
+    ],
+    [
+      78,
+      61,
+      0,
+      30,
+      1,
+      "MASK"
+    ],
+    [
+      79,
+      61,
+      0,
+      52,
+      0,
+      "MASK"
+    ],
+    [
+      80,
+      61,
+      0,
+      55,
+      1,
+      "MASK"
+    ],
+    [
+      82,
+      1,
+      1,
+      61,
+      1,
+      "MASK"
+    ],
+    [
+      83,
+      58,
+      0,
+      59,
+      0,
+      "EASY_SAM3_MODEL"
+    ],
+    [
+      84,
+      1,
+      0,
+      59,
+      1,
+      "IMAGE"
+    ],
+    [
+      85,
+      59,
+      2,
+      61,
+      2,
+      "MASK"
+    ],
+    [
+      81,
+      60,
+      0,
+      61,
+      0,
+      "BOOLEAN"
     ]
   ],
   "groups": [
