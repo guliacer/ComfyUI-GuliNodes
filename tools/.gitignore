@@ -1,0 +1,5 @@
+# 本机验证快照包含本地文件列表，不进入发布仓库。
+region_edit_schema_snapshot.json
+region_edit_browser_validation.json
+region_edit_local_llm_probe.json
+region_edit_execution_report.json
