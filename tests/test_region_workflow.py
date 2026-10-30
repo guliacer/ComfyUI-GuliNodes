@@ -89,16 +89,15 @@ class RegionWorkflowContractTests(unittest.TestCase):
         self.assertIs(switch["widgets_values"][0], True)
         self.assertEqual(self.source(roles["mask_pick"], "switch", links), (switch["id"], 0))
 
-    def test_person_stage_runs_parallel_from_original(self):
-        # 并联：人像阶段从原图出发，不再串行依赖背景结果
+    def test_serial_stage_person_then_background(self):
+        # 串行：人像阶段从原图出发，背景阶段基于人像结果（处理后的图像）取反蒙版处理
         _, _, roles, links = self.load_graph()
+        # 人像阶段：从原图出发
         self.assertEqual(self.source(roles["person_prepare"], "图像", links), (roles["original"]["id"], 0))
         self.assertEqual(self.source(roles["person_restore"], "背景图像", links), (roles["original"]["id"], 0))
-        # 最后拼接：背景结果为底、人像结果为覆盖、人像蒙版为遮罩
-        merge = roles["merge"]
-        self.assertEqual(self.source(merge, "背景图", links), (roles["background_select"]["id"], 0))
-        self.assertEqual(self.source(merge, "覆盖图", links), (roles["person_select"]["id"], 0))
-        self.assertEqual(self.source(merge, "遮罩", links), (roles["auto_mask"]["id"], 0))
+        # 背景阶段：图像与贴回底图都来自人像阶段结果，而非原图
+        self.assertEqual(self.source(roles["background_prepare"], "图像", links), (roles["person_select"]["id"], 0))
+        self.assertEqual(self.source(roles["background_restore"], "背景图像", links), (roles["person_select"]["id"], 0))
 
     def test_empty_requests_lazily_skip_entire_region_branch(self):
         _, nodes, roles, links = self.load_graph()
@@ -108,9 +107,9 @@ class RegionWorkflowContractTests(unittest.TestCase):
             self.assertEqual(switch["type"], "ComfySwitchNode")
             self.assertEqual(self.source(switch, "switch", links), (prep["id"], 4))
             self.assertEqual(self.source(switch, "on_false", links), (prep["id"], 0))
-        output_roles = {"save", "mask_preview", "instructions", "auto_mask", "auto_mask_switch", "mask_pick", "merge"}
+        output_roles = {"save", "mask_preview", "instructions", "auto_mask", "auto_mask_switch", "mask_pick"}
         for node in nodes.values():
-            if node["type"] in {"GGImageCompressSave", "PreviewImage", "GGImageMergeMask", "easy sam3ImageSegmentation"}:
+            if node["type"] in {"GGImageCompressSave", "PreviewImage", "easy sam3ImageSegmentation"}:
                 self.assertIn(node.get("properties", {}).get("gg_region_role"), output_roles)
 
     def test_latent_is_encoded_image_with_noise_mask(self):
@@ -133,15 +132,14 @@ class RegionWorkflowContractTests(unittest.TestCase):
             # 降噪必须足以看出变化：背景 0.6、人像 0.35（低到 0.25 实测接近直通）
             self.assertEqual(values["denoise"], 0.6 if region == "background" else 0.35)
 
-    def test_final_merge_gates_on_person_mask(self):
+    def test_background_stage_uses_inverted_mask_via_prepare(self):
+        # 背景阶段通过「处理区域=背景」在 prepare 内反相人像蒙版，得到背景遮罩
         _, _, roles, links = self.load_graph()
-        merge = roles["merge"]
-        self.assertEqual(self.source(merge, "遮罩", links), (roles["auto_mask"]["id"], 0))
-        values = merge["widgets_values_named"]
-        self.assertEqual(values["透明度"], 1.0)
-        self.assertEqual(values["遮罩扩展"], 0)
-        self.assertEqual(values["模糊半径"], 0)
-        self.assertTrue(values["匹配图像大小"])
+        prep = roles["background_prepare"]
+        self.assertEqual(prep["type"], "GGRegionEditPrepare")
+        self.assertEqual(prep["widgets_values_named"]["处理区域"], "背景")
+        # 背景裁剪的遮罩来自背景 prepare 输出的区域遮罩（已反相）
+        self.assertEqual(self.source(roles["background_crop"], "遮罩", links), (prep["id"], 1))
 
     def test_crop_dimensions_and_restoration_are_geometry_safe(self):
         _, _, roles, _ = self.load_graph()
@@ -177,8 +175,8 @@ class RegionWorkflowContractTests(unittest.TestCase):
     def test_save_is_png_and_no_credentials_are_embedded(self):
         _, nodes, roles, links = self.load_graph()
         self.assertEqual(roles["save"]["widgets_values_named"]["格式"], "PNG")
-        # 并联后保存节点吃拼接结果
-        self.assertEqual(self.source(roles["save"], "图像", links), (roles["merge"]["id"], 0))
+        # 串行后保存节点吃背景阶段结果（已含人像优化）
+        self.assertEqual(self.source(roles["save"], "图像", links), (roles["background_select"]["id"], 0))
         for node in nodes.values():
             for key, value in node.get("widgets_values_named", {}).items():
                 if "api_key" in key.lower() or key in ("API密钥", "密钥"):

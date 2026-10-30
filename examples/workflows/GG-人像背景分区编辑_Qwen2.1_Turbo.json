@@ -2,7 +2,7 @@
   "id": "ff2efab8-a663-4b23-8f94-64c05ed16101",
   "revision": 0,
   "last_node_id": 62,
-  "last_link_id": 95,
+  "last_link_id": 92,
   "nodes": [
     {
       "id": 1,
@@ -34,8 +34,6 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            2,
-            28,
             73,
             84,
             90,
@@ -3426,7 +3424,8 @@
           "name": "output",
           "type": "IMAGE",
           "links": [
-            93
+            2,
+            28
           ]
         }
       ],
@@ -3461,7 +3460,7 @@
         {
           "name": "图像",
           "type": "IMAGE",
-          "link": 95
+          "link": 92
         },
         {
           "name": "文件名前缀",
@@ -3879,8 +3878,7 @@
           "name": "masks",
           "type": "MASK",
           "links": [
-            85,
-            94
+            85
           ],
           "slot_index": 0
         },
@@ -4004,97 +4002,6 @@
         "gg_region_role": "mask_pick"
       },
       "widgets_values": []
-    },
-    {
-      "id": 62,
-      "type": "GGImageMergeMask",
-      "title": "⑦ 拼接：人像盖回背景",
-      "pos": [
-        4700,
-        1430
-      ],
-      "size": [
-        400,
-        240
-      ],
-      "flags": {},
-      "order": 44,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "背景图",
-          "type": "IMAGE",
-          "link": 92
-        },
-        {
-          "name": "覆盖图",
-          "type": "IMAGE",
-          "link": 93
-        },
-        {
-          "name": "遮罩",
-          "type": "MASK",
-          "link": 94
-        },
-        {
-          "name": "透明度",
-          "type": "FLOAT",
-          "widget": {
-            "name": "透明度"
-          },
-          "link": null
-        },
-        {
-          "name": "遮罩扩展",
-          "type": "INT",
-          "widget": {
-            "name": "遮罩扩展"
-          },
-          "link": null
-        },
-        {
-          "name": "模糊半径",
-          "type": "INT",
-          "widget": {
-            "name": "模糊半径"
-          },
-          "link": null
-        },
-        {
-          "name": "匹配图像大小",
-          "type": "BOOLEAN",
-          "widget": {
-            "name": "匹配图像大小"
-          },
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "图像",
-          "type": "IMAGE",
-          "links": [
-            95
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "GGImageMergeMask",
-        "gg_region_role": "merge"
-      },
-      "widgets_values": [
-        1.0,
-        0,
-        0,
-        true
-      ],
-      "widgets_values_named": {
-        "透明度": 1.0,
-        "遮罩扩展": 0,
-        "模糊半径": 0,
-        "匹配图像大小": true
-      }
     }
   ],
   "links": [
@@ -4108,7 +4015,7 @@
     ],
     [
       2,
-      1,
+      42,
       0,
       10,
       0,
@@ -4308,7 +4215,7 @@
     ],
     [
       28,
-      1,
+      42,
       0,
       20,
       6,
@@ -4677,30 +4584,6 @@
     [
       92,
       22,
-      0,
-      62,
-      0,
-      "IMAGE"
-    ],
-    [
-      93,
-      42,
-      0,
-      62,
-      1,
-      "IMAGE"
-    ],
-    [
-      94,
-      59,
-      0,
-      62,
-      2,
-      "MASK"
-    ],
-    [
-      95,
-      62,
       0,
       51,
       0,
