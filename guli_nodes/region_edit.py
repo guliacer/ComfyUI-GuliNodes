@@ -60,10 +60,19 @@ def _validated_human_mask(人像遮罩, 高, 宽, device):
         遮罩 = 人像遮罩.unsqueeze(0)
     elif 人像遮罩.ndim == 3 and 人像遮罩.shape[0] == 1:
         遮罩 = 人像遮罩
+    elif 人像遮罩.ndim == 3 and 人像遮罩.shape[0] > 1:
+        # [B,H,W] 多张批次：本节点只处理单张，取第一张（SAM3 等自动分割在个别情况下会给批维）。
+        遮罩 = 人像遮罩[:1]
     elif 人像遮罩.ndim == 4 and 人像遮罩.shape[:2] == (1, 1):
         遮罩 = 人像遮罩[:, 0]
+    elif 人像遮罩.ndim == 4 and 人像遮罩.shape[1] == 1 and 人像遮罩.shape[0] > 1:
+        # [N,1,H,W] 多对象堆叠：合并（取并集）为单张，避免多对象分割被误判为「不支持」。
+        遮罩 = 人像遮罩[:, 0].max(dim=0, keepdim=True).values
     else:
-        raise ValueError("人像遮罩仅支持 [高,宽]、[1,高,宽] 或 [1,1,高,宽]，请拆分批次并使用单张遮罩。")
+        raise ValueError(
+            f"人像遮罩形状 {tuple(人像遮罩.shape)} 不支持，"
+            "请用加载图像的遮罩编辑器涂选单张人物，或让自动分割输出单张合并蒙版。"
+        )
     if not torch.isfinite(遮罩).all().item():
         raise ValueError("人像遮罩含有非有限数值，请重新涂选并保存有效的 0–1 遮罩。")
     if ((遮罩 < 0) | (遮罩 > 1)).any().item():
