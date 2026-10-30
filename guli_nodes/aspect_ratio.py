@@ -44,8 +44,27 @@ IMAGE_RESIZE_METHODS = ["nearest-exact", "bilinear", "lanczos", "area", "bicubic
 # 因此这里单独列一份，不再 alias Latent 的列表（否则新增方式会顺带漏进宽高节点）。
 ADAPTER_MODE_OPTIONS = ["按边长", "按K数分辨率", "按Latent接入", "按图像接入"]
 ADAPTER_MODE_INPUT = "宽高方式"
-# 宽高节点保留原有的 3:2/16:9/21:9 等横向比例，同时补齐 Latent 侧的 1:2/5:7/10:16。
-ADAPTER_ASPECT_RATIOS = list(dict.fromkeys([*ASPECT_RATIOS, *LATENT_ASPECT_RATIOS]))
+# 图像类节点（GG 图像宽高、GG 遮罩裁剪）的「按边长」比例表：
+# 保留 3:2/16:9/21:9 等横向比例，同时补齐 Latent 侧的 1:2/5:7/10:16。
+IMAGE_ASPECT_RATIOS = list(dict.fromkeys([*ASPECT_RATIOS, *LATENT_ASPECT_RATIOS]))
+
+def align_to_eight(value: int) -> int:
+    """向下对齐到 8 的倍数（最小 8）。
+
+    按比例 / K 数算出的宽高统一走这里，保证结果能被 Latent 网格整除。
+    GG Latent、GG 图像宽高、GG 图像裁剪、GG 遮罩裁剪 共用同一套对齐口径。
+    """
+    return max(8, (int(value) // 8) * 8)
+
+
+def apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
+    """按「横屏 / 竖屏」把宽高摆正；其它取值原样返回。"""
+    if 画面方向 == "横屏" and width < height:
+        return height, width
+    if 画面方向 == "竖屏" and width > height:
+        return height, width
+    return width, height
+
 
 def _preset_dimensions(
     width_ratio: int,
@@ -89,6 +108,35 @@ def _dimensions_from_edge(
     return align_to_eight(width), align_to_eight(height)
 
 
+def dimensions_by_ratio(
+    宽高比例: str, 边长, 边长类型: str = "最长边", 画面方向: str | None = "横屏"
+) -> tuple[int, int]:
+    """按「宽高比例 + 边长 + 边长类型 + 画面方向」算像素宽高（对齐到 8）。
+
+    `画面方向` 传 None 表示不摆正方向、按比例字面值算
+    （`GG 图像裁剪` 的「按比例裁剪」就是这么用的，它没有画面方向参数）。
+    """
+    if 宽高比例 not in ASPECT_PRESETS:
+        raise ValueError(f"不支持的宽高比例「{宽高比例}」。")
+    width_ratio, height_ratio = ASPECT_PRESETS[宽高比例]
+    if 画面方向 is not None:
+        width_ratio, height_ratio = apply_orientation(width_ratio, height_ratio, 画面方向)
+    return _dimensions_from_edge(width_ratio, height_ratio, 边长, 边长类型, align_to_eight)
+
+
+def dimensions_by_resolution(
+    宽高比例: str, 分辨率: str = "1K", 画面方向: str = "横屏"
+) -> tuple[int, int]:
+    """按「宽高比例 + K 数分辨率 + 画面方向」算像素宽高（K 数表示最长边，对齐到 8）。"""
+    if 宽高比例 not in ASPECT_PRESETS:
+        raise ValueError(f"不支持的宽高比例「{宽高比例}」。")
+    if 分辨率 not in RESOLUTION_EDGE_LENGTHS:
+        分辨率 = "1K"
+    width_ratio, height_ratio = ASPECT_PRESETS[宽高比例]
+    width_ratio, height_ratio = apply_orientation(width_ratio, height_ratio, 画面方向)
+    return _preset_dimensions(width_ratio, height_ratio, 分辨率, align_to_eight)
+
+
 def _positive_scale(value: float, name: str = "缩放倍率") -> float:
     try:
         scale = float(value)
@@ -102,17 +150,17 @@ def _positive_scale(value: float, name: str = "缩放倍率") -> float:
 # 宽高可以来自控件，也可以从 GG 图像宽高 之类的上游直接连线接入，
 # 因此不能假定它是干净的 int。上限与控件声明的 8192 保持一致：
 # 一个被外部推到十万级的尺寸会直接在建空 Latent 那一步把显存吃光。
-_LATENT_EDGE_MAX = 8192
+MAX_EDGE = 8192
 
 
-def _edge_pixels(value, name: str = "宽度") -> int:
+def edge_pixels(value, name: str = "宽度") -> int:
     try:
         edge = int(round(float(value)))
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name}必须是有效数字。") from exc
     if edge <= 0:
         raise ValueError(f"{name}必须大于 0。")
-    return min(_LATENT_EDGE_MAX, edge)
+    return min(MAX_EDGE, edge)
 
 
 def _empty_latent(batch_size: int, width: int, height: int, device=None, dtype=torch.float32) -> dict:
@@ -175,15 +223,19 @@ def _latent_from_input_image(image: torch.Tensor, method: str, scale: float, ali
     return _empty_latent(resized.shape[0], width, height, device=resized.device, dtype=resized.dtype)
 
 
-def _unpack_mode(value, mode_key: str):
-    """拆开 DynamicCombo 的嵌套取值：返回 (方式, 该方式下的输入字典)。"""
+def _unpack_mode(value, mode_key: str, default="按边长"):
+    """拆开 DynamicCombo 的嵌套取值：返回 (方式, 该方式下的输入字典)。
+
+    `default` 是取不到方式时的回退值；调用方自己带默认语义时传 `None`，
+    免得拿到一个不属于本节点选项表的字符串。
+    """
     if isinstance(value, dict):
         nested = value.get(mode_key)
         if isinstance(nested, dict):
-            mode = nested.get(mode_key, "按边长")
+            mode = nested.get(mode_key, default)
             return mode, nested
-        return nested or "按边长", value
-    return value or "按边长", {}
+        return nested or default, value
+    return value or default, {}
 
 
 def _unpack_latent_mode(value):
@@ -211,24 +263,18 @@ def _generate_latent_by_mode(mode_value, align_to_eight, apply_orientation) -> d
     if mode == "按宽高":
         return _empty_latent(
             values.get("批量大小", 1),
-            align_to_eight(_edge_pixels(values.get("宽度", 1024), "宽度")),
-            align_to_eight(_edge_pixels(values.get("高度", 1024), "高度")),
+            align_to_eight(edge_pixels(values.get("宽度", 1024), "宽度")),
+            align_to_eight(edge_pixels(values.get("高度", 1024), "高度")),
         )
 
     ratio = values.get("宽高比例", "9:16")
     batch_size = values.get("批量大小", 1)
     orientation = values.get("画面方向", "横屏")
-    wr, hr = ASPECT_PRESETS[ratio]
-    wr, hr = apply_orientation(wr, hr, orientation)
-
     if mode == "按K数分辨率":
-        resolution = values.get("分辨率", "1K")
-        if resolution not in RESOLUTION_EDGE_LENGTHS:
-            resolution = "1K"
-        width, height = _preset_dimensions(wr, hr, resolution, align_to_eight)
+        width, height = dimensions_by_resolution(ratio, values.get("分辨率", "1K"), orientation)
     else:
-        width, height = _dimensions_from_edge(
-            wr, hr, values.get("边长", 1024), values.get("边长类型", "最长边"), align_to_eight
+        width, height = dimensions_by_ratio(
+            ratio, values.get("边长", 1024), values.get("边长类型", "最长边"), orientation
         )
     return _empty_latent(batch_size, width, height)
 
@@ -253,7 +299,7 @@ def _latent_mode_inputs(io_module):
                 "宽度",
                 default=1024,
                 min=64,
-                max=_LATENT_EDGE_MAX,
+                max=MAX_EDGE,
                 step=8,
                 tooltip="直接给像素宽度，可接入 GG 图像宽高 的宽度输出。不是 8 的倍数时自动对齐到 8。",
             ),
@@ -261,7 +307,7 @@ def _latent_mode_inputs(io_module):
                 "高度",
                 default=1024,
                 min=64,
-                max=_LATENT_EDGE_MAX,
+                max=MAX_EDGE,
                 step=8,
                 tooltip="直接给像素高度，可接入 GG 图像宽高 的高度输出。不是 8 的倍数时自动对齐到 8。",
             ),
@@ -288,8 +334,8 @@ def _legacy_latent_mode_inputs():
         "批量大小": ("INT", {"default": 1, "min": 1, "max": 64}),
         "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
         "分辨率": (RESOLUTION_OPTIONS, {"default": "1K"}),
-        "宽度": ("INT", {"default": 1024, "min": 64, "max": _LATENT_EDGE_MAX, "step": 8}),
-        "高度": ("INT", {"default": 1024, "min": 64, "max": _LATENT_EDGE_MAX, "step": 8}),
+        "宽度": ("INT", {"default": 1024, "min": 64, "max": MAX_EDGE, "step": 8}),
+        "高度": ("INT", {"default": 1024, "min": 64, "max": MAX_EDGE, "step": 8}),
         "Latent": ("LATENT",),
         "图像": ("IMAGE",),
         "缩放方法": (IMAGE_RESIZE_METHODS, {"default": "lanczos"}),
@@ -339,33 +385,25 @@ def _dimensions_by_mode(mode_value, align_to_eight, apply_orientation) -> tuple[
         return _dimensions_from_image(values.get("图像"), values.get("缩放倍率", 1.0), align_to_eight)
 
     ratio = values.get("宽高比例", "16:9")
-    if ratio not in ASPECT_PRESETS:
-        raise ValueError(f"不支持的宽高比例「{ratio}」。")
     orientation = values.get("画面方向", "横屏")
-    wr, hr = ASPECT_PRESETS[ratio]
-    wr, hr = apply_orientation(wr, hr, orientation)
-
     if mode == "按K数分辨率":
-        resolution = values.get("分辨率", "1K")
-        if resolution not in RESOLUTION_EDGE_LENGTHS:
-            resolution = "1K"
-        return _preset_dimensions(wr, hr, resolution, align_to_eight)
+        return dimensions_by_resolution(ratio, values.get("分辨率", "1K"), orientation)
 
-    return _dimensions_from_edge(
-        wr, hr, values.get("边长", 1024), values.get("边长类型", "最长边"), align_to_eight
+    return dimensions_by_ratio(
+        ratio, values.get("边长", 1024), values.get("边长类型", "最长边"), orientation
     )
 
 
 def _adapter_mode_inputs(io_module):
     return io_module.DynamicCombo.Input(ADAPTER_MODE_INPUT, options=[
         io_module.DynamicCombo.Option(key="按边长", inputs=[
-            io_module.Combo.Input("宽高比例", options=ADAPTER_ASPECT_RATIOS, default="16:9"),
+            io_module.Combo.Input("宽高比例", options=IMAGE_ASPECT_RATIOS, default="16:9"),
             io_module.Int.Input("边长", default=1024, min=64, max=8192, step=8),
             io_module.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边"),
             io_module.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏"),
         ]),
         io_module.DynamicCombo.Option(key="按K数分辨率", inputs=[
-            io_module.Combo.Input("宽高比例", options=ADAPTER_ASPECT_RATIOS, default="16:9"),
+            io_module.Combo.Input("宽高比例", options=IMAGE_ASPECT_RATIOS, default="16:9"),
             io_module.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏"),
             io_module.Combo.Input("分辨率", options=RESOLUTION_OPTIONS, default="1K"),
         ]),
@@ -384,7 +422,7 @@ def _legacy_adapter_mode_inputs():
     # 方式选择器只在上面的 INPUT_TYPES["required"] 里声明一次，这里不重复，
     # 否则 /object_info 会把同名键同时放进 required 和 optional，前端可能建出两个同名控件。
     return {
-        "宽高比例": (ADAPTER_ASPECT_RATIOS, {"default": "16:9"}),
+        "宽高比例": (IMAGE_ASPECT_RATIOS, {"default": "16:9"}),
         "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
         "边长类型": (SIDE_TYPES, {"default": "最长边"}),
         "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
@@ -398,18 +436,6 @@ def _legacy_adapter_mode_inputs():
 if io is not None:
 
     class GGAspectRatioAdapter(io.ComfyNode):
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @staticmethod
-        def _apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
-            if 画面方向 == "横屏" and width < height:
-                return height, width
-            if 画面方向 == "竖屏" and width > height:
-                return height, width
-            return width, height
-
         @classmethod
         def define_schema(cls):
             return io.Schema(
@@ -428,25 +454,13 @@ if io is not None:
 
         @classmethod
         def execute(cls, 宽高方式):
-            width, height = _dimensions_by_mode(宽高方式, cls._align_to_eight, cls._apply_orientation)
+            width, height = _dimensions_by_mode(宽高方式, align_to_eight, apply_orientation)
             return io.NodeOutput(width, height)
 
     GGAspectRatioAdapter = GGAspectRatioAdapter
 
 
     class GGAspectRatioLatent(io.ComfyNode):
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @staticmethod
-        def _apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
-            if 画面方向 == "横屏" and width < height:
-                return height, width
-            if 画面方向 == "竖屏" and width > height:
-                return height, width
-            return width, height
-
         @classmethod
         def define_schema(cls):
             return io.Schema(
@@ -464,7 +478,7 @@ if io is not None:
 
         @classmethod
         def execute(cls, Latent方式):
-            return io.NodeOutput(_generate_latent_by_mode(Latent方式, cls._align_to_eight, cls._apply_orientation))
+            return io.NodeOutput(_generate_latent_by_mode(Latent方式, align_to_eight, apply_orientation))
 
     GGAspectRatioLatent = GGAspectRatioLatent
 
@@ -472,18 +486,6 @@ if io is not None:
 else:
 
     class GGAspectRatioAdapter:
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @staticmethod
-        def _apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
-            if 画面方向 == "横屏" and width < height:
-                return height, width
-            if 画面方向 == "竖屏" and width > height:
-                return height, width
-            return width, height
-
         @classmethod
         def INPUT_TYPES(s):
             return {
@@ -500,22 +502,10 @@ else:
 
         def calculate(self, 宽高方式: str = "按边长", **kwargs) -> tuple:
             kwargs[ADAPTER_MODE_INPUT] = 宽高方式
-            return _dimensions_by_mode(kwargs, self._align_to_eight, self._apply_orientation)
+            return _dimensions_by_mode(kwargs, align_to_eight, apply_orientation)
 
 
     class GGAspectRatioLatent:
-        @staticmethod
-        def _align_to_eight(value: int) -> int:
-            return max(8, (value // 8) * 8)
-
-        @staticmethod
-        def _apply_orientation(width: int, height: int, 画面方向: str) -> tuple[int, int]:
-            if 画面方向 == "横屏" and width < height:
-                return height, width
-            if 画面方向 == "竖屏" and width > height:
-                return height, width
-            return width, height
-
         @classmethod
         def INPUT_TYPES(s):
             return {
@@ -531,7 +521,7 @@ else:
 
         def generate(self, Latent方式: str = "按边长", **kwargs) -> tuple:
             kwargs["Latent方式"] = Latent方式
-            return (_generate_latent_by_mode(kwargs, self._align_to_eight, self._apply_orientation),)
+            return (_generate_latent_by_mode(kwargs, align_to_eight, apply_orientation),)
 
 
 NODE_CLASS_MAPPINGS = {

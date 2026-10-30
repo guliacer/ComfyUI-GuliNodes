@@ -1,0 +1,2289 @@
+Region workflow change set. Original user mask/image/aspect/AGENTS edits predate this task. Review new region/LLM code and integration only. No commits.
+
+--- /dev/null
++++ guli_nodes/region_edit.py
+@@ -0,0 +1,182 @@
++"""人像/背景分区编辑的纯准备节点；不加载模型、不执行生成、不修改原始张量。"""
++
++import torch
++
++try:
++    from comfy_api.latest import io
++except ImportError:
++    io = None
++
++from .text_tools import _join_texts
++
++
++_NODE_ID = "GGRegionEditPrepare"
++_DISPLAY_NAME = "GG 分区编辑准备"
++_CATEGORY = "GuliNodes/图像"
++_REGIONS = ["人像", "背景"]
++_RETURN_TYPES = ("IMAGE", "MASK", "STRING", "STRING", "BOOLEAN")
++_RETURN_NAMES = ("图像", "区域遮罩", "区域请求", "锁定约束", "是否编辑")
++_DESCRIPTION = "准备人像或背景的区域遮罩、编辑请求与固定锁定约束；编辑需求留空时不编辑，不加载模型。"
++_INPUT_TOOLTIPS = {
++    "图像": "单张 RGB 或 RGBA 图像，数值须在 0–1；去除透明通道时保留原始 RGB，不合成白底。",
++    "人像遮罩": "白色涂选人物、黑色表示背景；请在加载图像的遮罩编辑器涂选人物并保存。编辑需求为空时不校验遮罩。",
++    "处理区域": "人像使用原始人物遮罩，背景使用其反相；始终先校验人物涂选有效。",
++    "编辑需求": "仅此文本决定是否编辑；留空或只填空白时返回原图与全黑区域遮罩。",
++    "全局要求": "可选的统一风格等要求，仅在编辑需求非空时附加；不能单独启用编辑或覆盖固定约束。",
++}
++_OUTPUT_TOOLTIPS = (
++    "保持原始画布和 RGB 像素的图像。",
++    "当前区域的软遮罩；未启用编辑时为与图像同尺寸的全黑遮罩。",
++    "当前编辑目标、编辑需求与可选的全局要求；未启用编辑时为空。",
++    "固定的人物、画布与非目标区域保护约束，不受用户文本覆盖。",
++    "仅当编辑需求去除首尾空白后非空且输入校验通过时为真。",
++)
++
++
++def _validated_rgb(图像):
++    if not isinstance(图像, torch.Tensor) or 图像.is_complex():
++        raise ValueError("图像必须是单张 RGB 或 RGBA 张量，请连接加载图像的图像输出。")
++    if 图像.ndim != 4 or 图像.shape[0] != 1:
++        raise ValueError("图像必须是单张 [1,高,宽,通道] 图像，请拆分批次后再连接。")
++    if 图像.shape[1] <= 0 or 图像.shape[2] <= 0 or 图像.shape[3] not in (3, 4):
++        raise ValueError("图像宽高必须大于零且通道数为 3 或 4，请连接有效的 RGB 或 RGBA 图像。")
++    if not torch.isfinite(图像).all().item():
++        raise ValueError("图像含有非有限数值，请清除无效数值后重新输入 0–1 图像。")
++    if ((图像 < 0) | (图像 > 1)).any().item():
++        raise ValueError("图像数值超出 0–1，请先将图像归一化到 0–1。")
++    # 只去掉 alpha，不合成背景，也不原地修改输入。
++    return 图像 if 图像.shape[3] == 3 else 图像[..., :3]
++
++
++def _validated_human_mask(人像遮罩, 高, 宽, device):
++    if not isinstance(人像遮罩, torch.Tensor) or 人像遮罩.is_complex():
++        raise ValueError("人像遮罩必须是人物涂选张量，请在加载图像的遮罩编辑器涂选人物并保存。")
++    if 人像遮罩.ndim == 2:
++        遮罩 = 人像遮罩.unsqueeze(0)
++    elif 人像遮罩.ndim == 3 and 人像遮罩.shape[0] == 1:
++        遮罩 = 人像遮罩
++    elif 人像遮罩.ndim == 4 and 人像遮罩.shape[:2] == (1, 1):
++        遮罩 = 人像遮罩[:, 0]
++    else:
++        raise ValueError("人像遮罩仅支持 [高,宽]、[1,高,宽] 或 [1,1,高,宽]，请拆分批次并使用单张遮罩。")
++    if not torch.isfinite(遮罩).all().item():
++        raise ValueError("人像遮罩含有非有限数值，请重新涂选并保存有效的 0–1 遮罩。")
++    if ((遮罩 < 0) | (遮罩 > 1)).any().item():
++        raise ValueError("人像遮罩数值超出 0–1，请先将遮罩归一化到 0–1。")
++    # 普通加载图像的无涂选占位遮罩常为 64×64，优先给出编辑器操作建议。
++    if 遮罩.shape[1:] == (64, 64) and torch.count_nonzero(遮罩).item() == 0:
++        raise ValueError("人像遮罩为空，请在加载图像的遮罩编辑器涂选人物并保存。")
++    if 遮罩.shape[1:] != (高, 宽):
++        raise ValueError("人像遮罩尺寸必须与图像一致，请使用同一图像的遮罩编辑器重新涂选并保存。")
++    # 保留浮点软权重用于最终合成；消费端归一化的安全性在准备函数中另行校验。
++    dtype = 遮罩.dtype if 遮罩.is_floating_point() else torch.float32
++    return 遮罩.to(device=device, dtype=dtype)
++
++
++def prepare_region(图像, 人像遮罩, 处理区域="人像", 编辑需求="", 全局要求=""):
++    """返回固定顺序的图像、区域遮罩、区域请求、锁定约束、是否编辑。"""
++    RGB图像 = _validated_rgb(图像)
++    if not isinstance(处理区域, str) or 处理区域 not in _REGIONS:
++        raise ValueError("处理区域无效，请选择「人像」或「背景」。")
++    if not isinstance(编辑需求, str):
++        raise ValueError("编辑需求必须是文本，请填写区域修改要求或留空以关闭编辑。")
++    需求 = 编辑需求.strip()
++    其它区域 = "背景" if 处理区域 == "人像" else "人像"
++    锁定约束 = (
++        "保持原图人物的身份、姿态、位置、比例和外轮廓基本不变；保持相同画布、镜头和透视。\n\n"
++        f"仅编辑{处理区域}区域，不得编辑{其它区域}区域；{其它区域}仅作为上下文，不是编辑目标。"
++    )
++    高, 宽 = RGB图像.shape[1:3]
++    if not 需求:
++        空遮罩 = torch.zeros((1, 高, 宽), device=RGB图像.device, dtype=torch.float32)
++        return RGB图像, 空遮罩, "", 锁定约束, False
++
++    遮罩 = _validated_human_mask(人像遮罩, 高, 宽, RGB图像.device)
++    总像素 = 高 * 宽
++    人物像素 = torch.count_nonzero(遮罩 > 0.1).item()
++    # 0.002 = 1/500；整数比较避免 float32 mean 在临界值附近产生漂移。
++    if 人物像素 * 500 < 总像素:
++        raise ValueError("人像遮罩有效区域不足 0.2%，请在加载图像的遮罩编辑器涂选人物并保存。")
++    if 人物像素 == 总像素:
++        raise ValueError("人像遮罩按有效阈值覆盖整张图像（全白），请只涂选人物并保留背景为黑色。")
++    # GG 遮罩裁剪先转 float32；还须按消费端精度校验，避免触发其整图回退。
++    消费人物像素 = torch.count_nonzero(遮罩.float() > 0.1).item()
++    if 消费人物像素 * 500 < 总像素:
++        raise ValueError("人像遮罩转为 float32 后有效区域不足 0.2%（精度导致像素落到 0.1 阈值），请重新涂选人物并让有效权重明显高于 0.1。")
++    # 人物有效性必须先于反相校验，防止空人物遮罩反相后变成全图编辑。
++    区域遮罩 = 遮罩 if 处理区域 == "人像" else 1 - 遮罩
++    区域像素 = torch.count_nonzero(区域遮罩 > 0.1).item()
++    if 区域像素 * 500 < 总像素:
++        raise ValueError(f"{处理区域}区域有效面积不足 0.2%，请检查人物涂选并为当前区域保留足够面积。")
++    消费区域像素 = torch.count_nonzero(区域遮罩.float() > 0.1).item()
++    if 消费区域像素 * 500 < 总像素:
++        raise ValueError(f"{处理区域}区域转为 float32 后有效面积不足 0.2%（精度导致像素落到 0.1 阈值），请检查人物涂选并让当前区域的有效权重明显高于 0.1。")
++    if not isinstance(全局要求, str):
++        raise ValueError("全局要求必须是文本，请填写统一要求或留空。")
++    全局文本 = 全局要求.strip()
++    区域请求 = _join_texts([
++        f"编辑目标：{处理区域}",
++        f"编辑需求：{需求}",
++        f"全局要求：{全局文本}" if 全局文本 else "",
++    ])
++    return RGB图像, 区域遮罩, 区域请求, 锁定约束, True
++
++
++class GGRegionEditPrepare:
++    @classmethod
++    def INPUT_TYPES(cls):
++        return {
++            "required": {
++                "图像": ("IMAGE", {"tooltip": _INPUT_TOOLTIPS["图像"]}),
++                "人像遮罩": ("MASK", {"tooltip": _INPUT_TOOLTIPS["人像遮罩"]}),
++                "处理区域": (_REGIONS, {"default": "人像", "tooltip": _INPUT_TOOLTIPS["处理区域"]}),
++                "编辑需求": ("STRING", {"default": "", "multiline": True, "dynamicPrompts": False, "tooltip": _INPUT_TOOLTIPS["编辑需求"]}),
++                "全局要求": ("STRING", {"default": "", "multiline": True, "dynamicPrompts": False, "tooltip": _INPUT_TOOLTIPS["全局要求"]}),
++            },
++        }
++
++    RETURN_TYPES = _RETURN_TYPES
++    RETURN_NAMES = _RETURN_NAMES
++    OUTPUT_TOOLTIPS = _OUTPUT_TOOLTIPS
++    FUNCTION = "execute"
++    CATEGORY = _CATEGORY
++    DESCRIPTION = _DESCRIPTION
++
++    def execute(self, 图像, 人像遮罩, 处理区域="人像", 编辑需求="", 全局要求=""):
++        return prepare_region(图像, 人像遮罩, 处理区域, 编辑需求, 全局要求)
++
++
++if io is not None:
++    class GGRegionEditPrepare_V3(io.ComfyNode):
++        @classmethod
++        def define_schema(cls):
++            return io.Schema(
++                node_id=_NODE_ID,
++                display_name=_DISPLAY_NAME,
++                category=_CATEGORY,
++                description=_DESCRIPTION,
++                inputs=[
++                    io.Image.Input("图像", tooltip=_INPUT_TOOLTIPS["图像"]),
++                    io.Mask.Input("人像遮罩", tooltip=_INPUT_TOOLTIPS["人像遮罩"]),
++                    io.Combo.Input("处理区域", options=_REGIONS, default="人像", tooltip=_INPUT_TOOLTIPS["处理区域"]),
++                    io.String.Input("编辑需求", default="", multiline=True, dynamic_prompts=False, tooltip=_INPUT_TOOLTIPS["编辑需求"]),
++                    io.String.Input("全局要求", default="", multiline=True, dynamic_prompts=False, tooltip=_INPUT_TOOLTIPS["全局要求"]),
++                ],
++                outputs=[
++                    io.Image.Output("图像", tooltip=_OUTPUT_TOOLTIPS[0]),
++                    io.Mask.Output("区域遮罩", tooltip=_OUTPUT_TOOLTIPS[1]),
++                    io.String.Output("区域请求", tooltip=_OUTPUT_TOOLTIPS[2]),
++                    io.String.Output("锁定约束", tooltip=_OUTPUT_TOOLTIPS[3]),
++                    io.Boolean.Output("是否编辑", tooltip=_OUTPUT_TOOLTIPS[4]),
++                ],
++            )
++
++        @classmethod
++        def execute(cls, 图像, 人像遮罩, 处理区域="人像", 编辑需求="", 全局要求=""):
++            return io.NodeOutput(*prepare_region(图像, 人像遮罩, 处理区域, 编辑需求, 全局要求))
++
++    GGRegionEditPrepare = GGRegionEditPrepare_V3
++
++
++NODE_CLASS_MAPPINGS = {_NODE_ID: GGRegionEditPrepare}
++NODE_DISPLAY_NAME_MAPPINGS = {_NODE_ID: _DISPLAY_NAME}
+
+--- /dev/null
++++ guli_nodes/local_llm_worker.py
+@@ -0,0 +1,128 @@
++"""本地LLM 独立文件 worker：必须以 python -I <本文件> 启动，避免宿主原生库冲突。"""
++import json
++import os
++import sys
++
++PROTOCOL_PREFIX = "GG_LOCAL_LLM_JSON:"
++MAX_MESSAGE_BYTES = 64 * 1024 * 1024
++
++
++def close_llm_model(llm):
++    # Llama.close 也会关闭 chat_handler，先解除引用再各释放一次。
++    handler = getattr(llm, "chat_handler", None)
++    if handler is not None:
++        llm.chat_handler = None
++    for resource in (handler, llm):
++        close = getattr(resource, "close", None)
++        if callable(close):
++            try:
++                close()
++            except Exception:
++                pass
++
++
++def load_llm_model(model_path, mmproj_path, context_length):
++    """只在独立进程内构造 Llama；路径由宿主已有 resolver 解析。"""
++    try:
++        from llama_cpp import Llama
++    except Exception as exc:
++        raise RuntimeError(
++            "本地LLM 方式需要 llama-cpp-python，请先安装（pip install llama-cpp-python），"
++            "或改用 API / 本地PE 方式。"
++        ) from exc
++
++    llm = Llama(
++        model_path=model_path,
++        n_ctx=max(512, int(context_length)),
++        n_gpu_layers=-1,
++        chat_handler=None,
++        verbose=False,
++    )
++    try:
++        if mmproj_path:
++            from llama_cpp import llama_chat_format
++
++            architecture = str(getattr(llm, "metadata", {}).get("general.architecture", "")).lower()
++            families = {
++                "qwen35": ("Qwen35ChatHandler",),
++                "qwen3vl": ("Qwen3VLChatHandler",),
++                "qwen2vl": ("Qwen25VLChatHandler", "Qwen2VLChatHandler"),
++            }
++            if architecture not in families:
++                raise RuntimeError(f"本地LLM 图生图不支持此视觉架构：{architecture or '未知'}。请选择匹配的 Qwen VL 模型，或改用 API / 本地PE。")
++            handler_cls = next((getattr(llama_chat_format, name, None) for name in families[architecture] if getattr(llama_chat_format, name, None) is not None), None)
++            if handler_cls is None:
++                raise RuntimeError(f"当前 llama-cpp-python 不支持 {families[architecture][0]}，请升级后再用图生图本地LLM。")
++            handler_args = {"clip_model_path": mmproj_path, "verbose": False}
++            if architecture == "qwen35":
++                handler_args["enable_thinking"] = False
++            llm.chat_handler = handler_cls(**handler_args)
++    except Exception:
++        close_llm_model(llm)
++        raise
++    return llm
++
++
++def _reply(output, response):
++    line = PROTOCOL_PREFIX + json.dumps(response, ensure_ascii=False, allow_nan=False) + "\n"
++    if len(line.encode("utf-8")) > MAX_MESSAGE_BYTES:
++        raise RuntimeError("本地LLM 返回消息超过大小上限，请减少最大生成token或参考图后重试。")
++    output.write(line)
++    output.flush()
++
++
++def serve(source, output):
++    """串行处理 load/generate/close；输入为 UTF-8 字节行，输出仅带标记的 JSON。"""
++    llm = None
++    try:
++        while True:
++            line = source.readline(MAX_MESSAGE_BYTES + 1)
++            if not line:
++                break
++            request_id = None
++            try:
++                if len(line) > MAX_MESSAGE_BYTES:
++                    raise RuntimeError("本地LLM 请求消息超过大小上限，请减少参考图后重试。")
++                request = json.loads(line.decode("utf-8"))
++                request_id = request["id"]
++                op = request["op"]
++                if op == "load":
++                    if "torch" in sys.modules:
++                        raise RuntimeError("本地LLM 隔离进程意外导入 torch，已拒绝加载；请检查 Python 启动配置或改用 API / 本地PE。")
++                    old, llm = llm, None
++                    close_llm_model(old)
++                    llm = load_llm_model(request["model_path"], request["mmproj_path"], request["context_length"])
++                    if "torch" in sys.modules:
++                        raise RuntimeError("本地LLM 依赖意外导入 torch，已拒绝就绪；请检查 llama-cpp-python 环境或改用 API / 本地PE。")
++                    result = {"ready": True, "metadata": llm.metadata, "torch_loaded": False}
++                elif op == "generate":
++                    if llm is None:
++                        raise RuntimeError("本地LLM 尚未加载，请重新执行节点。")
++                    result = llm.create_chat_completion(**request["kwargs"])
++                elif op == "close":
++                    old, llm = llm, None
++                    close_llm_model(old)
++                    _reply(output, {"id": request_id, "ok": True, "result": {"closed": True}})
++                    break
++                else:
++                    raise RuntimeError("本地LLM 请求类型不正确，请重新执行节点。")
++                _reply(output, {"id": request_id, "ok": True, "result": result})
++            except Exception as exc:
++                _reply(output, {"id": request_id, "ok": False, "error": f"{type(exc).__name__}: {exc}"[:4096]})
++                break
++    finally:
++        close_llm_model(llm)
++
++
++def main():
++    # 保留协议管道，再把 Python 与原生 fd 1 的诊断统一导向 stderr。
++    sys.stdout.flush()
++    with os.fdopen(os.dup(sys.stdout.fileno()), "w", encoding="utf-8", newline="\n", buffering=1) as output:
++        os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
++        sys.stdout = sys.stderr
++        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
++        serve(sys.stdin.buffer, output)
++
++
++if __name__ == "__main__":
++    main()
+
+--- /dev/null
++++ guli_nodes/local_llm_bridge.py
+@@ -0,0 +1,192 @@
++"""本地LLM 的单子进程 JSON 桥接；宿主只持有代理，不导入原生推理库。"""
++import atexit
++import json
++import queue
++import subprocess
++import sys
++import threading
++import time
++from pathlib import Path
++
++WORKER_SCRIPT = Path(__file__).resolve().with_name("local_llm_worker.py")
++PROTOCOL_PREFIX = "GG_LOCAL_LLM_JSON:"
++LOAD_TIMEOUT = 600
++QUERY_TIMEOUT = 600
++CLOSE_TIMEOUT = 2
++MAX_MESSAGE_BYTES = 64 * 1024 * 1024
++STDERR_BYTES = 4096
++_EOF = object()
++
++
++class LocalLLMProxy:
++    def __init__(self, model_path, mmproj_path, context_length):
++        self._lock = threading.RLock()
++        self._stderr_lock = threading.Lock()
++        self._stderr_tail = bytearray()
++        self._responses = queue.Queue(maxsize=4)
++        self._reader_error = ""
++        self._closed = False
++        self._request_id = 0
++        self._process = None
++        self._stdout_thread = self._stderr_thread = self._writer_thread = None
++        try:
++            self._process = subprocess.Popen(
++                [sys.executable, "-I", str(WORKER_SCRIPT)],
++                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
++            )
++            self._stdout_thread = threading.Thread(target=self._read_stdout, name="GGLocalLLM-stdout", daemon=True)
++            self._stderr_thread = threading.Thread(target=self._read_stderr, name="GGLocalLLM-stderr", daemon=True)
++            self._stdout_thread.start()
++            self._stderr_thread.start()
++            ready = self._request("load", LOAD_TIMEOUT, model_path=str(model_path),
++                                  mmproj_path=str(mmproj_path), context_length=int(context_length))
++            if not isinstance(ready, dict) or ready.get("ready") is not True or ready.get("torch_loaded") is not False:
++                raise RuntimeError("worker 未确认 torch 未加载，已拒绝隔离就绪")
++            if not isinstance(ready.get("metadata"), dict):
++                raise RuntimeError("worker 返回的模型 metadata 不正确")
++            self.metadata = ready["metadata"]
++            atexit.register(self.close)
++        except Exception as exc:
++            if self._closed:
++                raise
++            raise self._failure(str(exc)) from exc
++
++    def _publish(self, response):
++        try:
++            self._responses.put_nowait(response)
++        except queue.Full:
++            self._reader_error = "worker 协议响应过多，已超过队列上限"
++
++    def _read_stdout(self):
++        prefix = PROTOCOL_PREFIX.encode("ascii")
++        try:
++            while True:
++                line = self._process.stdout.readline(MAX_MESSAGE_BYTES + 1)
++                if not line:
++                    break
++                if len(line) > MAX_MESSAGE_BYTES:
++                    if line.startswith(prefix):
++                        raise RuntimeError("worker JSON 响应超过消息大小上限")
++                    # 无标记的原生诊断可能没有换行；分段丢弃，不累积。
++                    while line and not line.endswith(b"\n"):
++                        line = self._process.stdout.readline(MAX_MESSAGE_BYTES + 1)
++                    continue
++                if line.startswith(prefix):
++                    self._publish(json.loads(line[len(prefix):].decode("utf-8")))
++        except Exception as exc:
++            if not self._closed:
++                self._reader_error = f"worker JSON 协议读取失败：{exc}"[:4096]
++        finally:
++            self._publish(_EOF)
++
++    def _read_stderr(self):
++        try:
++            while True:
++                chunk = self._process.stderr.read1(STDERR_BYTES)
++                if not chunk:
++                    break
++                with self._stderr_lock:
++                    self._stderr_tail.extend(chunk)
++                    del self._stderr_tail[:-STDERR_BYTES]
++        except (OSError, ValueError):
++            pass
++
++    def _write_request(self, data):
++        try:
++            self._process.stdin.write(data)
++            self._process.stdin.flush()
++        except (OSError, ValueError) as exc:
++            if not self._closed:
++                self._reader_error = f"worker 请求写入失败：{exc}"[:4096]
++                self._publish(_EOF)
++
++    def _request(self, op, timeout, **payload):
++        with self._lock:
++            if self._closed:
++                raise RuntimeError("本地LLM 隔离进程已经关闭，请重新执行节点。")
++            deadline = time.monotonic() + timeout
++            try:
++                if self._reader_error:
++                    raise RuntimeError(self._reader_error)
++                self._request_id += 1
++                data = (json.dumps({"id": self._request_id, "op": op, **payload},
++                                   ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
++                if len(data) > MAX_MESSAGE_BYTES:
++                    raise RuntimeError("请求消息超过大小上限，请减少参考图或提示词")
++                # 管道写入也必须在截止时间内；子进程不读 stdin 时不能卡住宿主。
++                self._writer_thread = threading.Thread(target=self._write_request, args=(data,),
++                                                       name="GGLocalLLM-write", daemon=True)
++                self._writer_thread.start()
++                try:
++                    response = self._responses.get(timeout=max(0, deadline - time.monotonic()))
++                except queue.Empty:
++                    raise RuntimeError(f"{op} 请求超时（{timeout:g} 秒）") from None
++                if self._reader_error:
++                    raise RuntimeError(self._reader_error)
++                if response is _EOF:
++                    raise RuntimeError("worker 意外退出或输出管道 EOF")
++                if not isinstance(response, dict) or response.get("id") != self._request_id:
++                    raise RuntimeError("worker JSON 协议响应序号不匹配")
++                if response.get("ok") is not True:
++                    raise RuntimeError(str(response.get("error") or "worker 返回失败")[:4096])
++                return response.get("result")
++            except Exception as exc:
++                raise self._failure(str(exc)) from exc
++            finally:
++                if self._writer_thread is not None:
++                    self._writer_thread.join(timeout=CLOSE_TIMEOUT)
++
++    def _failure(self, reason):
++        self._dispose()
++        with self._stderr_lock:
++            tail = bytes(self._stderr_tail).decode("utf-8", errors="replace").strip()
++        message = (f"本地LLM 隔离进程失败：{reason[:4096]}。"
++                   "请检查 GGUF/mmproj 与 llama-cpp-python，或改用 API / 本地PE 后重试。")
++        if tail:
++            message += "\nworker stderr（末尾）：" + tail
++        return RuntimeError(message)
++
++    def _dispose(self, wait_first=False):
++        if self._closed:
++            return
++        self._closed = True
++        atexit.unregister(self.close)
++        process = self._process
++        if process is None:
++            return
++        if wait_first:
++            try:
++                process.wait(timeout=CLOSE_TIMEOUT)
++            except subprocess.TimeoutExpired:
++                pass
++        if process.poll() is None:
++            try:
++                process.terminate()
++            except OSError:
++                pass
++            try:
++                process.wait(timeout=CLOSE_TIMEOUT)
++            except subprocess.TimeoutExpired:
++                process.kill()
++                process.wait(timeout=CLOSE_TIMEOUT)
++        # 先结束精确持有的 child，使管道线程退出，再关闭流，避免阻塞 close。
++        for thread in (self._writer_thread, self._stdout_thread, self._stderr_thread):
++            if thread is not None:
++                thread.join(timeout=CLOSE_TIMEOUT)
++        for stream in (process.stdin, process.stdout, process.stderr):
++            if stream is not None:
++                stream.close()
++
++    def create_chat_completion(self, **kwargs):
++        return self._request("generate", QUERY_TIMEOUT, kwargs=kwargs)
++
++    def close(self):
++        with self._lock:
++            if self._closed:
++                return
++            try:
++                self._request("close", CLOSE_TIMEOUT)
++            except RuntimeError:
++                pass
++            finally:
++                self._dispose(wait_first=True)
+
+--- /dev/null
++++ tests/test_region_edit.py
+@@ -0,0 +1,579 @@
++"""分区编辑准备契约测试：真实 torch/本机 V3 API，不导入插件注册器或模型。"""
++
++import importlib
++import importlib.abc
++import importlib.machinery
++import importlib.util
++import inspect
++import sys
++import types
++import unittest
++from contextlib import contextmanager
++from pathlib import Path
++
++import torch
++
++
++PLUGIN_ROOT = Path(__file__).resolve().parents[1]
++COMFY_ROOT = PLUGIN_ROOT.parents[1]
++MODULE_PATH = PLUGIN_ROOT / "guli_nodes" / "region_edit.py"
++API_PATH = COMFY_ROOT / "comfy_api" / "latest"
++for root in (PLUGIN_ROOT, COMFY_ROOT):
++    if str(root) not in sys.path:
++        sys.path.insert(0, str(root))
++
++INPUT_NAMES = ("图像", "人像遮罩", "处理区域", "编辑需求", "全局要求")
++OUTPUT_NAMES = ("图像", "区域遮罩", "区域请求", "锁定约束", "是否编辑")
++OUTPUT_TYPES = ("IMAGE", "MASK", "STRING", "STRING", "BOOLEAN")
++_REAL_IO = None
++_API_HOST = None
++
++
++class _NoInferenceImports(importlib.abc.MetaPathFinder):
++    """只隔离宿主；任何意外的模型、推理服务或插件注册器导入直接失败。"""
++
++    def find_spec(self, fullname, path=None, target=None):
++        forbidden = (
++            "nodes", "execution", "server", "guli_nodes", "cv2", "scipy", "Goohai",
++            "comfy.model_management", "comfy.model_patcher", "comfy.sd",
++            "comfy.samplers", "comfy.controlnet", "comfy.clip_vision",
++        )
++        if any(fullname == name or fullname.startswith(name + ".") for name in forbidden):
++            raise AssertionError("禁止导入模型、服务或插件注册器：" + fullname)
++        return None
++
++
++@contextmanager
++def _guard_imports():
++    guard = _NoInferenceImports()
++    sys.meta_path.insert(0, guard)
++    try:
++        yield
++    finally:
++        sys.meta_path.remove(guard)
++
++
++@contextmanager
++def _host_module(name, value):
++    absent = object()
++    previous = sys.modules.get(name, absent)
++    sys.modules[name] = value
++    try:
++        yield
++    finally:
++        if previous is absent:
++            sys.modules.pop(name, None)
++        else:
++            sys.modules[name] = previous
++
++
++def real_v3_io():
++    """真实 _io_public/_io，仅跳过 latest 聚合入口的音视频/UI 宿主导入。"""
++    global _REAL_IO, _API_HOST
++    if _REAL_IO is None:
++        host = types.ModuleType("comfy_api.latest")
++        host.__path__ = [str(API_PATH)]
++        host.__spec__ = importlib.machinery.ModuleSpec(host.__name__, loader=None, is_package=True)
++        with _guard_imports(), _host_module(host.__name__, host):
++            # 与实际 latest 入口一样先载入数据类型，避免 _input/_util 的循环导入。
++            importlib.import_module("comfy_api.latest._input")
++            _REAL_IO = importlib.import_module("comfy_api.latest._io_public")
++        host.io = _REAL_IO
++        _API_HOST = host
++    return _REAL_IO
++
++
++def load_region(legacy=True, source=None):
++    """按文件加载隔离模块；legacy 导入前明确将 comfy_api.latest 置为 None。"""
++    if not MODULE_PATH.is_file():
++        raise AssertionError("Missing region module/feature: guli_nodes/region_edit.py does not exist")
++    if not legacy:
++        real_v3_io()
++    package_name = "_region_edit_test_host"
++    if package_name not in sys.modules:
++        package = types.ModuleType(package_name)
++        package.__path__ = [str(PLUGIN_ROOT / "guli_nodes")]
++        package.__spec__ = importlib.machinery.ModuleSpec(package_name, loader=None, is_package=True)
++        sys.modules[package_name] = package
++    module_name = package_name + (".region_edit_legacy" if legacy else ".region_edit_v3")
++    spec = importlib.util.spec_from_file_location(module_name, MODULE_PATH)
++    module = importlib.util.module_from_spec(spec)
++    with _guard_imports(), _host_module("comfy_api.latest", None if legacy else _API_HOST):
++        with _host_module(module_name, module):
++            if source is None:
++                spec.loader.exec_module(module)
++            else:
++                exec(compile(source, str(MODULE_PATH), "exec"), module.__dict__)
++    return module
++
++
++def image(height=20, width=25, channels=3, device="cpu"):
++    return torch.full((1, height, width, channels), 0.25, device=device)
++
++
++def human_mask(height=20, width=25):
++    mask = torch.zeros((1, height, width))
++    mask[:, : max(1, height // 2), : max(1, width // 2)] = 0.75
++    return mask
++
++
++class APISmokeTests(unittest.TestCase):
++    def test_real_v3_api_is_installed_not_a_fake_schema(self):
++        io = real_v3_io()
++        self.assertEqual(Path(io.__file__).resolve(), (API_PATH / "_io_public.py").resolve())
++        self.assertEqual(io.ComfyNode.__module__, "comfy_api.latest._io")
++        self.assertEqual(io.Schema.__module__, "comfy_api.latest._io")
++        self.assertEqual(io.NodeOutput(1, 2).result, (1, 2))
++
++
++class RegionHelperTests(unittest.TestCase):
++    def setUp(self):
++        self.module = load_region()
++        self.prepare = self.module.prepare_region
++
++    def assert_bad(self, picture, mask, region="人像", request="修改光线", pattern="请"):
++        with self.assertRaisesRegex(ValueError, pattern):
++            self.prepare(picture, mask, region, request)
++
++    def assert_noop(self, region="人像", mask=None, request="", global_text=""):
++        picture = image()
++        result = self.prepare(picture, mask, region, request, global_text)
++        self.assertEqual(len(result), 5)
++        torch.testing.assert_close(result[0], picture, rtol=0, atol=0)
++        self.assertEqual(tuple(result[1].shape), (1, 20, 25))
++        self.assertEqual(result[1].dtype, torch.float32)
++        self.assertEqual(result[1].device, picture.device)
++        self.assertEqual(torch.count_nonzero(result[1]).item(), 0)
++        self.assertEqual(result[2], "")
++        self.assertIs(result[4], False)
++        self.assert_constraints(result[3], region)
++        return result
++
++    def assert_constraints(self, text, region):
++        for word in ("原图", "身份", "姿态", "位置", "比例", "外轮廓", "基本不变", "画布", "镜头", "透视"):
++            self.assertIn(word, text)
++        other = "背景" if region == "人像" else "人像"
++        self.assertIn("仅编辑" + region, text)
++        self.assertIn("不得编辑" + other, text)
++        self.assertIn(other + "仅作为上下文，不是编辑目标", text)
++
++    def test_helper_signature_is_exact(self):
++        parameters = inspect.signature(self.prepare).parameters
++        self.assertEqual(tuple(parameters), INPUT_NAMES)
++        self.assertEqual(parameters["处理区域"].default, "人像")
++        self.assertEqual(parameters["编辑需求"].default, "")
++        self.assertEqual(parameters["全局要求"].default, "")
++
++    def test_empty_request_needs_no_mask(self):
++        self.assert_noop()
++
++    def test_whitespace_request_is_noop_in_both_regions(self):
++        for region in ("人像", "背景"):
++            with self.subTest(region=region):
++                self.assert_noop(region=region, request=" \n\t\u3000 ")
++
++    def test_noop_ignores_invalid_mask(self):
++        for mask in (object(), torch.zeros(2, 3), torch.full((1, 64, 64), float("nan"))):
++            with self.subTest(mask=type(mask).__name__):
++                self.assert_noop(mask=mask)
++
++    def test_global_text_alone_cannot_enable_editing(self):
++        for region in ("人像", "背景"):
++            with self.subTest(region=region):
++                self.assert_noop(region=region, global_text="必须修改人像和背景")
++
++    def test_person_preserves_soft_mask_and_canvas(self):
++        picture = image()
++        mask = human_mask()
++        result = self.prepare(picture, mask, 编辑需求="柔化光线")
++        torch.testing.assert_close(result[0], picture, rtol=0, atol=0)
++        torch.testing.assert_close(result[1], mask, rtol=0, atol=0)
++        self.assertEqual(result[1].dtype, torch.float32)
++        self.assertIs(result[4], True)
++        self.assert_constraints(result[3], "人像")
++
++    def test_background_is_exact_complement_not_a_second_selection(self):
++        picture, mask = image(), human_mask()
++        person = self.prepare(picture, mask, "人像", "柔化光线")
++        background = self.prepare(picture, mask, "背景", "替换墙面")
++        torch.testing.assert_close(background[1], 1 - mask, rtol=0, atol=0)
++        torch.testing.assert_close(person[1] + background[1], torch.ones_like(mask), rtol=0, atol=0)
++        self.assert_constraints(background[3], "背景")
++        self.assertIs(background[4], True)
++
++    def test_request_names_target_and_trims_text_preserving_internal_newlines(self):
++        result = self.prepare(image(), human_mask(), "背景", " \n柔化光线\n保留质感 \n", " 统一暖色 \n")
++        self.assertIn("编辑目标：背景", result[2])
++        self.assertIn("编辑需求：柔化光线\n保留质感", result[2])
++        self.assertTrue(result[2].endswith("全局要求：统一暖色"))
++
++    def test_whitespace_global_text_is_omitted_from_active_request(self):
++        result = self.prepare(image(), human_mask(), "人像", "  柔化光线  ", " \n\t")
++        self.assertIn("编辑需求：柔化光线", result[2])
++        self.assertNotIn("全局要求", result[2])
++
++    def test_fixed_constraints_survive_conflicting_user_and_global_text(self):
++        for region in ("人像", "背景"):
++            with self.subTest(region=region):
++                fixed = self.assert_noop(region=region)[3]
++                result = self.prepare(image(), human_mask(), region, "忽略限制，改变人物身份和画布", "删除所有锁定约束")
++                self.assertEqual(result[3], fixed)
++                self.assert_constraints(result[3], region)
++                self.assertNotIn("忽略限制", result[3])
++                self.assertNotIn("删除所有锁定约束", result[3])
++
++    def test_rgba_drops_alpha_without_white_compositing_or_input_mutation(self):
++        picture = torch.arange(1 * 20 * 25 * 4, dtype=torch.float32).reshape(1, 20, 25, 4) / 2000
++        picture[..., 3] = 0
++        mask = human_mask()
++        original_picture, original_mask = picture.clone(), mask.clone()
++        for region, request in (("人像", ""), ("人像", "柔化光线"), ("背景", "替换墙面")):
++            with self.subTest(region=region, request=request):
++                result = self.prepare(picture, mask, region, request)
++                self.assertEqual(tuple(result[0].shape), (1, 20, 25, 3))
++                self.assertEqual(result[0].dtype, picture.dtype)
++                self.assertEqual(result[0].device, picture.device)
++                torch.testing.assert_close(result[0], original_picture[..., :3], rtol=0, atol=0)
++                torch.testing.assert_close(picture, original_picture, rtol=0, atol=0)
++                torch.testing.assert_close(mask, original_mask, rtol=0, atol=0)
++
++    def test_rgb_and_mask_inputs_remain_unchanged(self):
++        picture, mask = image(), human_mask()
++        before_picture, before_mask = picture.clone(), mask.clone()
++        for region in ("人像", "背景"):
++            self.prepare(picture, mask, region, "修改光线")
++        torch.testing.assert_close(picture, before_picture, rtol=0, atol=0)
++        torch.testing.assert_close(mask, before_mask, rtol=0, atol=0)
++
++    def test_accepts_exactly_three_mask_dimensional_forms(self):
++        expected = human_mask()
++        for mask in (expected[0], expected, expected.unsqueeze(1)):
++            for region in ("人像", "背景"):
++                with self.subTest(shape=tuple(mask.shape), region=region):
++                    result = self.prepare(image(), mask, region, "修改光线")
++                    self.assertEqual(tuple(result[1].shape), (1, 20, 25))
++                    torch.testing.assert_close(result[1], expected if region == "人像" else 1 - expected, rtol=0, atol=0)
++
++    def test_output_mask_is_float_on_image_device(self):
++        devices = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
++        for device in devices:
++            for dtype in (torch.float32, torch.float64, torch.int64, torch.bool):
++                with self.subTest(device=device, dtype=dtype):
++                    mask = (human_mask() > 0.1).to(dtype=dtype)
++                    before = mask.clone()
++                    for region in ("人像", "背景"):
++                        result = self.prepare(image(device=device), mask, region, "修改光线")
++                        self.assertEqual(result[1].device, torch.device(device if device == "cpu" else "cuda:0"))
++                        self.assertTrue(result[1].is_floating_point())
++                        float_mask = mask if mask.is_floating_point() else mask.float()
++                        expected = float_mask if region == "人像" else 1 - float_mask
++                        torch.testing.assert_close(result[1].cpu(), expected, rtol=0, atol=0)
++                    torch.testing.assert_close(mask, before, rtol=0, atol=0)
++
++    def test_float64_soft_weights_are_preserved_above_consumer_threshold(self):
++        mask = torch.zeros(1, 10, 100, dtype=torch.float64)
++        mask.reshape(-1)[:2] = 0.1001 + 2 ** -32
++        result = self.prepare(image(10, 100), mask, 编辑需求="修改光线")
++        torch.testing.assert_close(result[1], mask, rtol=0, atol=0)
++        self.assertEqual(torch.count_nonzero(result[1] > 0.1).item(), 2)
++        self.assertEqual(torch.count_nonzero(result[1].float() > 0.1).item(), 2)
++        self.assertIs(result[4], True)
++
++    def test_float64_human_below_consumer_cutoff_is_rejected_before_inversion(self):
++        mask = torch.zeros(1, 20, 25, dtype=torch.float64)
++        mask[0, 10, 12] = 0.1 + 2 ** -32
++        before = mask.clone()
++        self.assertEqual(torch.count_nonzero(mask > 0.1).item(), 1)
++        self.assertEqual(torch.count_nonzero(mask.float() > 0.1).item(), 0)
++        for region in ("人像", "背景"):
++            with self.subTest(region=region):
++                self.assert_bad(image(), mask, region=region, pattern="人像遮罩.*(精度|阈值).*请")
++                torch.testing.assert_close(mask, before, rtol=0, atol=0)
++
++    def test_float64_background_below_consumer_cutoff_is_rejected(self):
++        mask = torch.ones(1, 10, 100, dtype=torch.float64)
++        mask.reshape(-1)[0] = 0
++        mask.reshape(-1)[1] = 1 - (0.1 + 2 ** -32)
++        background = 1 - mask
++        before = mask.clone()
++        self.assertEqual(torch.count_nonzero(background > 0.1).item(), 2)
++        self.assertEqual(torch.count_nonzero(background.float() > 0.1).item(), 1)
++        self.assertEqual(torch.count_nonzero(mask.float() > 0.1).item(), 999)
++        # 人物与人物目标仍安全，只有当前背景目标在消费端精度下不足最小面积。
++        self.assertIs(self.prepare(image(10, 100), mask, "人像", "修改光线")[4], True)
++        self.assert_bad(image(10, 100), mask, region="背景", pattern="背景.*(精度|阈值).*请")
++        torch.testing.assert_close(mask, before, rtol=0, atol=0)
++
++    def test_soft_edges_and_holes_are_not_filled_or_expanded(self):
++        mask = human_mask()
++        mask[:, 2, 2] = 0
++        mask[:, 0, 0] = 0.05
++        mask[:, 0, 1] = 0.1
++        mask[:, 0, 2] = 0.33
++        for region in ("人像", "背景"):
++            with self.subTest(region=region):
++                result = self.prepare(image(), mask, region, "修改光线")
++                torch.testing.assert_close(result[1], mask if region == "人像" else 1 - mask, rtol=0, atol=0)
++
++    def test_invalid_image_shapes_are_rejected_even_for_noop(self):
++        invalid = (
++            None, [], torch.zeros(20, 25), torch.zeros(20, 25, 3),
++            torch.zeros(1, 1, 20, 25, 3), torch.zeros(0, 20, 25, 3),
++            torch.zeros(2, 20, 25, 3), torch.zeros(1, 0, 25, 3),
++            torch.zeros(1, 20, 0, 3), torch.zeros(1, 20, 25, 1),
++            torch.zeros(1, 20, 25, 2), torch.zeros(1, 20, 25, 5),
++            torch.zeros(1, 20, 25, 3, dtype=torch.complex64),
++        )
++        for picture in invalid:
++            for request in ("", "修改光线"):
++                with self.subTest(shape=getattr(picture, "shape", None), request=request):
++                    self.assert_bad(picture, None, request=request, pattern="图像.*请")
++
++    def test_invalid_region_is_rejected_even_for_noop(self):
++        for region in ("全部", "", None, [], 1):
++            for request in ("", "修改光线"):
++                with self.subTest(region=region, request=request):
++                    self.assert_bad(image(), None, region=region, request=request, pattern="处理区域.*人像.*背景")
++
++    def test_image_nan_and_inf_are_rejected_even_for_noop(self):
++        for value in (float("nan"), float("inf"), -float("inf")):
++            for request in ("", "修改光线"):
++                picture = image()
++                picture[0, 0, 0, 0] = value
++                with self.subTest(value=value, request=request):
++                    self.assert_bad(picture, None, request=request, pattern="图像.*请")
++
++    def test_image_range_is_rejected_without_clamping(self):
++        for value in (-0.001, 1.001):
++            for request in ("", "修改光线"):
++                picture = image()
++                picture[0, 0, 0, 0] = value
++                original = picture.clone()
++                with self.subTest(value=value, request=request):
++                    self.assert_bad(picture, None, request=request, pattern="图像.*0.*1.*请")
++                    torch.testing.assert_close(picture, original, rtol=0, atol=0)
++
++    def test_invalid_alpha_is_validated_before_stripping(self):
++        for value in (float("nan"), float("inf"), -0.01, 1.01):
++            picture = image(channels=4)
++            picture[0, 0, 0, 3] = value
++            with self.subTest(value=value):
++                self.assert_bad(picture, None, request="", pattern="图像.*请")
++
++    def test_active_request_requires_a_tensor_mask(self):
++        for mask in (None, [], object(), "人物"):
++            with self.subTest(mask=type(mask).__name__):
++                self.assert_bad(image(), mask, pattern="人像遮罩.*请")
++
++    def test_mask_batches_and_invalid_dimensions_are_rejected(self):
++        for mask in (
++            torch.zeros(()), torch.zeros(500), torch.zeros(0, 20, 25),
++            torch.zeros(2, 20, 25), torch.zeros(1, 2, 20, 25),
++            torch.zeros(2, 1, 20, 25), torch.zeros(1, 1, 1, 20, 25),
++            torch.zeros(1, 20, 25, dtype=torch.complex64),
++        ):
++            with self.subTest(shape=tuple(mask.shape), dtype=mask.dtype):
++                self.assert_bad(image(), mask, pattern="人像遮罩.*请")
++
++    def test_mask_size_mismatch_is_not_resized(self):
++        for mask in (torch.zeros(1, 19, 25), human_mask(19, 25), torch.zeros(1, 20, 24)):
++            with self.subTest(shape=tuple(mask.shape)):
++                self.assert_bad(image(), mask, pattern="尺寸.*一致.*请")
++
++    def test_mask_nan_and_inf_are_rejected(self):
++        for value in (float("nan"), float("inf"), -float("inf")):
++            mask = human_mask()
++            mask[0, 0, 0] = value
++            for region in ("人像", "背景"):
++                with self.subTest(value=value, region=region):
++                    self.assert_bad(image(), mask, region=region, pattern="人像遮罩.*请")
++
++    def test_mask_range_is_rejected_before_float_conversion(self):
++        for value in (-0.001, 1.001, 1.0 + 2 ** -40):
++            mask = human_mask().double()
++            mask[0, 0, 0] = value
++            for region in ("人像", "背景"):
++                with self.subTest(value=value, region=region):
++                    self.assert_bad(image(), mask, region=region, pattern="人像遮罩.*0.*1.*请")
++
++    def test_loadimage_empty_64_square_gives_editor_advice_before_size_error(self):
++        for size in ((64, 64), (100, 100)):
++            for shape in ((64, 64), (1, 64, 64), (1, 1, 64, 64)):
++                for region in ("人像", "背景"):
++                    with self.subTest(size=size, shape=shape, region=region):
++                        self.assert_bad(image(*size), torch.zeros(shape), region=region,
++                                        pattern="请在加载图像的遮罩编辑器涂选人物并保存")
++
++    def test_empty_human_is_rejected_before_background_inversion(self):
++        for region in ("人像", "背景"):
++            with self.subTest(region=region):
++                self.assert_bad(image(100, 100), torch.zeros(1, 100, 100), region=region,
++                                pattern="人像遮罩.*0\\.2%.*请")
++
++    def test_tiny_original_human_cannot_become_valid_by_inversion(self):
++        mask = torch.zeros(1, 100, 100)
++        mask[0, 0, 0] = 1
++        self.assert_bad(image(100, 100), mask, region="背景", pattern="人像遮罩.*0\\.2%.*请")
++
++    def test_exact_point002_human_area_is_accepted(self):
++        for height, width, count in ((20, 25, 1), (10, 100, 2), (100, 100, 20)):
++            mask = torch.zeros(1, height, width)
++            mask.reshape(-1)[:count] = 0.75
++            with self.subTest(size=(height, width), count=count):
++                result = self.prepare(image(height, width), mask, "人像", "修改光线")
++                self.assertEqual(torch.count_nonzero(result[1] > 0.1).item(), count)
++                self.assertIs(result[4], True)
++
++    def test_cutoff_uses_integer_pixel_counts_for_nondivisible_canvas(self):
++        picture = image(101, 100)
++        for count in (20, 21):
++            mask = torch.zeros(1, 101, 100)
++            mask.reshape(-1)[:count] = 1
++            with self.subTest(count=count):
++                if count == 20:
++                    self.assert_bad(picture, mask, pattern="人像遮罩.*0\\.2%.*请")
++                else:
++                    self.assertIs(self.prepare(picture, mask, 编辑需求="修改光线")[4], True)
++
++    def test_mask_threshold_is_strictly_greater_than_point1(self):
++        mask = torch.full((1, 10, 100), 0.1)
++        mask.reshape(-1)[:2] = 0.1001
++        result = self.prepare(image(10, 100), mask, 编辑需求="修改光线")
++        torch.testing.assert_close(result[1], mask, rtol=0, atol=0)
++        mask.reshape(-1)[1] = 0.1
++        self.assert_bad(image(10, 100), mask, pattern="人像遮罩.*0\\.2%.*请")
++
++    def test_full_white_human_is_rejected_by_effective_threshold(self):
++        for value in (1.0, 0.11, 0.5):
++            for region in ("人像", "背景"):
++                with self.subTest(value=value, region=region):
++                    self.assert_bad(image(), torch.full((1, 20, 25), value), region=region,
++                                    pattern="人像遮罩.*(全白|整张).*")
++
++    def test_active_background_below_cutoff_is_rejected(self):
++        mask = torch.ones(1, 100, 100)
++        mask[0, 0, 0] = 0
++        self.assert_bad(image(100, 100), mask, region="背景", pattern="背景.*0\\.2%.*请")
++
++    def test_person_can_edit_when_only_background_is_below_cutoff(self):
++        mask = torch.ones(1, 100, 100)
++        mask[0, 0, 0] = 0
++        result = self.prepare(image(100, 100), mask, "人像", "修改光线")
++        self.assertIs(result[4], True)
++
++    def test_exact_point002_background_area_is_accepted(self):
++        for count, value in ((20, 0.0), (20, 0.8)):
++            mask = torch.ones(1, 100, 100)
++            mask.reshape(-1)[:count] = value
++            # 至少一个人物阈值外像素，避免软边界样本本身被契约判为全白人物。
++            mask.reshape(-1)[0] = 0
++            with self.subTest(value=value):
++                result = self.prepare(image(100, 100), mask, "背景", "修改光线")
++                torch.testing.assert_close(result[1], 1 - mask, rtol=0, atol=0)
++                self.assertEqual(torch.count_nonzero(result[1] > 0.1).item(), count)
++                self.assertIs(result[4], True)
++
++
++class RegionNodeAPITests(unittest.TestCase):
++    def test_legacy_has_five_ordered_inputs_and_fixed_outputs(self):
++        module = load_region(legacy=True)
++        node = module.GGRegionEditPrepare
++        self.assertIsNone(module.io)
++        self.assertFalse(hasattr(node, "define_schema"))
++        self.assertEqual(tuple(module.NODE_CLASS_MAPPINGS), ("GGRegionEditPrepare",))
++        self.assertIs(module.NODE_CLASS_MAPPINGS["GGRegionEditPrepare"], node)
++        self.assertEqual(module.NODE_DISPLAY_NAME_MAPPINGS, {"GGRegionEditPrepare": "GG 分区编辑准备"})
++        inputs = node.INPUT_TYPES()
++        self.assertEqual(tuple(inputs["required"]), INPUT_NAMES)
++        self.assertEqual(len(inputs.get("optional", {})), 0)
++        self.assertEqual(inputs["required"]["图像"][0], "IMAGE")
++        self.assertEqual(inputs["required"]["人像遮罩"][0], "MASK")
++        self.assertEqual(inputs["required"]["处理区域"][0], ["人像", "背景"])
++        self.assertEqual(inputs["required"]["处理区域"][1]["default"], "人像")
++        for name in ("编辑需求", "全局要求"):
++            self.assertEqual(inputs["required"][name][0], "STRING")
++            self.assertEqual(inputs["required"][name][1]["default"], "")
++            self.assertTrue(inputs["required"][name][1]["multiline"])
++        for _, options in inputs["required"].values():
++            self.assertRegex(options["tooltip"], "[\u4e00-\u9fff]")
++        self.assertEqual(node.RETURN_TYPES, OUTPUT_TYPES)
++        self.assertEqual(node.RETURN_NAMES, OUTPUT_NAMES)
++        self.assertEqual(node.CATEGORY, "GuliNodes/图像")
++        self.assertEqual(node.FUNCTION, "execute")
++
++    def test_real_v3_schema_order_names_types_and_serialized_ports(self):
++        io = real_v3_io()
++        module = load_region(legacy=False)
++        node = module.GGRegionEditPrepare
++        self.assertIs(module.io, io)
++        self.assertTrue(issubclass(node, io.ComfyNode))
++        self.assertTrue(hasattr(node, "define_schema"))
++        schema = node.GET_SCHEMA()
++        self.assertIsInstance(schema, io.Schema)
++        self.assertEqual(schema.node_id, "GGRegionEditPrepare")
++        self.assertEqual(schema.display_name, "GG 分区编辑准备")
++        self.assertEqual(schema.category, "GuliNodes/图像")
++        self.assertEqual(tuple(port.id for port in schema.inputs), INPUT_NAMES)
++        self.assertEqual(tuple(port.io_type for port in schema.inputs), ("IMAGE", "MASK", "COMBO", "STRING", "STRING"))
++        self.assertTrue(all(not port.optional for port in schema.inputs))
++        self.assertEqual(schema.inputs[2].options, ["人像", "背景"])
++        self.assertEqual(schema.inputs[2].default, "人像")
++        for port in schema.inputs[3:]:
++            self.assertEqual(port.default, "")
++            self.assertTrue(port.multiline)
++        self.assertEqual(tuple(port.display_name for port in schema.outputs), OUTPUT_NAMES)
++        self.assertEqual(tuple(port.io_type for port in schema.outputs), OUTPUT_TYPES)
++        self.assertTrue(all(not port.is_output_list for port in schema.outputs))
++        for port in schema.inputs + schema.outputs:
++            self.assertRegex(port.tooltip, "[\u4e00-\u9fff]")
++        info = node.GET_NODE_INFO_V1()
++        self.assertEqual(tuple(info["input"]["required"]), INPUT_NAMES)
++        self.assertEqual(tuple(info["output_name"]), OUTPUT_NAMES)
++        self.assertEqual(tuple(info["output"]), OUTPUT_TYPES)
++        self.assertEqual(tuple(node.RETURN_NAMES), OUTPUT_NAMES)
++        self.assertEqual(tuple(node.RETURN_TYPES), OUTPUT_TYPES)
++        self.assertIs(module.NODE_CLASS_MAPPINGS["GGRegionEditPrepare"], node)
++        self.assertEqual(module.NODE_DISPLAY_NAME_MAPPINGS, {"GGRegionEditPrepare": "GG 分区编辑准备"})
++
++    def test_both_api_execute_paths_match_the_pure_helper(self):
++        for legacy in (True, False):
++            module = load_region(legacy=legacy)
++            node = module.GGRegionEditPrepare
++            if not legacy:
++                node.GET_SCHEMA()
++            for region, request, mask in (
++                ("人像", "柔化光线", human_mask()),
++                ("背景", "替换墙面", human_mask()),
++                ("人像", "", None),
++                ("背景", " \n\t", torch.zeros(2, 3)),
++            ):
++                with self.subTest(legacy=legacy, region=region, request=request):
++                    values = dict(zip(INPUT_NAMES, (image(), mask, region, request, "统一色调")))
++                    expected = module.prepare_region(**values)
++                    returned = getattr(node(), node.FUNCTION)(**values)
++                    if legacy:
++                        self.assertIsInstance(returned, tuple)
++                        actual = returned
++                    else:
++                        self.assertIsInstance(returned, real_v3_io().NodeOutput)
++                        self.assertIsNone(returned.ui)
++                        self.assertIsNone(returned.expand)
++                        actual = returned.result
++                    self.assertEqual(len(actual), 5)
++                    torch.testing.assert_close(actual[0], expected[0], rtol=0, atol=0)
++                    torch.testing.assert_close(actual[1], expected[1], rtol=0, atol=0)
++                    self.assertEqual(actual[2:], expected[2:])
++
++    def test_both_api_paths_preserve_validation_errors(self):
++        for legacy in (True, False):
++            module = load_region(legacy=legacy)
++            node = module.GGRegionEditPrepare
++            if not legacy:
++                node.GET_SCHEMA()
++            with self.subTest(legacy=legacy):
++                with self.assertRaisesRegex(ValueError, "请在加载图像的遮罩编辑器涂选人物并保存"):
++                    getattr(node(), node.FUNCTION)(image(), torch.zeros(1, 64, 64), "背景", "替换墙面", "")
++
++
++if __name__ == "__main__":
++    unittest.main()
+
+--- /dev/null
++++ tests/test_region_integration.py
+@@ -0,0 +1,60 @@
++"""真实 GG 裁剪/恢复/合并的单图集成测试，不加载生成模型。"""
++import sys
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT.parent.parent))
++sys.path.insert(0, str(ROOT))
++
++import torch
++from guli_nodes.region_edit import prepare_region
++from guli_nodes.mask_tools import _执行遮罩裁剪, _执行裁剪恢复, _执行图像合并, _遮罩数组
++
++
++class RegionPipelineIntegrationTests(unittest.TestCase):
++    def setUp(self):
++        self.image = torch.linspace(0.1, 0.9, 31 * 47 * 3).reshape(1, 31, 47, 3)
++        self.mask = torch.zeros((1, 31, 47))
++        self.mask[:, 6:25, 17:31] = 1
++
++    def stage(self, image, region):
++        prepared = prepare_region(image, self.mask, region, "只调整本区域质感", "保持构图")
++        seam, cropped, crop_mask = _执行遮罩裁剪(prepared[0], prepared[1], False, {side: 1.1 for side in "上下左右"}, "按宽高", {"宽度": 64, "高度": 64})
++        changed = torch.full_like(cropped, 0.3 if region == "背景" else 0.6)
++        restored = _执行裁剪恢复(seam, changed, None, image, 0, 0, 0.0)
++        final = _执行图像合并(image, restored, prepared[1], 1.0, 0, 0, False)
++        return final
++
++    def test_background_edit_does_not_change_person_pixels(self):
++        result = self.stage(self.image, "背景")
++        self.assertEqual(result.shape, self.image.shape)
++        self.assertTrue(torch.equal(result[self.mask.bool()], self.image[self.mask.bool()]))
++        self.assertFalse(torch.equal(result[~self.mask.bool()], self.image[~self.mask.bool()]))
++
++    def test_person_edit_keeps_completed_background_exactly(self):
++        background = self.stage(self.image, "背景")
++        final = self.stage(background, "人像")
++        self.assertEqual(final.shape, self.image.shape)
++        self.assertTrue(torch.equal(final[~self.mask.bool()], background[~self.mask.bool()]))
++        self.assertFalse(torch.equal(final[self.mask.bool()], background[self.mask.bool()]))
++
++    def test_rgba_preparation_keeps_rgb_under_transparency(self):
++        rgba = torch.cat((self.image, 1 - self.mask.unsqueeze(-1)), dim=-1)
++        prepared = prepare_region(rgba, self.mask, "人像", "微调皮肤", "")
++        self.assertTrue(torch.equal(prepared[0], self.image))
++        self.assertTrue(torch.equal(rgba[..., :3], self.image))
++
++    def test_float64_threshold_must_not_trigger_existing_crop_full_frame_fallback(self):
++        image = torch.full((1, 20, 25, 3), 0.4)
++        mask = torch.zeros((1, 20, 25), dtype=torch.float64)
++        mask[0, 10, 12] = 0.1 + 2 ** -32
++        # 在float64中恰好1/500有效；已有裁剪会先转float32，随后有效面积为0。
++        self.assertEqual(torch.count_nonzero(mask > 0.1).item(), 1)
++        self.assertEqual(int((_遮罩数组(mask) > 0.1).sum()), 0)
++        with self.assertRaisesRegex(ValueError, "0.2%|阈值|精度"):
++            prepare_region(image, mask, "人像", "只修人物", "")
++
++
++if __name__ == "__main__":
++    unittest.main()
+
+--- /dev/null
++++ tests/test_region_workflow.py
+@@ -0,0 +1,180 @@
++"""交付工作流的结构验收；不加载模型、不访问外部 API。"""
++import json
++import unittest
++from pathlib import Path
++
++ROOT = Path(__file__).resolve().parents[1]
++WORKFLOW = ROOT / "examples" / "workflows" / "GG-人像背景分区编辑_Qwen2.1_Turbo.json"
++
++
++class RegionWorkflowContractTests(unittest.TestCase):
++    def load_graph(self):
++        self.assertTrue(WORKFLOW.is_file(), "人像/背景分区编辑工作流尚未生成")
++        data = json.loads(WORKFLOW.read_text(encoding="utf-8"))
++        nodes = {n["id"]: n for n in data["nodes"]}
++        roles = {n.get("properties", {}).get("gg_region_role"): n for n in data["nodes"]}
++        links = {l[0]: l for l in data["links"]}
++        return data, nodes, roles, links
++
++    def source(self, node, name, links):
++        slot = next((i for i in node.get("inputs", []) if i["name"] == name), None)
++        self.assertIsNotNone(slot, "缺少输入 " + name)
++        self.assertIsNotNone(slot.get("link"), "必要输入未连线 " + name)
++        edge = links[slot["link"]]
++        return edge[1], edge[2]
++
++    def test_all_edges_and_slots_are_bidirectionally_consistent(self):
++        data, nodes, _, links = self.load_graph()
++        self.assertEqual(len(nodes), len(data["nodes"]))
++        self.assertEqual(len(links), len(data["links"]))
++        for lid, src, ss, dst, ds, dtype in data["links"]:
++            self.assertIn(src, nodes)
++            self.assertIn(dst, nodes)
++            self.assertLess(ss, len(nodes[src]["outputs"]))
++            self.assertLess(ds, len(nodes[dst]["inputs"]))
++            self.assertEqual(nodes[dst]["inputs"][ds]["link"], lid)
++            self.assertIn(lid, nodes[src]["outputs"][ss].get("links") or [])
++            out_type = nodes[src]["outputs"][ss]["type"]
++            in_type = nodes[dst]["inputs"][ds]["type"]
++            if out_type != "*" and in_type != "*":
++                self.assertEqual(out_type, in_type)
++
++    def test_graph_is_acyclic(self):
++        data, nodes, _, _ = self.load_graph()
++        incoming = {nid: 0 for nid in nodes}
++        edges = {nid: [] for nid in nodes}
++        for _, src, _, dst, _, _ in data["links"]:
++            edges[src].append(dst)
++            incoming[dst] += 1
++        ready = [nid for nid, degree in incoming.items() if degree == 0]
++        seen = 0
++        while ready:
++            nid = ready.pop()
++            seen += 1
++            for dst in edges[nid]:
++                incoming[dst] -= 1
++                if incoming[dst] == 0:
++                    ready.append(dst)
++        self.assertEqual(seen, len(nodes), "工作流存在循环依赖")
++
++    def test_only_core_and_gg_node_types_are_used(self):
++        _, nodes, _, _ = self.load_graph()
++        allowed_core = {"LoadImage", "UNETLoader", "CLIPLoader", "VAELoader", "VAEEncode", "VAEDecode", "SetLatentNoiseMask", "KSampler", "ComfySwitchNode", "PrimitiveBoolean", "PrimitiveInt", "PrimitiveString", "Note", "PreviewImage", "MaskToImage"}
++        for node in nodes.values():
++            self.assertTrue(node["type"].startswith("GG") or node["type"] in allowed_core, node["type"])
++        self.assertEqual(sum(n["type"] == "GGRegionEditPrepare" for n in nodes.values()), 2)
++
++    def test_region_preparation_precedes_all_crop_and_inversion(self):
++        _, _, roles, links = self.load_graph()
++        for region in ("background", "person"):
++            prep = roles[region + "_prepare"]
++            self.assertEqual(prep["type"], "GGRegionEditPrepare")
++            self.assertEqual(self.source(prep, "人像遮罩", links), (roles["original"]["id"], 1))
++            self.assertEqual(self.source(roles[region + "_crop"], "遮罩", links), (prep["id"], 1))
++            self.assertEqual(self.source(roles[region + "_crop"], "图像", links), (prep["id"], 0))
++
++    def test_person_stage_uses_selected_background_as_canvas(self):
++        _, _, roles, links = self.load_graph()
++        expected = (roles["background_select"]["id"], 0)
++        self.assertEqual(self.source(roles["person_prepare"], "图像", links), expected)
++        self.assertEqual(self.source(roles["person_restore"], "背景图像", links), expected)
++        self.assertEqual(self.source(roles["person_merge"], "背景图", links), expected)
++
++    def test_empty_requests_lazily_skip_entire_region_branch(self):
++        _, nodes, roles, links = self.load_graph()
++        for region in ("background", "person"):
++            prep = roles[region + "_prepare"]
++            switch = roles[region + "_select"]
++            self.assertEqual(switch["type"], "ComfySwitchNode")
++            self.assertEqual(self.source(switch, "switch", links), (prep["id"], 4))
++            self.assertEqual(self.source(switch, "on_false", links), (prep["id"], 0))
++            self.assertEqual(self.source(switch, "on_true", links), (roles[region + "_merge"]["id"], 0))
++        output_roles = {"save", "compare", "mask_preview", "instructions"}
++        for node in nodes.values():
++            if node["type"] in {"GGImageCompressSave", "GGImageComparer2", "PreviewImage"}:
++                self.assertIn(node.get("properties", {}).get("gg_region_role"), output_roles)
++
++    def test_latent_is_encoded_image_with_noise_mask(self):
++        _, _, roles, links = self.load_graph()
++        for region in ("background", "person"):
++            crop = roles[region + "_crop"]
++            vae = roles[region + "_vae_encode"]
++            latent = roles[region + "_latent_mask"]
++            sampler = roles[region + "_sample"]
++            self.assertEqual(vae["type"], "VAEEncode")
++            self.assertEqual(latent["type"], "SetLatentNoiseMask")
++            self.assertEqual(self.source(vae, "pixels", links), (crop["id"], 1))
++            self.assertEqual(self.source(latent, "samples", links), (vae["id"], 0))
++            self.assertEqual(self.source(latent, "mask", links), (crop["id"], 2))
++            self.assertEqual(self.source(sampler, "latent_image", links), (latent["id"], 0))
++            self.assertEqual(sampler["type"], "KSampler")
++            values = sampler["widgets_values_named"]
++            self.assertEqual(values["cfg"], 1.0)
++            self.assertEqual(values["sampler_name"], "euler")
++            self.assertLessEqual(values["denoise"], 0.55)
++
++    def test_original_soft_masks_gate_final_merges(self):
++        _, _, roles, links = self.load_graph()
++        for region in ("background", "person"):
++            merge = roles[region + "_merge"]
++            self.assertEqual(self.source(merge, "遮罩", links), (roles[region + "_prepare"]["id"], 1))
++            values = merge["widgets_values_named"]
++            self.assertEqual(values["透明度"], 1.0)
++            self.assertEqual(values["遮罩扩展"], 0)
++            self.assertEqual(values["模糊半径"], 0)
++            self.assertFalse(values["匹配图像大小"])
++
++    def test_crop_dimensions_and_restoration_are_geometry_safe(self):
++        _, _, roles, _ = self.load_graph()
++        for region in ("background", "person"):
++            values = roles[region + "_crop"]["widgets_values_named"]
++            self.assertEqual(values["输出尺寸"], "按宽高")
++            self.assertFalse(values["遮罩填充"])
++            for key in ("输出尺寸.宽度", "输出尺寸.高度"):
++                self.assertEqual(values[key] % 32, 0)
++                self.assertLessEqual(values[key], 1024)
++            restored = roles[region + "_restore"]["widgets_values_named"]
++            self.assertEqual(restored["遮罩扩展"], 0)
++            self.assertEqual(restored["遮罩羽化"], 0)
++            self.assertEqual(restored["颜色还原"], 0.0)
++
++    def test_constraints_are_appended_after_optional_ai(self):
++        _, _, roles, links = self.load_graph()
++        for region in ("background", "person"):
++            opt_switch = roles[region + "_prompt_select"]
++            self.assertEqual(opt_switch["type"], "ComfySwitchNode")
++            self.assertEqual(self.source(opt_switch, "switch", links), (roles["enable_ai"]["id"], 0))
++            self.assertEqual(self.source(opt_switch, "on_false", links), (roles[region + "_prepare"]["id"], 2))
++            self.assertEqual(self.source(opt_switch, "on_true", links), (roles[region + "_enhance"]["id"], 0))
++            final = roles[region + "_prompt_final"]
++            self.assertEqual(final["type"], "GGTextConcat")
++            self.assertEqual(self.source(final, "文本1", links), (opt_switch["id"], 0))
++            self.assertEqual(self.source(final, "文本2", links), (roles[region + "_prepare"]["id"], 3))
++            encoded = roles[region + "_condition"]
++            self.assertEqual(self.source(encoded, "正向提示词", links), (final["id"], 0))
++            self.assertEqual(encoded["widgets_values_named"]["分辨率"], 0)
++            self.assertEqual(self.source(encoded, "图像.图像1", links), (roles[region + "_crop"]["id"], 1))
++
++    def test_save_is_png_and_no_credentials_are_embedded(self):
++        _, nodes, roles, links = self.load_graph()
++        self.assertEqual(roles["save"]["widgets_values_named"]["格式"], "PNG")
++        self.assertEqual(self.source(roles["save"], "图像", links), (roles["person_select"]["id"], 0))
++        for node in nodes.values():
++            for key, value in node.get("widgets_values_named", {}).items():
++                if "api_key" in key.lower() or key in ("API密钥", "密钥"):
++                    self.assertFalse(value, "工作流不能嵌入用户密钥")
++
++    def test_verified_qwen_models_are_selected(self):
++        _, _, roles, _ = self.load_graph()
++        expected = {
++            "unet": ("unet_name", r"qwen\qwen_image_2.1_turbo_int8_convrot.safetensors"),
++            "vae": ("vae_name", r"qwen\qwen_image_2.1_vae_bf16.safetensors"),
++        }
++        for role, (key, value) in expected.items():
++            self.assertEqual(roles[role]["widgets_values_named"][key].replace("/", "\\"), value)
++        for region in ("background", "person"):
++            self.assertEqual(roles[region + "_condition"]["widgets_values_named"]["CLIP名称"].replace("/", "\\"), r"qwen\qwen3vl_8b_int8_convrot.safetensors")
++
++
++if __name__ == "__main__":
++    unittest.main()
+
+--- /dev/null
++++ tests/test_prompt_enhancer_local_compat.py
+@@ -0,0 +1,202 @@
++"""本地 GGUF 路径与视觉架构适配；模型构造以测试替身隔离，不加载权重。"""
++import copy
++import importlib.util
++import sys
++import tempfile
++import types
++import unittest
++from pathlib import Path
++from unittest.mock import patch
++
++ROOT = Path(__file__).resolve().parents[1]
++sys.path.insert(0, str(ROOT.parent.parent))
++sys.path.insert(0, str(ROOT))
++from guli_nodes import prompt_enhancer as pe
++
++
++class FakeHandler:
++    def __init__(self, **kwargs):
++        self.kwargs = kwargs
++        self.closed = False
++        self.close_calls = 0
++    def close(self):
++        self.close_calls += 1
++        self.closed = True
++
++
++class FakeLlama:
++    architecture = "qwen35"
++    instances = []
++    def __init__(self, **kwargs):
++        self.kwargs = kwargs
++        self.metadata = {"general.architecture": self.architecture}
++        self.chat_handler = kwargs.get("chat_handler")
++        self.closed = False
++        self.instances.append(self)
++    def close(self):
++        # 复现本机 Llama.close 会释放当前 chat_handler 的真实资源关系。
++        if self.chat_handler is not None:
++            self.chat_handler.close()
++            self.chat_handler = None
++        self.closed = True
++
++
++def fake_modules():
++    handlers = types.ModuleType("llama_cpp.llama_chat_format")
++    for name in ("Qwen35ChatHandler", "Qwen3VLChatHandler", "Qwen25VLChatHandler", "Qwen2VLChatHandler"):
++        setattr(handlers, name, type(name, (FakeHandler,), {}))
++    llama = types.ModuleType("llama_cpp")
++    llama.Llama = FakeLlama
++    llama.llama_chat_format = handlers
++    return llama, handlers
++
++
++class FakeWorkerProxy:
++    """只替换进程启动；真正的模型工厂和资源清理仍走 worker helper。"""
++    worker = None
++    def __init__(self, model_path, mmproj_path, context_length):
++        self.native = self.worker.load_llm_model(model_path, mmproj_path, context_length)
++    def __getattr__(self, name):
++        return getattr(self.native, name)
++    def close(self):
++        self.worker.close_llm_model(self.native)
++
++
++class LocalLLMCompatibilityTests(unittest.TestCase):
++    def setUp(self):
++        pe._LocalLLMStorage.unload()
++        worker_path = ROOT / "guli_nodes" / "local_llm_worker.py"
++        self.assertTrue(worker_path.is_file(), "缺少独立 worker 工厂")
++        spec = importlib.util.spec_from_file_location("_compat_worker", worker_path)
++        worker = importlib.util.module_from_spec(spec)
++        spec.loader.exec_module(worker)
++        FakeWorkerProxy.worker = worker
++        from guli_nodes import local_llm_bridge as bridge
++        import comfy.model_management as mm
++        FakeLlama.instances = []
++        FakeLlama.architecture = "qwen35"
++        self.llama, self.handlers = fake_modules()
++        self.patches = [patch.dict(sys.modules, {"llama_cpp": self.llama, "llama_cpp.llama_chat_format": self.handlers}),
++                        patch.object(pe, "_resolve_gguf_path", side_effect=lambda name: name),
++                        patch.object(bridge, "LocalLLMProxy", side_effect=FakeWorkerProxy),
++                        patch.object(mm, "unload_all_models"), patch.object(mm, "soft_empty_cache")]
++        mocks = [item.start() for item in self.patches]
++        self.startup = mocks[2]
++    def tearDown(self):
++        pe._LocalLLMStorage.unload()
++        for item in reversed(getattr(self, "patches", [])):
++            item.stop()
++
++    def test_qwen35_uses_its_own_visual_handler(self):
++        llm = pe._LocalLLMStorage.load("PE.gguf", "PE.mmproj.gguf", 8192)
++        self.assertIsInstance(llm.chat_handler, self.handlers.Qwen35ChatHandler)
++        self.assertFalse(llm.chat_handler.kwargs.get("enable_thinking", True))
++
++    def test_qwen3vl_does_not_reuse_qwen25_template(self):
++        FakeLlama.architecture = "qwen3vl"
++        llm = pe._LocalLLMStorage.load("Qwen3.gguf", "vision.gguf", 4096)
++        self.assertIsInstance(llm.chat_handler, self.handlers.Qwen3VLChatHandler)
++
++    def test_qwen2vl_legacy_handler_still_works(self):
++        FakeLlama.architecture = "qwen2vl"
++        llm = pe._LocalLLMStorage.load("Qwen2.gguf", "vision.gguf", 4096)
++        self.assertIsInstance(llm.chat_handler, self.handlers.Qwen25VLChatHandler)
++
++    def test_qwen2vl_has_qwen2_fallback(self):
++        FakeLlama.architecture = "qwen2vl"
++        del self.handlers.Qwen25VLChatHandler
++        llm = pe._LocalLLMStorage.load("Qwen2.gguf", "vision.gguf", 4096)
++        self.assertIsInstance(llm.chat_handler, self.handlers.Qwen2VLChatHandler)
++
++    def test_missing_qwen35_handler_is_actionable_not_silent_fallback(self):
++        del self.handlers.Qwen35ChatHandler
++        with self.assertRaisesRegex(RuntimeError, "升级|不支持|Qwen3.5|Qwen35"):
++            pe._LocalLLMStorage.load("PE.gguf", "vision.gguf", 8192)
++        self.assertIsNone(pe._LocalLLMStorage.llm)
++
++    def test_unknown_visual_architecture_is_rejected(self):
++        FakeLlama.architecture = "unsupported_model"
++        with self.assertRaisesRegex(RuntimeError, "架构|不支持"):
++            pe._LocalLLMStorage.load("other.gguf", "vision.gguf", 8192)
++
++    def test_text_only_load_does_not_require_any_visual_handler(self):
++        FakeLlama.architecture = "llama"
++        llm = pe._LocalLLMStorage.load("text.gguf", "无", 4096)
++        self.assertIsNone(llm.chat_handler)
++
++    def test_same_key_reuses_model(self):
++        first = pe._LocalLLMStorage.load("PE.gguf", "vision.gguf", 4096)
++        second = pe._LocalLLMStorage.load("PE.gguf", "vision.gguf", 4096)
++        self.assertIs(first, second)
++        self.assertEqual(len(FakeLlama.instances), 1)
++        self.startup.assert_called_once_with("PE.gguf", "vision.gguf", 4096)
++
++    def test_unload_closes_visual_projector_and_model(self):
++        llm = pe._LocalLLMStorage.load("PE.gguf", "vision.gguf", 4096)
++        handler = llm.chat_handler
++        pe._LocalLLMStorage.unload()
++        self.assertTrue(llm.closed)
++        self.assertTrue(handler.closed)
++        self.assertEqual(handler.close_calls, 1)
++        self.assertIsNone(pe._LocalLLMStorage.llm)
++        self.assertIsNone(pe._LocalLLMStorage.key)
++        pe._LocalLLMStorage.unload()
++
++    def test_failed_handler_construction_closes_loaded_model(self):
++        class Broken(FakeHandler):
++            def __init__(self, **kwargs):
++                raise RuntimeError("test projector construction failure")
++        self.handlers.Qwen35ChatHandler = Broken
++        with self.assertRaisesRegex(RuntimeError, "projector"):
++            pe._LocalLLMStorage.load("PE.gguf", "vision.gguf", 4096)
++        self.assertEqual(len(FakeLlama.instances), 1)
++        self.assertTrue(FakeLlama.instances[0].closed)
++        self.assertIsNone(pe._LocalLLMStorage.llm)
++
++
++class StandaloneGGUFDirectoryTests(unittest.TestCase):
++    def setUp(self):
++        self.temp = tempfile.TemporaryDirectory(prefix="gg_local_llm_")
++        self.root = Path(self.temp.name).resolve()
++        self.assertEqual(self.root.parent, Path(tempfile.gettempdir()).resolve())
++        self.models = self.root / "models"
++        self.folder = self.models / "LLM"
++        (self.folder / "portrait").mkdir(parents=True)
++        (self.folder / "portrait" / "PE.gguf").write_bytes(b"test only")
++        (self.folder / "vision.mmproj.gguf").write_bytes(b"test only")
++        (self.folder / "ignore.txt").write_text("not a model", encoding="utf8")
++        self.patches = [patch.object(pe.folder_paths, "models_dir", str(self.models)), patch.object(pe.folder_paths, "get_filename_list", return_value=[]), patch.object(pe.folder_paths, "get_full_path", return_value=None)]
++        for p in self.patches:
++            p.start()
++    def tearDown(self):
++        for p in reversed(self.patches):
++            p.stop()
++        self.assertEqual(self.root.parent, Path(tempfile.gettempdir()).resolve())
++        self.temp.cleanup()
++
++    def test_models_llm_is_discoverable_without_other_plugin_registration(self):
++        names = [name.replace("\\", "/") for name in pe._gguf_choices(allow_none=False)]
++        self.assertIn("portrait/PE.gguf", names)
++        self.assertIn("vision.mmproj.gguf", names)
++        self.assertNotIn("ignore.txt", names)
++
++    def test_fallback_resolves_own_local_model(self):
++        path = pe._resolve_gguf_path("portrait/PE.gguf")
++        self.assertEqual(Path(path).resolve(), self.folder / "portrait" / "PE.gguf")
++
++    def test_fallback_does_not_modify_global_model_categories(self):
++        before = copy.deepcopy(pe.folder_paths.folder_names_and_paths)
++        pe._gguf_choices(allow_none=False)
++        pe._gguf_choices(allow_none=True)
++        self.assertEqual(pe.folder_paths.folder_names_and_paths, before)
++
++    def test_path_traversal_cannot_escape_local_model_directory(self):
++        (self.models / "outside.gguf").write_bytes(b"not allowed")
++        for name in ("../outside.gguf", "..\\outside.gguf", str(self.models / "outside.gguf")):
++            with self.subTest(name=name):
++                with self.assertRaises(ValueError):
++                    pe._resolve_gguf_path(name)
++
++
++if __name__ == "__main__":
++    unittest.main()
+
+--- /dev/null
++++ tests/test_local_llm_worker.py
+@@ -0,0 +1,500 @@
++"""本地LLM 隔离与真实子进程传输；仅标准库替身，不加载权重。"""
++import ast
++import copy
++import importlib.util
++import io
++import json
++import subprocess
++import sys
++import tempfile
++import time
++import types
++import unittest
++from pathlib import Path
++from unittest.mock import patch
++
++ROOT = Path(__file__).resolve().parents[1]
++PREFIX = "GG_LOCAL_LLM_JSON:"
++
++
++def load_source(name):
++    path = ROOT / "guli_nodes" / (name + ".py")
++    assert path.is_file(), f"缺少隔离实现：{path.name}"
++    spec = importlib.util.spec_from_file_location("_test_" + name, path)
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++FAKE_WORKER = r'''
++import json, os, sys, time
++sys.stdin.reconfigure(encoding="utf-8")
++sys.stdout.reconfigure(encoding="utf-8")
++sys.stderr.reconfigure(encoding="utf-8")
++PREFIX = "GG_LOCAL_LLM_JSON:"
++def reply(req, result=None, error=None):
++    value = {"id": req["id"], "ok": error is None}
++    value["result" if error is None else "error"] = result if error is None else error
++    print(PREFIX + json.dumps(value, ensure_ascii=False), flush=True)
++print('native non-JSON stdout', flush=True)
++print('{"id":1,"ok":false,"error":"unmarked diagnostic"}', flush=True)
++mode = ""
++for line in sys.stdin:
++    req = json.loads(line)
++    op = req["op"]
++    if op == "load":
++        mode = req["model_path"]
++        if mode == "load_error":
++            print("load diagnostic tail", file=sys.stderr, flush=True)
++            reply(req, error="模拟加载失败：请检查模型")
++            continue
++        if mode == "load_eof":
++            print("native load abort tail", file=sys.stderr, flush=True)
++            sys.exit(7)
++        if mode == "load_hang":
++            time.sleep(60)
++        result = {"ready": True, "torch_loaded": mode == "load_torch", "metadata": {
++            "general.architecture": "qwen35", "pid": os.getpid(),
++            "isolated": sys.flags.isolated, "script": __file__,
++            "guli_loaded": any(n == "guli_nodes" or n.startswith("guli_nodes.") for n in sys.modules),
++            "load_request": req}}
++        if mode == "load_missing_torch":
++            del result["torch_loaded"]
++        reply(req, result)
++        if mode == "no_read":
++            time.sleep(60)
++    elif op == "generate":
++        if mode == "stderr_flood":
++            sys.stderr.buffer.write(b"x" * 262144 + b"\nstderr flood tail\n")
++            sys.stderr.flush()
++            reply(req, error="模拟生成失败")
++            continue
++        if mode == "query_eof":
++            print("native query abort tail", file=sys.stderr, flush=True)
++            sys.exit(9)
++        if mode == "query_hang":
++            time.sleep(60)
++        if mode == "malformed":
++            print(PREFIX + "{not JSON", flush=True)
++            continue
++        reply(req, {"choices": [{"message": {"content": '{"rewritten_prompt":"测试增强"}'}}],
++                    "echo": req["kwargs"], "pid": os.getpid()})
++    elif op == "close":
++        if mode == "close_hang":
++            time.sleep(60)
++        reply(req, {"closed": True})
++        if mode == "close_ack_hang":
++            time.sleep(60)
++        break
++'''
++
++
++class LocalLLMTransportTests(unittest.TestCase):
++    def setUp(self):
++        self.bridge = load_source("local_llm_bridge")
++        self.temp = tempfile.TemporaryDirectory(prefix="gg_worker_transport_")
++        self.root = Path(self.temp.name).resolve()
++        self.assertEqual(self.root.parent, Path(tempfile.gettempdir()).resolve())
++        self.script = self.root / "独立 worker.py"
++        self.script.write_text(FAKE_WORKER, encoding="utf-8")
++        self.proxies = []
++        self.patches = [patch.object(self.bridge, "WORKER_SCRIPT", self.script),
++                        patch.object(self.bridge, "LOAD_TIMEOUT", 3),
++                        patch.object(self.bridge, "QUERY_TIMEOUT", 3),
++                        patch.object(self.bridge, "CLOSE_TIMEOUT", 0.2)]
++        for item in self.patches:
++            item.start()
++        self.addCleanup(self.cleanup)
++
++    def cleanup(self):
++        for proxy in self.proxies:
++            proxy.close()
++        for item in reversed(self.patches):
++            item.stop()
++        self.assertEqual(self.root.parent, Path(tempfile.gettempdir()).resolve())
++        self.temp.cleanup()
++
++    def start(self, mode="模型.gguf"):
++        proxy = self.bridge.LocalLLMProxy(mode, "视觉.mmproj.gguf", 4096)
++        self.proxies.append(proxy)
++        return proxy
++
++    def generate(self, proxy, text="中文需求"):
++        return proxy.create_chat_completion(messages=[{"role": "user", "content": text}],
++                                            max_tokens=32, temperature=0.7)
++
++    def assert_released(self, proxy):
++        self.assertIsNotNone(proxy._process.poll())
++        self.assertTrue(all(stream.closed for stream in (proxy._process.stdin, proxy._process.stdout, proxy._process.stderr)))
++        self.assertFalse(proxy._stdout_thread.is_alive())
++        self.assertFalse(proxy._stderr_thread.is_alive())
++        if proxy._writer_thread is not None:
++            self.assertFalse(proxy._writer_thread.is_alive())
++
++    def test_launch_isolated_file_and_utf8_roundtrip(self):
++        proxy = self.start()
++        self.assertEqual(proxy._process.args, [sys.executable, "-I", str(self.script)])
++        self.assertEqual(proxy.metadata["isolated"], 1)
++        self.assertFalse(proxy.metadata["guli_loaded"])
++        self.assertEqual(Path(proxy.metadata["script"]).resolve(), self.script)
++        request = proxy.metadata["load_request"]
++        self.assertEqual((request["model_path"], request["mmproj_path"], request["context_length"]),
++                         ("模型.gguf", "视觉.mmproj.gguf", 4096))
++        kwargs = {"messages": [{"role": "system", "content": "增强规则"}, {"role": "user", "content": [
++            {"type": "text", "text": "保留人物"},
++            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,dGVzdA=="}}]}],
++                  "max_tokens": 256, "temperature": 0.7}
++        result = proxy.create_chat_completion(**kwargs)
++        self.assertEqual(result["echo"], kwargs)
++        self.assertIn("测试增强", result["choices"][0]["message"]["content"])
++
++    def test_repeat_queries_reuse_exact_child(self):
++        proxy = self.start()
++        pid = proxy._process.pid
++        self.assertEqual(self.generate(proxy)["pid"], pid)
++        self.assertEqual(self.generate(proxy, "第二次")["pid"], pid)
++        self.assertIsNone(proxy._process.poll())
++
++    def test_close_is_idempotent_and_releases_streams_and_threads(self):
++        proxy = self.start()
++        self.generate(proxy)
++        proxy.close()
++        proxy.close()
++        self.assert_released(proxy)
++        with self.assertRaisesRegex(RuntimeError, "本地LLM.*关闭|重新"):
++            self.generate(proxy)
++
++    def assert_start_failure(self, mode, expression):
++        processes = []
++        original = self.bridge.subprocess.Popen
++        def record(*args, **kwargs):
++            process = original(*args, **kwargs)
++            processes.append(process)
++            return process
++        with patch.object(self.bridge.subprocess, "Popen", side_effect=record):
++            with self.assertRaisesRegex(RuntimeError, expression):
++                self.start(mode)
++        self.assertEqual(len(processes), 1)
++        process = processes[0]
++        self.assertIsNotNone(process.poll())
++        self.assertTrue(all(stream.closed for stream in (process.stdin, process.stdout, process.stderr)))
++
++    def test_load_error_is_actionable_and_releases_child(self):
++        self.assert_start_failure("load_error", "本地LLM.*模拟加载失败")
++
++    def test_load_eof_includes_stderr_and_releases_child(self):
++        self.assert_start_failure("load_eof", "(?s)本地LLM.*native load abort tail")
++
++    def test_stderr_flood_is_drained_and_failure_tail_is_bounded(self):
++        proxy = self.start("stderr_flood")
++        with self.assertRaisesRegex(RuntimeError, "(?s)本地LLM.*stderr flood tail") as raised:
++            self.generate(proxy)
++        self.assertLess(len(str(raised.exception)), 4600)
++        self.assert_released(proxy)
++
++    def test_query_eof_includes_stderr_and_releases_child(self):
++        proxy = self.start("query_eof")
++        with self.assertRaisesRegex(RuntimeError, "(?s)本地LLM.*native query abort tail"):
++            self.generate(proxy)
++        self.assert_released(proxy)
++
++    def test_load_timeout_forces_cleanup(self):
++        with patch.object(self.bridge, "LOAD_TIMEOUT", 0.2):
++            start = time.monotonic()
++            self.assert_start_failure("load_hang", "本地LLM.*超时")
++            self.assertLess(time.monotonic() - start, 3)
++
++    def test_query_timeout_does_not_terminate_unrelated_process(self):
++        other = subprocess.Popen([sys.executable, "-I", "-c", "import time; time.sleep(60)"],
++                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
++        try:
++            proxy = self.start("query_hang")
++            with patch.object(self.bridge, "QUERY_TIMEOUT", 0.2):
++                with self.assertRaisesRegex(RuntimeError, "本地LLM.*超时"):
++                    self.generate(proxy)
++            self.assert_released(proxy)
++            self.assertIsNone(other.poll())
++        finally:
++            other.terminate()
++            other.wait(timeout=3)
++
++    def test_blocked_stdin_write_is_inside_query_deadline(self):
++        proxy = self.start("no_read")
++        with patch.object(self.bridge, "QUERY_TIMEOUT", 0.2):
++            start = time.monotonic()
++            with self.assertRaisesRegex(RuntimeError, "本地LLM.*超时"):
++                self.generate(proxy, "x" * 2_000_000)
++            self.assertLess(time.monotonic() - start, 3)
++        self.assert_released(proxy)
++
++    def test_close_timeout_forces_cleanup(self):
++        proxy = self.start("close_hang")
++        start = time.monotonic()
++        proxy.close()
++        self.assertLess(time.monotonic() - start, 3)
++        self.assert_released(proxy)
++
++    def test_close_ack_without_exit_forces_cleanup(self):
++        proxy = self.start("close_ack_hang")
++        start = time.monotonic()
++        proxy.close()
++        self.assertLess(time.monotonic() - start, 3)
++        self.assert_released(proxy)
++
++    def test_torch_or_missing_isolation_readiness_is_refused(self):
++        for mode in ("load_torch", "load_missing_torch"):
++            with self.subTest(mode=mode):
++                self.assert_start_failure(mode, "本地LLM.*torch|隔离")
++
++    def test_malformed_marked_json_releases_child(self):
++        proxy = self.start("malformed")
++        with self.assertRaisesRegex(RuntimeError, "本地LLM.*JSON|协议"):
++            self.generate(proxy)
++        self.assert_released(proxy)
++
++    def test_queue_message_and_timeout_bounds(self):
++        proxy = self.start()
++        self.assertGreater(proxy._responses.maxsize, 0)
++        self.assertLessEqual(proxy._responses.maxsize, 8)
++        unpatched = load_source("local_llm_bridge")
++        for value in (unpatched.LOAD_TIMEOUT, unpatched.QUERY_TIMEOUT):
++            self.assertGreater(value, 0)
++            self.assertLessEqual(value, 600)
++        with patch.object(self.bridge, "MAX_MESSAGE_BYTES", 512):
++            with self.assertRaisesRegex(RuntimeError, "本地LLM.*上限|过大"):
++                self.generate(proxy, "x" * 1024)
++        self.assert_released(proxy)
++
++    def test_real_worker_redirects_python_and_native_stdout(self):
++        worker_path = ROOT / "guli_nodes" / "local_llm_worker.py"
++        self.assertTrue(worker_path.is_file())
++        driver = self.root / "mock_native_driver.py"
++        driver.write_text('import importlib.util, os, sys, types\n'
++                          f'spec = importlib.util.spec_from_file_location("worker", {str(worker_path)!r})\n'
++                          'worker = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(worker)\n'
++                          'class Llama:\n'
++                          '    def __init__(self, **kwargs):\n'
++                          '        os.write(1, b"native stdout diagnostic\\n")\n'
++                          '        print("Python stdout diagnostic", flush=True)\n'
++                          '        self.metadata = {"general.architecture": "llama"}\n'
++                          '        self.chat_handler = None\n'
++                          '    def create_chat_completion(self, **kwargs):\n'
++                          '        return {"choices": [{"message": {"content": "standalone success"}}]}\n'
++                          '    def close(self): pass\n'
++                          'fake = types.ModuleType("llama_cpp")\nfake.Llama = Llama\n'
++                          'sys.modules["llama_cpp"] = fake\nworker.main()\n', encoding="utf-8")
++        with patch.object(self.bridge, "WORKER_SCRIPT", driver):
++            # 此驱动只替身 text-only Llama，不应要求未提供的视觉 handler。
++            proxy = self.bridge.LocalLLMProxy("model.gguf", "", 4096)
++            self.proxies.append(proxy)
++            result = self.generate(proxy)
++        self.assertEqual(result["choices"][0]["message"]["content"], "standalone success")
++        proxy.close()
++        self.assert_released(proxy)
++        tail = bytes(proxy._stderr_tail).decode("utf-8", errors="replace")
++        self.assertIn("native stdout diagnostic", tail)
++        self.assertIn("Python stdout diagnostic", tail)
++
++
++class WorkerFactoryTests(unittest.TestCase):
++    def setUp(self):
++        self.worker = load_source("local_llm_worker")
++
++    def test_top_level_imports_are_stdlib_and_no_package_or_torch_imports(self):
++        tree = ast.parse((ROOT / "guli_nodes" / "local_llm_worker.py").read_text(encoding="utf-8"))
++        for node in ast.walk(tree):
++            if isinstance(node, (ast.Import, ast.ImportFrom)):
++                names = [alias.name for alias in node.names] if isinstance(node, ast.Import) else [node.module or ""]
++                self.assertFalse(getattr(node, "level", 0), "worker 必须可按文件独立启动")
++                for name in names:
++                    self.assertNotIn(name.split(".")[0], ("guli_nodes", "torch", "numpy", "folder_paths", "comfy"))
++        for node in tree.body:
++            if isinstance(node, (ast.Import, ast.ImportFrom)):
++                names = [alias.name for alias in node.names] if isinstance(node, ast.Import) else [node.module]
++                self.assertTrue(all(name.split(".")[0] in sys.stdlib_module_names for name in names))
++
++    def test_import_does_not_load_llama_cpp(self):
++        with patch.dict(sys.modules):
++            sys.modules.pop("llama_cpp", None)
++            sys.modules.pop("llama_cpp.llama_chat_format", None)
++            load_source("local_llm_worker")
++            self.assertNotIn("llama_cpp", sys.modules)
++
++    def fake_llama(self, import_torch=False):
++        instances = []
++        class Llama:
++            def __init__(self, **kwargs):
++                self.kwargs = kwargs
++                self.metadata = {"general.architecture": "llama"}
++                self.chat_handler = None
++                self.close_calls = 0
++                instances.append(self)
++                if import_torch:
++                    sys.modules["torch"] = types.ModuleType("torch")
++            def create_chat_completion(self, **kwargs):
++                return {"choices": [{"message": {"content": "fake reply"}}]}
++            def close(self):
++                self.close_calls += 1
++                if self.chat_handler is not None:
++                    self.chat_handler.close()
++        module = types.ModuleType("llama_cpp")
++        module.Llama = Llama
++        return module, instances
++
++    def test_factory_retains_context_and_gpu_constructor_arguments(self):
++        module, instances = self.fake_llama()
++        with patch.dict(sys.modules, {"llama_cpp": module}):
++            llm = self.worker.load_llm_model("text.gguf", "", 128)
++        self.assertEqual(llm.kwargs, {"model_path": "text.gguf", "n_ctx": 512, "n_gpu_layers": -1,
++                                     "chat_handler": None, "verbose": False})
++        self.worker.close_llm_model(llm)
++        self.assertEqual(instances[0].close_calls, 1)
++
++    def test_cleanup_detaches_projector_and_closes_each_once(self):
++        module, _ = self.fake_llama()
++        with patch.dict(sys.modules, {"llama_cpp": module}):
++            llm = self.worker.load_llm_model("text.gguf", "", 4096)
++        handler = types.SimpleNamespace(close_calls=0)
++        def close():
++            handler.close_calls += 1
++        handler.close = close
++        llm.chat_handler = handler
++        self.worker.close_llm_model(llm)
++        self.assertIsNone(llm.chat_handler)
++        self.assertEqual((handler.close_calls, llm.close_calls), (1, 1))
++
++    def test_missing_llama_cpp_is_actionable(self):
++        with patch.dict(sys.modules, {"llama_cpp": None}):
++            with self.assertRaisesRegex(RuntimeError, "llama-cpp-python.*安装|API / 本地PE"):
++                self.worker.load_llm_model("text.gguf", "", 4096)
++
++    def serve(self, requests):
++        output = io.StringIO()
++        data = "".join(json.dumps(req) + "\n" for req in requests).encode("utf-8")
++        self.worker.serve(io.BytesIO(data), output)
++        return [json.loads(line[len(PREFIX):]) for line in output.getvalue().splitlines()]
++
++    def test_torch_present_before_load_is_rejected_without_construction(self):
++        module, instances = self.fake_llama()
++        with patch.dict(sys.modules, {"llama_cpp": module, "torch": types.ModuleType("torch")}):
++            responses = self.serve([{"id": 1, "op": "load", "model_path": "fake", "mmproj_path": "", "context_length": 512}])
++        self.assertFalse(responses[0]["ok"])
++        self.assertIn("torch", responses[0]["error"])
++        self.assertEqual(instances, [])
++
++    def test_torch_imported_by_dependency_refuses_ready_and_closes_model(self):
++        module, instances = self.fake_llama(import_torch=True)
++        with patch.dict(sys.modules, {"llama_cpp": module}):
++            sys.modules.pop("torch", None)
++            responses = self.serve([{"id": 1, "op": "load", "model_path": "fake", "mmproj_path": "", "context_length": 512}])
++        self.assertFalse(responses[0]["ok"])
++        self.assertIn("torch", responses[0]["error"])
++        self.assertEqual(instances[0].close_calls, 1)
++
++    def test_json_serve_roundtrip_and_eof_close_model(self):
++        module, instances = self.fake_llama()
++        with patch.dict(sys.modules, {"llama_cpp": module}):
++            sys.modules.pop("torch", None)
++            responses = self.serve([{"id": 1, "op": "load", "model_path": "fake", "mmproj_path": "", "context_length": 512},
++                                    {"id": 2, "op": "generate", "kwargs": {"messages": []}}])
++        self.assertEqual(responses[0]["result"], {"ready": True, "torch_loaded": False,
++                                                 "metadata": {"general.architecture": "llama"}})
++        self.assertEqual(responses[1]["result"]["choices"][0]["message"]["content"], "fake reply")
++        self.assertEqual(instances[0].close_calls, 1)
++
++
++class StorageTransportIntegrationTests(unittest.TestCase):
++    def setUp(self):
++        # 先检查缺失实现，使 RED 是明确的功能缺失而非导入异常。
++        load_source("local_llm_bridge")
++        sys.path.insert(0, str(ROOT.parent.parent))
++        sys.path.insert(0, str(ROOT))
++        from guli_nodes import prompt_enhancer as pe
++        from guli_nodes import local_llm_bridge as bridge
++        import comfy.model_management as mm
++        self.pe, self.bridge = pe, bridge
++        pe._LocalLLMStorage.unload()
++        self.temp = tempfile.TemporaryDirectory(prefix="gg_storage_transport_")
++        self.root = Path(self.temp.name).resolve()
++        self.script = self.root / "worker.py"
++        self.script.write_text(FAKE_WORKER, encoding="utf-8")
++        self.unload = patch.object(mm, "unload_all_models")
++        self.empty = patch.object(mm, "soft_empty_cache")
++        self.patches = [patch.object(bridge, "WORKER_SCRIPT", self.script), patch.object(bridge, "LOAD_TIMEOUT", 3),
++                        patch.object(bridge, "QUERY_TIMEOUT", 3), patch.object(bridge, "CLOSE_TIMEOUT", 0.2),
++                        patch.object(pe, "_resolve_gguf_path", side_effect=lambda name: name), self.unload, self.empty]
++        for item in self.patches:
++            item.start()
++        self.unload_mock, self.empty_mock = mm.unload_all_models, mm.soft_empty_cache
++        self.addCleanup(self.cleanup)
++
++    def cleanup(self):
++        self.pe._LocalLLMStorage.unload()
++        for item in reversed(self.patches):
++            item.stop()
++        self.assertEqual(self.root.parent, Path(tempfile.gettempdir()).resolve())
++        self.temp.cleanup()
++
++    def test_same_key_reuses_real_worker_and_new_key_closes_it_without_registry_change(self):
++        storage = self.pe._LocalLLMStorage
++        before = copy.deepcopy(self.pe.folder_paths.folder_names_and_paths)
++        first = storage.load("model.gguf", "无", 4096)
++        self.assertEqual(first.metadata["load_request"]["mmproj_path"], "")
++        self.assertIs(first, storage.load("model.gguf", "", 4096))
++        second = storage.load("model.gguf", "vision.gguf", 8192)
++        self.assertIsNot(first, second)
++        self.assertIsNotNone(first._process.poll())
++        self.assertEqual(storage.key, ("model.gguf", "vision.gguf", 8192))
++        self.assertEqual(before, self.pe.folder_paths.folder_names_and_paths)
++        self.assertEqual(self.unload_mock.call_count, 2)
++        self.assertEqual(self.empty_mock.call_count, 2)
++
++    def test_comfy_vram_is_released_before_worker_startup_not_on_cache_hit(self):
++        events = []
++        self.unload_mock.side_effect = lambda: events.append("unload")
++        self.empty_mock.side_effect = lambda **kwargs: events.append("empty")
++        real_factory = self.bridge.LocalLLMProxy
++        def start(*args, **kwargs):
++            events.append("worker")
++            return real_factory(*args, **kwargs)
++        with patch.object(self.bridge, "LocalLLMProxy", side_effect=start):
++            self.pe._LocalLLMStorage.load("model.gguf", "无", 4096)
++            self.pe._LocalLLMStorage.load("model.gguf", "无", 4096)
++        self.assertEqual(events, ["unload", "empty", "worker"])
++
++    def test_auto_unload_false_retains_child_and_default_true_exits_it(self):
++        pe = self.pe
++        kwargs = {pe.P_METHOD: pe.METHOD_LLM, pe.P_LLM: "model.gguf", pe.P_PROMPT: "保留人物", pe.P_UNLOAD: False}
++        self.assertEqual(pe._run(kwargs), "测试增强")
++        retained = pe._LocalLLMStorage.llm
++        self.assertIsNone(retained._process.poll())
++        kwargs.pop(pe.P_UNLOAD)
++        kwargs[pe.P_PROMPT] = "第二次需求"
++        self.assertEqual(pe._run(kwargs), "测试增强")
++        self.assertIsNotNone(retained._process.poll())
++        self.assertIsNone(pe._LocalLLMStorage.llm)
++        self.assertIsNone(pe._LocalLLMStorage.key)
++
++    def test_failed_startup_leaves_storage_empty(self):
++        with self.assertRaisesRegex(RuntimeError, "本地LLM.*模拟加载失败"):
++            self.pe._LocalLLMStorage.load("load_error", "无", 4096)
++        self.assertIsNone(self.pe._LocalLLMStorage.llm)
++        self.assertIsNone(self.pe._LocalLLMStorage.key)
++
++    def test_failed_query_clears_dead_cached_proxy_for_same_key_retry(self):
++        pe = self.pe
++        dead = pe._LocalLLMStorage.load("query_eof", "无", 4096)
++        with self.assertRaisesRegex(RuntimeError, "(?s)本地LLM.*native query abort tail"):
++            pe._request_local_llm(model_name="query_eof", mmproj_name="无", context_length=4096,
++                                  system_prompt="rules", user_prompt="request", max_output_tokens=32,
++                                  image_base64_list=[])
++        self.assertIsNotNone(dead._process.poll())
++        self.assertIsNone(pe._LocalLLMStorage.llm)
++        self.assertIsNone(pe._LocalLLMStorage.key)
++        fresh = pe._LocalLLMStorage.load("query_eof", "无", 4096)
++        self.assertIsNot(fresh, dead)
++        self.assertIsNone(fresh._process.poll())
++
++
++if __name__ == "__main__":
++    unittest.main()
+
+diff --git a/guli_nodes/prompt_enhancer.py b/guli_nodes/prompt_enhancer.py
+index aebd15e..48347bc 100644
+--- a/guli_nodes/prompt_enhancer.py
++++ b/guli_nodes/prompt_enhancer.py
+@@ -17,6 +17,7 @@ import json
+ import re
+ import time
+ from dataclasses import dataclass
++from pathlib import Path
+ from typing import Any, Sequence
+ 
+ import numpy as np
+@@ -540,6 +541,12 @@ def _gguf_choices(*, allow_none: bool) -> list:
+                     names.add(str(name))
+         except Exception:
+             continue
++    # models/LLM 是本节点的本地兜底，不依赖其它插件注册目录或扩展名。
++    local_dir = Path(folder_paths.models_dir) / "LLM"
++    if local_dir.is_dir():
++        for path in local_dir.rglob("*"):
++            if path.is_file() and path.suffix.lower() == ".gguf":
++                names.add(path.relative_to(local_dir).as_posix())
+     found = sorted(names)
+     if allow_none:
+         return [NO_MMPROJ] + found
+@@ -547,6 +554,9 @@ def _gguf_choices(*, allow_none: bool) -> list:
+ 
+ 
+ def _resolve_gguf_path(model_name: str) -> str:
++    name = str(model_name or "").replace("\\", "/")
++    if not name or Path(name).is_absolute() or ".." in Path(name).parts:
++        raise ValueError("GGUF 模型名称必须是模型目录内的相对路径，不能跳出模型目录。")
+     for folder in LLM_FOLDERS:
+         try:
+             path = folder_paths.get_full_path(folder, model_name)
+@@ -554,6 +564,14 @@ def _resolve_gguf_path(model_name: str) -> str:
+             path = None
+         if path:
+             return path
++    root = (Path(folder_paths.models_dir) / "LLM").resolve()
++    candidate = (root / name).resolve()
++    try:
++        candidate.relative_to(root)
++    except ValueError:
++        raise ValueError("GGUF 模型路径不能跳出 models/LLM 目录。") from None
++    if candidate.is_file() and candidate.suffix.lower() == ".gguf":
++        return str(candidate)
+     raise ValueError(f"找不到 GGUF 模型文件：{model_name}")
+ 
+ 
+@@ -568,35 +586,19 @@ class _LocalLLMStorage:
+         if cls.llm is not None and cls.key == key:
+             return cls.llm
+         cls.unload()
++        model_path = _resolve_gguf_path(model_name)
++        mmproj_path = _resolve_gguf_path(mmproj) if mmproj else ""
++        from .local_llm_bridge import LocalLLMProxy
++
++        # 原生 LLM 不归 Comfy 管理：启动前先释放上一阶段扩散模型占用的显存。
+         try:
+-            from llama_cpp import Llama
+-        except Exception as exc:
+-            raise RuntimeError(
+-                "本地LLM 方式需要 llama-cpp-python，请先安装（pip install llama-cpp-python），"
+-                "或改用 API / 本地PE 方式。"
+-            ) from exc
+-
+-        chat_handler = None
+-        if mmproj:
+-            handler_cls = None
+-            try:
+-                from llama_cpp.llama_chat_format import Qwen25VLChatHandler as handler_cls  # type: ignore
+-            except Exception:
+-                try:
+-                    from llama_cpp.llama_chat_format import Qwen2VLChatHandler as handler_cls  # type: ignore
+-                except Exception:
+-                    handler_cls = None
+-            if handler_cls is None:
+-                raise RuntimeError("当前 llama-cpp-python 不支持 Qwen VL 视觉，请升级后再用图生图本地LLM")
+-            chat_handler = handler_cls(clip_model_path=_resolve_gguf_path(mmproj), verbose=False)
+-
+-        llm = Llama(
+-            model_path=_resolve_gguf_path(model_name),
+-            n_ctx=max(512, int(context_length)),
+-            n_gpu_layers=-1,
+-            chat_handler=chat_handler,
+-            verbose=False,
+-        )
++            import comfy.model_management as mm
++        except ImportError:
++            pass
++        else:
++            mm.unload_all_models()
++            mm.soft_empty_cache(force=True)
++        llm = LocalLLMProxy(model_path, mmproj_path, int(context_length))
+         cls.llm = llm
+         cls.key = key
+         return llm
+@@ -604,14 +606,8 @@ class _LocalLLMStorage:
+     @classmethod
+     def unload(cls) -> None:
+         llm, cls.llm, cls.key = cls.llm, None, None
+-        if llm is None:
+-            return
+-        try:
+-            close = getattr(llm, "close", None)
+-            if callable(close):
+-                close()
+-        except Exception:
+-            pass
++        if llm is not None:
++            llm.close()
+ 
+ 
+ def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt, user_prompt, max_output_tokens, image_base64_list) -> str:
+@@ -624,14 +620,19 @@ def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt
+             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + item}}
+             for item in images
+         )
+-    result = llm.create_chat_completion(
+-        messages=[
+-            {"role": "system", "content": system_prompt},
+-            {"role": "user", "content": user_content},
+-        ],
+-        max_tokens=int(max_output_tokens),
+-        temperature=LLM_TEMPERATURE,
+-    )
++    try:
++        result = llm.create_chat_completion(
++            messages=[
++                {"role": "system", "content": system_prompt},
++                {"role": "user", "content": user_content},
++            ],
++            max_tokens=int(max_output_tokens),
++            temperature=LLM_TEMPERATURE,
++        )
++    except Exception:
++        # 失败的桥接已释放 child；清掉代理缓存，让同一选择可以重新启动。
++        _LocalLLMStorage.unload()
++        raise
+     choices = result.get("choices") if isinstance(result, dict) else None
+     if choices:
+         message = choices[0].get("message") if isinstance(choices[0], dict) else None
+
+diff --git a/guli_nodes/__init__.py b/guli_nodes/__init__.py
+index 272200c..3b85684 100644
+--- a/guli_nodes/__init__.py
++++ b/guli_nodes/__init__.py
+@@ -10,6 +10,8 @@ FAILED_MODULES = {}
+ _NODE_MODULES = (
+     "aspect_ratio",
+     "image_tools",
++    "mask_tools",
++    "region_edit",
+     "image_obfuscate",
+     "video_tools",
+     "lora_tools",
+
+diff --git a/README.md b/README.md
+index 0053dcc..a39e579 100644
+--- a/README.md
++++ b/README.md
+@@ -104,6 +104,9 @@ pip install -r requirements.txt
+ - **图像保存与压缩** — 预览、保存、压缩保存、独立压缩，支持 JPEG/PNG/WEBP。
+ - **图像对比** — 2 图和最多 20 图拼接预览，适合参数对比和 A/B 测试。
+ - **图像混淆** — 用 4 位密码按 Hilbert 曲线置换图像像素，用于上传前遮挡或还原；V3 会在底部写入宽高条码，缩放后仍能自动识别原尺寸，V2 不改变尺寸且逐像素无损。
++- **遮罩裁剪与回贴** — 按遮罩白色区域自动框选、四边扩展后裁剪，输出尺寸支持原像素 / 原像素1:1 / 按边长 / 按K数分辨率 / 按宽高（后三种与 `GG Latent` 共用同一套宽高比例、边长、边长类型、画面方向、分辨率配置）；处理完由 `GG 裁剪恢复` 按接缝把图像羽化贴回原位置，可选颜色还原与背景对照。
++- **按遮罩合并** — 按遮罩把覆盖图混到背景图上，遮罩可先扩展（膨胀/腐蚀）再羽化，整体强度由透明度控制；覆盖图可缩放到背景尺寸或按原尺寸居中放置，两边张数不同时自动广播。
++- **人像 / 背景分区编辑** — [示例工作流](<examples/workflows/GG-人像背景分区编辑_Qwen2.1_Turbo.json>)使用手绘人像遮罩，背景自动反相，先背景后人像编辑；空需求真正跳过对应优化与采样，空/极小/全白人物遮罩报错而不误改整图。每阶段按原遮罩再次限域，保持原坐标、画幅和基本外轮廓；AI 提示词优化可单独开关。详见[使用说明](<examples/workflows/GG-人像背景分区编辑_使用说明.md>)。
+ - **Latent 尺寸** — `GG Latent` 支持按边长、按 K 数分辨率、按宽高、按 Latent 接入、按图像接入五种生成方式；按边长用边长与边长类型做自定义尺寸，按 K 数分辨率含 1K–4K 档位，按宽高直接给像素宽高（可接入 `GG 图像宽高` 的宽度/高度输出，自动对齐到 8），另有输入尺寸倍率缩放、图像缩放方法与尺寸读取；另提供 Latent 缩放、VAE 编码/解码缓存。
+ 
+ ### 模型、LoRA、采样与视频
+@@ -118,7 +121,7 @@ pip install -r requirements.txt
+ 
+ ## 节点清单
+ 
+-当前版本共 42 个节点：后端注册 41 个，另有 1 个由前端生成（`GG 选项确认`）。
++当前版本共 46 个节点：后端注册 45 个，另有 1 个由前端生成（`GG 选项确认`）。
+ 
+ ### 图像、尺寸与 Latent
+ 
+@@ -134,6 +137,10 @@ pip install -r requirements.txt
+ | 节点 | 用途 |
+ | --- | --- |
+ | `GG 图像裁剪` | 中心、坐标、比例等裁剪。 |
++| `GG 分区编辑准备` | 检查单张图像和手绘人像遮罩，输出人像或背景区域遮罩、区域请求、固定姿态/位置/外轮廓约束和「是否编辑」；编辑需求为空或只有空白时返回原图、空请求与假，不要求有效遮罩。启用编辑时拒绝无效尺寸、NaN/Inf、越界数值、空/极小/全白人像与极小目标区域，防止下游裁剪误退化为整图。 |
++| `GG 遮罩裁剪` | 按遮罩白色区域自动框选、四边扩展后裁剪，输出 `接缝` / `裁剪图像` / `裁剪遮罩`。`扩展方式` 可选四边统一或分别设置（只显示对应的系数）；`输出尺寸` 决定 `裁剪图像` 与 `裁剪遮罩` 的宽高（两者始终同尺寸），可选原像素、原像素1:1、按边长、按K数分辨率、按宽高，只显示当前方式用得到的参数。遮罩白色区域小于整图 0.2% 时退化为整图裁剪。 |
++| `GG 裁剪恢复` | 按 `接缝` 把处理后的裁剪图像羽化贴回原图位置，可调遮罩扩展、遮罩羽化与颜色还原强度；可另接 `裁剪遮罩` 指定贴回区域、接 `背景图像` 做对照输出。 |
++| `GG 图像合并（遮罩）` | 按 `遮罩` 把 `覆盖图` 混到 `背景图` 上：`遮罩扩展` 正数膨胀、负数腐蚀，`模糊半径` 羽化边缘，`透明度` 控整体强度；`匹配图像大小` 开启时把覆盖图缩放到背景尺寸，关闭时按原尺寸居中放置。不接 `遮罩` 时整图按透明度叠加，此时 `遮罩扩展` / `模糊半径` 自动隐藏。两边张数不同时，只有 1 张的那边自动复用。 |
+ | `GG 图像变换` | 水平/垂直翻转和 90/180/270 度旋转。 |
+ | `GG 图像调整` | 亮度、对比度、饱和度、锐化和虚化。 |
+ | `GG 色彩校正` | 使用 torch 张量批量调整温度、色调、明度、对比度、饱和度和伽马。 |
+@@ -284,6 +291,21 @@ pip install -r requirements.txt
+ 
+ ## 更新记录
+ 
++### 未发布
++
++**新增节点**
++
++- `GG 分区编辑准备`：手绘人物遮罩校验、人物/背景区域请求与固定姿态/位置/外轮廓约束；区域需求留空时输出关闭信号供懒求值开关跳过整条分支。新增[人像背景分区编辑工作流](<examples/workflows/GG-人像背景分区编辑_Qwen2.1_Turbo.json>)及[使用说明](<examples/workflows/GG-人像背景分区编辑_使用说明.md>)，无需 SAM3 或孤海节点运行依赖，先背景后人像、小幅图生图、按原坐标还原并以原遮罩再次限域，保存原画幅 PNG。启用编辑时拒绝空/过小/全白人物遮罩、无效尺寸与非有限值，避免下游误退化为整图；支持 V3/legacy 两种 API。
++- `GG 遮罩裁剪`：按遮罩白色区域自动框选、四边扩展后裁剪，输出 `接缝` / `裁剪图像` / `裁剪遮罩`。`扩展方式` 选「四边统一」或「分别设置」时只显示对应的扩展系数；`输出尺寸` 决定 `裁剪图像` 与 `裁剪遮罩` 的宽高（两者始终同尺寸），可选「原像素」「原像素1:1」「按边长」「按K数分辨率」「按宽高」，每个方式只显示自己用得到的参数——原像素两种显示 `倍数取整`，按边长显示 `宽高比例` / `边长` / `边长类型` / `画面方向`，按K数分辨率显示 `宽高比例` / `画面方向` / `分辨率`，按宽高显示 `宽度` / `高度`（可接 `GG 图像宽高` 的输出）。遮罩白色区域小于整图 0.2% 时退化为整图裁剪。
++- `GG 裁剪恢复`：按 `接缝` 把处理后的裁剪图像羽化贴回原图位置，可调 `遮罩扩展`、`遮罩羽化` 与 `颜色还原` 强度；`裁剪遮罩` 可覆盖接缝里记录的贴回区域，`背景图像` 用于对照输出。
++- `GG 图像合并（遮罩）`：按 `遮罩` 把 `覆盖图` 混到 `背景图` 上，`遮罩扩展` 正数膨胀、负数腐蚀，`模糊半径` 羽化边缘，`透明度` 控整体强度；`匹配图像大小` 开启时把覆盖图缩放到背景尺寸，关闭时按原尺寸居中放置（比背景大就居中裁切）。不接 `遮罩` 时整图按透明度叠加，`遮罩扩展` / `模糊半径` 会自动隐藏。两边张数不同时，只有 1 张的那边自动复用。
++
++**兼容**
++
++- `GG 提示词增强qwen2.1` 的本地LLM方式可直接发现 `models/LLM` 的 GGUF 文件，无需其它插件注册目录；图生图按模型实际 Qwen2-VL / Qwen3-VL / Qwen3.5 架构选择匹配视觉适配器，缺少所需适配器时给中文升级提示，不再把 PE-I2I 的 Qwen3.5 模型误送进 Qwen2.5 模板。Qwen3.5 改写默认关闭思考段，加载失败和卸载时释放主模型与视觉投影。
++- 遮罩裁剪与回贴全链路只用 ComfyUI 环境自带的 `torch` / `numpy` / `PIL`，不新增 `cv2` / `scipy` 依赖。
++- `GG 遮罩裁剪` 的 `输出尺寸` 已改为与 `GG Latent` 同一套比例配置：旧工作流里存过的「自定义宽高」会退回「原像素」，需要重选 `按边长` / `按K数分辨率` / `按宽高`；`倍数取整` 移到了「原像素」「原像素1:1」内部，旧工作流里的同名值会回退默认 8。
++
+ ### v1.2.0（2026-10-29）
+ 
+ 自 v1.1.1 以来的累积更新。各节点的完整用法见上方「节点清单」，这里只列变化。
+@@ -433,6 +455,7 @@ pip install -r requirements.txt
+ | 文本框悬浮按钮 | [ComfyUI-Prompt-Assistant](https://github.com/yawiii/ComfyUI-Prompt-Assistant) | 文本框悬浮复制、粘贴、清空按钮的交互灵感来源于 Prompt Assistant；本项目按 GuliNodes 的全局文本框识别、设置开关和前端按钮样式重新实现。 |
+ | `GG 标题` | rgthree、Anything Everywhere、Reroute 等社区常见工作流形态 | 这些节点借鉴了社区里“画布标注”的交互思路，但前后端逻辑按 GuliNodes 的中文体验和序列化方式重写。 |
+ | `GG 简单数学表达式` | ComfyUI_essentials 的 SimpleMathDual+ 节点形态 | 节点输入结构和常用表达式场景参考 SimpleMathDual+；当前实现按 GuliNodes 中文命名重新实现，并使用 AST 白名单求值避免直接执行任意代码。 |
++| `GG 提示词增强qwen2.1` 的 GGUF 视觉适配 | [abetlen/llama-cpp-python](https://github.com/abetlen/llama-cpp-python) 的 Qwen2/2.5-VL、Qwen3-VL、Qwen35ChatHandler 与 MTMD 实现 | 桥接：读取已加载模型的架构元数据，选择该可选库提供的匹配视觉 handler；不复制模板或投影实现，Qwen3.5 使用库的 `enable_thinking=False` 生成直接改写结果，并在卸载时显式释放视觉资源。 |
+ | `GG 提示词增强qwen2.1` | TE MAN / QQ / Wysl 的「Qwen Image 2.1 AI提示词增强」节点、Qwen Image 2.1 官方提示词改写规则 | 提示词增强 API 与本地官方 PE 通路的逻辑、以及官方 system prompt 模板（`guli_nodes/qwen_pe_prompts.py`）整段移植自 TE MAN / QQ 的同类节点；本项目按 GuliNodes 命名与结构重写为文生图/图生图两档任务、API/本地PE/本地LLM 三档增强方式、参考图 Autogrow 最多 20 张，并去掉思考模式与最大边长设置。本地LLM 通路（llama-cpp-python 加载 GGUF + mmproj）为本项目按用户要求新增实现。 |
+ | `GG 选项确认` | Wysl-MultiPrimitive | 下游控件规格识别、动态输出端口和选项同步的交互思路参考该节点；当前实现按 GuliNodes 的中文节点命名、单输出初始状态和最多 20 个输出源重新实现。 |
+ | `GG 提示词优化qwen2.1` | ComfyUI 原生 `Text Encode Qwen Image 2.1`（TextEncodeQwenImageEditPlus） | 适配：把原生的 CLIP 文本编码、VAE 参考图编码与 `reference_latents` 逻辑整合进单个节点，按 GuliNodes 中文命名重写，参考图改用 Autogrow 最多 20 张，去掉 Latent 输出，仅保留供 Conditioning 使用的 VAE 选项。 |
+@@ -444,6 +467,9 @@ pip install -r requirements.txt
+ | `GG 视频压缩` 编码器与压制形态 | [小丸工具箱 / Maruko's Toolbox](https://github.com/wzxjohn/marukotoolbox) | 编码器选项命名（`x264_64-8bit.exe`、`x265-8bit\gcc[cpu].exe` 等 8/10/12bit x264/x265 档位）与「选编码器 + 调 CRF 压制」的交互形态参考小丸工具箱；GuliNodes 内部实际由 ffmpeg（libx264/libx265）编码，不打包也不调用其二进制。 |
+ | `web/gg-group-styler.js` | ComfyUI-Group-Styler 的“前端扩展 + LiteGraph Group 绘制”路线 | 新增分组样式增强参考了该类前端实现路线，但没有复制其源码；当前文件在本项目内独立包装 `drawGroups`，带设置开关和原生绘制回退，并扩展标题栏按钮、顶部快捷开关、子工作流折叠动画、隐藏节点过滤与右下角圆点恢复指示器。当前图与根图子图注册表严格隔离，折叠代理只收缩外层组，组内节点保持原始位置以兼容不同 ComfyUI 绘制路径。 |
+ | TapRelay 完成通知 | `W:\TapRelay` 的 HTTP/WebSocket 通知协议 | 适配 TapRelay PC 端固定的 `POST http://127.0.0.1:1122/send` 接收协议，发送 `message`、`source`、`status`、`taskId` 和 `durationMs`；GuliNodes 只做协议桥接，不复制 TapRelay 的接收或广播实现。 |
++| `GG 遮罩裁剪`、`GG 裁剪恢复` | [goohai/Goohaitools-comfyui](https://github.com/goohai/Goohaitools-comfyui) 的 `孤海-遮罩裁剪V2`、`孤海-裁剪恢复` | 适配：遮罩外接框 + 四边按短边比例扩展、三种输出尺寸、倍数取整、越界用边缘众数颜色填充、以接缝数据串联裁剪与恢复、羽化贴回与同位置偏色校正的功能形态和参数语义参考该节点；GuliNodes 把四个扩展系数收进 `扩展方式` 选择器，并把输出尺寸改造成与 `GG Latent` 同一套配置（原像素 / 原像素1:1 / 按边长 / 按K数分辨率 / 按宽高，每个方式只显示自己用得到的参数），并把其基于 `cv2` / `scipy` 的填孔、膨胀、羽化、缩放改用 `PIL` + `torch` 重写，不复制其源码。 |
++| `GG 分区编辑准备`、人像 / 背景分区编辑示例工作流 | [goohai/Goohaitools-comfyui](https://github.com/goohai/Goohaitools-comfyui) 的局部裁剪与蒙版恢复工作流；[ComfyUI](https://github.com/Comfy-Org/ComfyUI) 原生蒙版编辑与懒求值节点 | 思路参考：采用手绘选区、上下文裁剪、局部编辑和原坐标回贴的流程；本项目新增严格的输入 / 空蒙版检查、人物与背景互补区域、空需求自动跳过、优化后重新追加固定约束，以及每阶段用原蒙版再次限域。实际调用 GG 现有裁剪 / 恢复 / 合并和 ComfyUI 原生节点，不复制分割或生成实现，不依赖 SAM3 / 孤海节点运行时。 |
++| `GG 图像合并（遮罩）` | [goohai/Goohaitools-comfyui](https://github.com/goohai/Goohaitools-comfyui) 的 `孤海-图像合并（遮罩）` | 适配：以「背景图 + 覆盖图 + 遮罩」混合、遮罩先扩展（膨胀/腐蚀）再羽化、透明度控整体强度、`匹配图像大小` 决定覆盖图缩放还是按原尺寸居中放置的功能形态和参数语义参考该节点；GuliNodes 用可分离 `max_pool2d` 一次完成任意半径膨胀（替代其 `MaxFilter(3)` 逐像素循环，腐蚀改为反相→膨胀→反相）、支持批量广播（不再只处理第一张）、居中放置时用有效区域挡住覆盖图周围的透明区（原实现会把透明区当黑色一起混进去）、遮罩与背景尺寸不一致时给中文报错而不是静默缩放，全程浮点混合不做 uint8 往返，不复制其源码。 |
+ 
+ ---
+ 

@@ -17,6 +17,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
@@ -540,6 +541,12 @@ def _gguf_choices(*, allow_none: bool) -> list:
                     names.add(str(name))
         except Exception:
             continue
+    # models/LLM 是本节点的本地兜底，不依赖其它插件注册目录或扩展名。
+    local_dir = Path(folder_paths.models_dir) / "LLM"
+    if local_dir.is_dir():
+        for path in local_dir.rglob("*"):
+            if path.is_file() and path.suffix.lower() == ".gguf":
+                names.add(path.relative_to(local_dir).as_posix())
     found = sorted(names)
     if allow_none:
         return [NO_MMPROJ] + found
@@ -547,6 +554,9 @@ def _gguf_choices(*, allow_none: bool) -> list:
 
 
 def _resolve_gguf_path(model_name: str) -> str:
+    name = str(model_name or "").replace("\\", "/")
+    if not name or Path(name).is_absolute() or ".." in Path(name).parts:
+        raise ValueError("GGUF 模型名称必须是模型目录内的相对路径，不能跳出模型目录。")
     for folder in LLM_FOLDERS:
         try:
             path = folder_paths.get_full_path(folder, model_name)
@@ -554,6 +564,14 @@ def _resolve_gguf_path(model_name: str) -> str:
             path = None
         if path:
             return path
+    root = (Path(folder_paths.models_dir) / "LLM").resolve()
+    candidate = (root / name).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        raise ValueError("GGUF 模型路径不能跳出 models/LLM 目录。") from None
+    if candidate.is_file() and candidate.suffix.lower() == ".gguf":
+        return str(candidate)
     raise ValueError(f"找不到 GGUF 模型文件：{model_name}")
 
 
@@ -568,35 +586,19 @@ class _LocalLLMStorage:
         if cls.llm is not None and cls.key == key:
             return cls.llm
         cls.unload()
+        model_path = _resolve_gguf_path(model_name)
+        mmproj_path = _resolve_gguf_path(mmproj) if mmproj else ""
+        from .local_llm_bridge import LocalLLMProxy
+
+        # 原生 LLM 不归 Comfy 管理：启动前先释放上一阶段扩散模型占用的显存。
         try:
-            from llama_cpp import Llama
-        except Exception as exc:
-            raise RuntimeError(
-                "本地LLM 方式需要 llama-cpp-python，请先安装（pip install llama-cpp-python），"
-                "或改用 API / 本地PE 方式。"
-            ) from exc
-
-        chat_handler = None
-        if mmproj:
-            handler_cls = None
-            try:
-                from llama_cpp.llama_chat_format import Qwen25VLChatHandler as handler_cls  # type: ignore
-            except Exception:
-                try:
-                    from llama_cpp.llama_chat_format import Qwen2VLChatHandler as handler_cls  # type: ignore
-                except Exception:
-                    handler_cls = None
-            if handler_cls is None:
-                raise RuntimeError("当前 llama-cpp-python 不支持 Qwen VL 视觉，请升级后再用图生图本地LLM")
-            chat_handler = handler_cls(clip_model_path=_resolve_gguf_path(mmproj), verbose=False)
-
-        llm = Llama(
-            model_path=_resolve_gguf_path(model_name),
-            n_ctx=max(512, int(context_length)),
-            n_gpu_layers=-1,
-            chat_handler=chat_handler,
-            verbose=False,
-        )
+            import comfy.model_management as mm
+        except ImportError:
+            pass
+        else:
+            mm.unload_all_models()
+            mm.soft_empty_cache(force=True)
+        llm = LocalLLMProxy(model_path, mmproj_path, int(context_length))
         cls.llm = llm
         cls.key = key
         return llm
@@ -604,14 +606,8 @@ class _LocalLLMStorage:
     @classmethod
     def unload(cls) -> None:
         llm, cls.llm, cls.key = cls.llm, None, None
-        if llm is None:
-            return
-        try:
-            close = getattr(llm, "close", None)
-            if callable(close):
-                close()
-        except Exception:
-            pass
+        if llm is not None:
+            llm.close()
 
 
 def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt, user_prompt, max_output_tokens, image_base64_list) -> str:
@@ -624,14 +620,19 @@ def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + item}}
             for item in images
         )
-    result = llm.create_chat_completion(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        max_tokens=int(max_output_tokens),
-        temperature=LLM_TEMPERATURE,
-    )
+    try:
+        result = llm.create_chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            max_tokens=int(max_output_tokens),
+            temperature=LLM_TEMPERATURE,
+        )
+    except Exception:
+        # 失败的桥接已释放 child；清掉代理缓存，让同一选择可以重新启动。
+        _LocalLLMStorage.unload()
+        raise
     choices = result.get("choices") if isinstance(result, dict) else None
     if choices:
         message = choices[0].get("message") if isinstance(choices[0], dict) else None

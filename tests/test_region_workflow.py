@@ -1,0 +1,180 @@
+"""交付工作流的结构验收；不加载模型、不访问外部 API。"""
+import json
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / "examples" / "workflows" / "GG-人像背景分区编辑_Qwen2.1_Turbo.json"
+
+
+class RegionWorkflowContractTests(unittest.TestCase):
+    def load_graph(self):
+        self.assertTrue(WORKFLOW.is_file(), "人像/背景分区编辑工作流尚未生成")
+        data = json.loads(WORKFLOW.read_text(encoding="utf-8"))
+        nodes = {n["id"]: n for n in data["nodes"]}
+        roles = {n.get("properties", {}).get("gg_region_role"): n for n in data["nodes"]}
+        links = {l[0]: l for l in data["links"]}
+        return data, nodes, roles, links
+
+    def source(self, node, name, links):
+        slot = next((i for i in node.get("inputs", []) if i["name"] == name), None)
+        self.assertIsNotNone(slot, "缺少输入 " + name)
+        self.assertIsNotNone(slot.get("link"), "必要输入未连线 " + name)
+        edge = links[slot["link"]]
+        return edge[1], edge[2]
+
+    def test_all_edges_and_slots_are_bidirectionally_consistent(self):
+        data, nodes, _, links = self.load_graph()
+        self.assertEqual(len(nodes), len(data["nodes"]))
+        self.assertEqual(len(links), len(data["links"]))
+        for lid, src, ss, dst, ds, dtype in data["links"]:
+            self.assertIn(src, nodes)
+            self.assertIn(dst, nodes)
+            self.assertLess(ss, len(nodes[src]["outputs"]))
+            self.assertLess(ds, len(nodes[dst]["inputs"]))
+            self.assertEqual(nodes[dst]["inputs"][ds]["link"], lid)
+            self.assertIn(lid, nodes[src]["outputs"][ss].get("links") or [])
+            out_type = nodes[src]["outputs"][ss]["type"]
+            in_type = nodes[dst]["inputs"][ds]["type"]
+            if out_type != "*" and in_type != "*":
+                self.assertEqual(out_type, in_type)
+
+    def test_graph_is_acyclic(self):
+        data, nodes, _, _ = self.load_graph()
+        incoming = {nid: 0 for nid in nodes}
+        edges = {nid: [] for nid in nodes}
+        for _, src, _, dst, _, _ in data["links"]:
+            edges[src].append(dst)
+            incoming[dst] += 1
+        ready = [nid for nid, degree in incoming.items() if degree == 0]
+        seen = 0
+        while ready:
+            nid = ready.pop()
+            seen += 1
+            for dst in edges[nid]:
+                incoming[dst] -= 1
+                if incoming[dst] == 0:
+                    ready.append(dst)
+        self.assertEqual(seen, len(nodes), "工作流存在循环依赖")
+
+    def test_only_core_and_gg_node_types_are_used(self):
+        _, nodes, _, _ = self.load_graph()
+        allowed_core = {"LoadImage", "UNETLoader", "CLIPLoader", "VAELoader", "VAEEncode", "VAEDecode", "SetLatentNoiseMask", "KSampler", "ComfySwitchNode", "PrimitiveBoolean", "PrimitiveInt", "PrimitiveString", "Note", "PreviewImage", "MaskToImage"}
+        for node in nodes.values():
+            self.assertTrue(node["type"].startswith("GG") or node["type"] in allowed_core, node["type"])
+        self.assertEqual(sum(n["type"] == "GGRegionEditPrepare" for n in nodes.values()), 2)
+
+    def test_region_preparation_precedes_all_crop_and_inversion(self):
+        _, _, roles, links = self.load_graph()
+        for region in ("background", "person"):
+            prep = roles[region + "_prepare"]
+            self.assertEqual(prep["type"], "GGRegionEditPrepare")
+            self.assertEqual(self.source(prep, "人像遮罩", links), (roles["original"]["id"], 1))
+            self.assertEqual(self.source(roles[region + "_crop"], "遮罩", links), (prep["id"], 1))
+            self.assertEqual(self.source(roles[region + "_crop"], "图像", links), (prep["id"], 0))
+
+    def test_person_stage_uses_selected_background_as_canvas(self):
+        _, _, roles, links = self.load_graph()
+        expected = (roles["background_select"]["id"], 0)
+        self.assertEqual(self.source(roles["person_prepare"], "图像", links), expected)
+        self.assertEqual(self.source(roles["person_restore"], "背景图像", links), expected)
+        self.assertEqual(self.source(roles["person_merge"], "背景图", links), expected)
+
+    def test_empty_requests_lazily_skip_entire_region_branch(self):
+        _, nodes, roles, links = self.load_graph()
+        for region in ("background", "person"):
+            prep = roles[region + "_prepare"]
+            switch = roles[region + "_select"]
+            self.assertEqual(switch["type"], "ComfySwitchNode")
+            self.assertEqual(self.source(switch, "switch", links), (prep["id"], 4))
+            self.assertEqual(self.source(switch, "on_false", links), (prep["id"], 0))
+            self.assertEqual(self.source(switch, "on_true", links), (roles[region + "_merge"]["id"], 0))
+        output_roles = {"save", "compare", "mask_preview", "instructions"}
+        for node in nodes.values():
+            if node["type"] in {"GGImageCompressSave", "GGImageComparer2", "PreviewImage"}:
+                self.assertIn(node.get("properties", {}).get("gg_region_role"), output_roles)
+
+    def test_latent_is_encoded_image_with_noise_mask(self):
+        _, _, roles, links = self.load_graph()
+        for region in ("background", "person"):
+            crop = roles[region + "_crop"]
+            vae = roles[region + "_vae_encode"]
+            latent = roles[region + "_latent_mask"]
+            sampler = roles[region + "_sample"]
+            self.assertEqual(vae["type"], "VAEEncode")
+            self.assertEqual(latent["type"], "SetLatentNoiseMask")
+            self.assertEqual(self.source(vae, "pixels", links), (crop["id"], 1))
+            self.assertEqual(self.source(latent, "samples", links), (vae["id"], 0))
+            self.assertEqual(self.source(latent, "mask", links), (crop["id"], 2))
+            self.assertEqual(self.source(sampler, "latent_image", links), (latent["id"], 0))
+            self.assertEqual(sampler["type"], "KSampler")
+            values = sampler["widgets_values_named"]
+            self.assertEqual(values["cfg"], 1.0)
+            self.assertEqual(values["sampler_name"], "euler")
+            self.assertLessEqual(values["denoise"], 0.55)
+
+    def test_original_soft_masks_gate_final_merges(self):
+        _, _, roles, links = self.load_graph()
+        for region in ("background", "person"):
+            merge = roles[region + "_merge"]
+            self.assertEqual(self.source(merge, "遮罩", links), (roles[region + "_prepare"]["id"], 1))
+            values = merge["widgets_values_named"]
+            self.assertEqual(values["透明度"], 1.0)
+            self.assertEqual(values["遮罩扩展"], 0)
+            self.assertEqual(values["模糊半径"], 0)
+            self.assertFalse(values["匹配图像大小"])
+
+    def test_crop_dimensions_and_restoration_are_geometry_safe(self):
+        _, _, roles, _ = self.load_graph()
+        for region in ("background", "person"):
+            values = roles[region + "_crop"]["widgets_values_named"]
+            self.assertEqual(values["输出尺寸"], "按宽高")
+            self.assertFalse(values["遮罩填充"])
+            for key in ("输出尺寸.宽度", "输出尺寸.高度"):
+                self.assertEqual(values[key] % 32, 0)
+                self.assertLessEqual(values[key], 1024)
+            restored = roles[region + "_restore"]["widgets_values_named"]
+            self.assertEqual(restored["遮罩扩展"], 0)
+            self.assertEqual(restored["遮罩羽化"], 0)
+            self.assertEqual(restored["颜色还原"], 0.0)
+
+    def test_constraints_are_appended_after_optional_ai(self):
+        _, _, roles, links = self.load_graph()
+        for region in ("background", "person"):
+            opt_switch = roles[region + "_prompt_select"]
+            self.assertEqual(opt_switch["type"], "ComfySwitchNode")
+            self.assertEqual(self.source(opt_switch, "switch", links), (roles["enable_ai"]["id"], 0))
+            self.assertEqual(self.source(opt_switch, "on_false", links), (roles[region + "_prepare"]["id"], 2))
+            self.assertEqual(self.source(opt_switch, "on_true", links), (roles[region + "_enhance"]["id"], 0))
+            final = roles[region + "_prompt_final"]
+            self.assertEqual(final["type"], "GGTextConcat")
+            self.assertEqual(self.source(final, "文本1", links), (opt_switch["id"], 0))
+            self.assertEqual(self.source(final, "文本2", links), (roles[region + "_prepare"]["id"], 3))
+            encoded = roles[region + "_condition"]
+            self.assertEqual(self.source(encoded, "正向提示词", links), (final["id"], 0))
+            self.assertEqual(encoded["widgets_values_named"]["分辨率"], 0)
+            self.assertEqual(self.source(encoded, "图像.图像1", links), (roles[region + "_crop"]["id"], 1))
+
+    def test_save_is_png_and_no_credentials_are_embedded(self):
+        _, nodes, roles, links = self.load_graph()
+        self.assertEqual(roles["save"]["widgets_values_named"]["格式"], "PNG")
+        self.assertEqual(self.source(roles["save"], "图像", links), (roles["person_select"]["id"], 0))
+        for node in nodes.values():
+            for key, value in node.get("widgets_values_named", {}).items():
+                if "api_key" in key.lower() or key in ("API密钥", "密钥"):
+                    self.assertFalse(value, "工作流不能嵌入用户密钥")
+
+    def test_verified_qwen_models_are_selected(self):
+        _, _, roles, _ = self.load_graph()
+        expected = {
+            "unet": ("unet_name", r"qwen\qwen_image_2.1_turbo_int8_convrot.safetensors"),
+            "vae": ("vae_name", r"qwen\qwen_image_2.1_vae_bf16.safetensors"),
+        }
+        for role, (key, value) in expected.items():
+            self.assertEqual(roles[role]["widgets_values_named"][key].replace("/", "\\"), value)
+        for region in ("background", "person"):
+            self.assertEqual(roles[region + "_condition"]["widgets_values_named"]["CLIP名称"].replace("/", "\\"), r"qwen\qwen3vl_8b_int8_convrot.safetensors")
+
+
+if __name__ == "__main__":
+    unittest.main()

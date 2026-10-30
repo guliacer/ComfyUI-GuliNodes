@@ -1,0 +1,21 @@
+# 人像背景工作流进度
+
+- 用户已确认人物姿态/位置/外轮廓基本不变，授权直接生成可用工作流、按需新增GG节点；再次明确要求继续。
+- 目标 goal-ee48a778-1a93-47c2-95d6-2bba0319f739 active/armed；不需要重复resume（最近返回already active）。
+- 当前目录为安装插件主目录，不新建未授权工作树，不提交；用户预存修改：AGENTS/README/guli_nodes.__init__/aspect_ratio/image_tools/pyproject、mask_tools.py、gg-image-merge-mask.js。保留。
+- 基线：便携Python真实import guli_nodes成功44节点，FAILED_MODULES={}；pyproject.node_count当前45但应按实际映射复核。既有mask裁剪/恢复/合并已可复用。
+- 审计代理 e58b9b78...、e64b59da...均已结束，结果已收到；不再重新派审计。
+- Task1实现代理043f2132...已交付175行region_edit.py和41项测试。Review代理7bf4ba58...发现Important：float64近.1蒙版进入旧crop转float32后变空会全图回退。主线程新增tests/test_region_integration.py：3个真实裁剪/还原/限域测试PASS，精度回归RED。已明确修订brief并让原实现代理补原精度+float32消费者双检查，只改新模块/测试/报告，不改旧mask_tools；等待其GREEN以便原reviewer复核。
+- 主线程已在模块列表加入region_edit；真实便携Pythonimport成功45节点、FAILED_MODULES={}。job pwsh-5ef5e68b47184bad已完成exit0并已收取。README总数46/后端45已更新，pyproject.node_count原本45已匹配，新能力/节点/未发布/Goohai+Comfy来源行已加，不改version。
+- 工作流37节点/72连线、12结构测试GREEN。真实Chrome自用后台tab t1导入成功，注入新节点定义仅为前端验证（后端未重启）；tools/region_edit_browser_validation.json含真实graphToPrompt，errors=[]、apiNodes36，crop768²/扩展1.1和V3点号参考链接确认。使用说明已写examples/workflows/GG-人像背景分区编辑_使用说明.md。尚待最终API验证/后端生成和复制user/default/workflows。
+- 基础JSON与使用说明已present给用户，说明默认AI关闭/重启后手绘。真实APIvalidate PASS；实际空需求执行保存1080x1920 PNG，真实缓存get确认未加载4/5/6/12/15/16/18/32/35/36/38；空蒙版执行在准备阶段中文拒绝、模型缓存均空，报告tools/region_edit_execution_report.json。无修改PNG不等于扩散实测。
+- 扩散实测代理427a02cd...的job pwsh-385b11ceef5841c5已收取exit0：success=true、errors=[]、两次9/9采样，执行44.52s/新进程62.41s，输出ComfyUI/output/GG_验证/分区_实际生成_00001_.png，1080×1920，crop512²、AI OFF、粗略手绘测试MASK。GPU已释放，父线程开始隔离PE重测。扩散报告docs/superpowers/plans/2026-10-30-region-edit-diffusion-report.md待代理最后视觉检查。
+- 节点reviewer7bf4ba58...最终已完成复核：amended spec APPROVED、quality APPROVED，原精度Important CLOSED，43节点+4真实tensor集成GREEN证据确认，无剩余问题。
+- Task1c代理5a6337b0已DONE，43/43（原14+新29）PASS，报告271行；原接口不变、-I文件worker、600s超时、stderr/队列有界、清理与缓存验证。实际扩散已成功并收取，读图确认基本姿态相似但512²细节软化，不能夸口绝对身份/质量提升。父线程实际隔离PE重测job pwsh-9e1c13848b1541c9已通知exit0，需收取；完整回归job pwsh-22343aa91cc444b9通知exit0需收取。Final独立审查251bc1e8已APPROVED spec+quality，无Critical/Important。root102tests+syntax job22343已收取exit0；隔离PE job9e1c已收取exit0，实际24.67秒读图中文改写成功，无OMP。扩散44.52秒/512²两阶段出1080×1920已读图。说明验证范围已更新（AI和扩散分别实测、默认768²，非绝对姿态/质量保证）。最后核对用户copy一致、version1.2.0不变、计数45和无worker残留；关自用tabt1，然后get_goal+complete。
+- 主工作流37节点72连线：每区准备→GGMaskCrop按宽高768²→GGPromptOptimizer分辨率0条件编码、原生VAEEncode→SetLatentNoiseMask→KSampler cfg1/euler/simple/9steps/denoise0.45背景/0.25人像→VAEDecode→GG还原0/0/0→原区域MASK合并，再lazySwitch。人物输入与还原底图均是背景selected结果。仅最终Compare/PNGSave作为生成输出根。
+- 原生ComfySwitchNode已有lazy输入；无需新增选择节点。动态API点号键，必须验证UIwidgets也正确，不只验证JSON连线。
+- 现有ComfyUI进程23012端口8188，GPU4060Ti16GB，初始使用~2GB；没有启停它，没有启动替代服务。主工作流JSON已复制user/default/workflows/GG-人像背景分区编辑_Qwen2.1_Turbo.json，原参考未覆盖。实际API validate_prompt已PASS输出根50/51/53；无需求执行成功，但第一版脚本把all_node_ids预登记键误判为已执行，已改成检查async缓存get输出，并增加空蒙版先于模型拒绝的执行验证。
+- 已核实模型物理存在：Turbo int8、Qwen3VL int8、Qwen2.1 VAE、一致性LoRA以及LLM文件夹PE GGUF+mmproj。
+- 主线程本地LLM兼容14tests GREEN+完整73tests GREEN，45注册零失败。真实PE job pwsh-039f4298b10a4af7已收取exit1：原生OpenMP libomp140与torch libiomp冲突使进程abort，无probeJSON。没有用危险KMP_DUPLICATE_LIB_OK。Task1c隔离worker已派给5a6337b0-3957-4bcd-807a-57935d0f406a，允许仅prompt_enhancer、local_llm_worker/bridge及其测试/报告；不得并行跑真实模型。主线程别再改这些文件，等其handoff后重跑PEprobe。模型架构qwen35/匹配handler与LLM目录兜底逻辑需保留并移到独立worker。builderAI仍false。RSF自用tabt1验证errors[]，结束必须关。
+- 后台job pwsh-4a51a7fde1ad48a7 已完成exit0且已收取；后续tool返回新job需记录并收取。
+- 计划 docs/superpowers/plans/2026-10-30-region-edit-workflow.md 包含约束、任务和验收。

@@ -1,0 +1,36 @@
+{
+  "success": true,
+  "seconds": 44.52,
+  "crop_size": [
+    512,
+    512
+  ],
+  "ai_enhancement": false,
+  "history": {
+    "outputs": {
+      "51": {
+        "images": [
+          {
+            "filename": "分区_实际生成_00001_.png",
+            "subfolder": "GG_验证",
+            "type": "output",
+            "metadata": {
+              "kind": "image",
+              "width": 1080,
+              "height": 1920
+            }
+          }
+        ]
+      }
+    },
+    "meta": {
+      "51": {
+        "node_id": "51",
+        "display_node": "51",
+        "parent_node": null,
+        "real_node_id": "51"
+      }
+    }
+  },
+  "errors": []
+}

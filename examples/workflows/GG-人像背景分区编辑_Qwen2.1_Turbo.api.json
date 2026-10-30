@@ -1,0 +1,769 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "77d2c42db7b0e56286aec070a54d1437.png"
+    },
+    "_meta": {
+      "title": "① 上传原图／右键画人物蒙版"
+    }
+  },
+  "2": {
+    "class_type": "GGTextConcat",
+    "inputs": {
+      "文本1": "保持原画幅、机位、透视和摄影风格。人物与背景的主光方向、色温和明暗关系协调，不新增人物，不改变构图。",
+      "文本2": "",
+      "文本3": "",
+      "文本4": "",
+      "文本5": "",
+      "文本6": "",
+      "文本7": "",
+      "文本8": "",
+      "文本9": "",
+      "文本10": "",
+      "文本11": "",
+      "文本12": "",
+      "文本13": "",
+      "文本14": "",
+      "文本15": "",
+      "文本16": "",
+      "文本17": "",
+      "文本18": "",
+      "文本19": "",
+      "文本20": "",
+      "分隔符": ""
+    },
+    "_meta": {
+      "title": "共同摄影要求（两区共享）"
+    }
+  },
+  "3": {
+    "class_type": "PrimitiveBoolean",
+    "inputs": {
+      "value": false
+    },
+    "_meta": {
+      "title": "启用 AI 提示词优化（本地LLM）"
+    }
+  },
+  "4": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "qwen\\qwen_image_2.1_turbo_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "_meta": {
+      "title": "Qwen2.1 Turbo 模型"
+    }
+  },
+  "5": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "qwen\\qwen_image_2.1_vae_bf16.safetensors"
+    },
+    "_meta": {
+      "title": "Qwen2.1 VAE"
+    }
+  },
+  "6": {
+    "class_type": "GGLoRACustomLoader",
+    "inputs": {
+      "LoRA数量": 1,
+      "LoRA1名称": "qwen\\编辑\\Qwen2.1 一致性无偏移_GH_V1.0.safetensors",
+      "LoRA1强度": 1.0,
+      "LoRA2名称": "None",
+      "LoRA2强度": 1.0,
+      "LoRA3名称": "None",
+      "LoRA3强度": 1.0,
+      "LoRA4名称": "None",
+      "LoRA4强度": 1.0,
+      "LoRA5名称": "None",
+      "LoRA5强度": 1.0,
+      "LoRA6名称": "None",
+      "LoRA6强度": 1.0,
+      "LoRA7名称": "None",
+      "LoRA7强度": 1.0,
+      "LoRA8名称": "None",
+      "LoRA8强度": 1.0,
+      "LoRA9名称": "None",
+      "LoRA9强度": 1.0,
+      "LoRA10名称": "None",
+      "LoRA10强度": 1.0,
+      "LoRA11名称": "None",
+      "LoRA11强度": 1.0,
+      "LoRA12名称": "None",
+      "LoRA12强度": 1.0,
+      "LoRA13名称": "None",
+      "LoRA13强度": 1.0,
+      "LoRA14名称": "None",
+      "LoRA14强度": 1.0,
+      "LoRA15名称": "None",
+      "LoRA15强度": 1.0,
+      "LoRA16名称": "None",
+      "LoRA16强度": 1.0,
+      "LoRA17名称": "None",
+      "LoRA17强度": 1.0,
+      "LoRA18名称": "None",
+      "LoRA18强度": 1.0,
+      "LoRA19名称": "None",
+      "LoRA19强度": 1.0,
+      "LoRA20名称": "None",
+      "LoRA20强度": 1.0,
+      "模型": [
+        "4",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "一致性 LoRA（可设强度 0 禁用）"
+    }
+  },
+  "10": {
+    "class_type": "GGRegionEditPrepare",
+    "inputs": {
+      "处理区域": "背景",
+      "编辑需求": "保持场景结构与物体位置，只优化背景的曝光层次、色彩和材质细节，使画面更自然干净。",
+      "全局要求": [
+        "2",
+        0
+      ],
+      "图像": [
+        "1",
+        0
+      ],
+      "人像遮罩": [
+        "1",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "② 背景修改需求（清空即跳过）"
+    }
+  },
+  "11": {
+    "class_type": "GGMaskCrop",
+    "inputs": {
+      "遮罩填充": false,
+      "扩展方式": "四边统一",
+      "扩展方式.扩展系数": 1.1,
+      "输出尺寸": "按宽高",
+      "输出尺寸.宽度": 768,
+      "输出尺寸.高度": 768,
+      "图像": [
+        "10",
+        0
+      ],
+      "遮罩": [
+        "10",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "③ 背景局部裁剪／等比补边"
+    }
+  },
+  "12": {
+    "class_type": "GGPromptEnhancer",
+    "inputs": {
+      "任务模式": "图生图",
+      "输出语言": "中文",
+      "增强方式": "本地LLM",
+      "api_key": "",
+      "api_base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "文生图PE模型": "clip_l.safetensors",
+      "图生图PE模型": "clip_l.safetensors",
+      "主模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
+      "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
+      "上下文长度": 8192,
+      "最大生成token": 2048,
+      "seed": 12345,
+      "生成后自动卸载模型": true,
+      "输入提示词": [
+        "10",
+        2
+      ],
+      "图片.图片1": [
+        "10",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "可选 AI：单独优化背景请求"
+    }
+  },
+  "13": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "3",
+        0
+      ],
+      "on_false": [
+        "10",
+        2
+      ],
+      "on_true": [
+        "12",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "AI 开／关：真正跳过未选分支"
+    }
+  },
+  "14": {
+    "class_type": "GGTextConcat",
+    "inputs": {
+      "文本1": [
+        "13",
+        0
+      ],
+      "文本2": [
+        "10",
+        3
+      ],
+      "文本3": "",
+      "文本4": "",
+      "文本5": "",
+      "文本6": "",
+      "文本7": "",
+      "文本8": "",
+      "文本9": "",
+      "文本10": "",
+      "文本11": "",
+      "文本12": "",
+      "文本13": "",
+      "文本14": "",
+      "文本15": "",
+      "文本16": "",
+      "文本17": "",
+      "文本18": "",
+      "文本19": "",
+      "文本20": "",
+      "分隔符": ""
+    },
+    "_meta": {
+      "title": "优化后追加固定轮廓约束"
+    }
+  },
+  "15": {
+    "class_type": "GGPromptOptimizer",
+    "inputs": {
+      "CLIP名称": "qwen\\qwen3vl_8b_int8_convrot.safetensors",
+      "CLIP类型": "qwen_image",
+      "VAE名称": "qwen\\qwen_image_2.1_vae_bf16.safetensors",
+      "分辨率": 0,
+      "正向提示词": [
+        "14",
+        0
+      ],
+      "负向提示词": "",
+      "图像.图像1": [
+        "11",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "④ Qwen 条件编码（不是文本改写）"
+    }
+  },
+  "16": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "11",
+        1
+      ],
+      "vae": [
+        "5",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "原图像 Latent 编码"
+    }
+  },
+  "17": {
+    "class_type": "SetLatentNoiseMask",
+    "inputs": {
+      "samples": [
+        "16",
+        0
+      ],
+      "mask": [
+        "11",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "采样蒙版：仅当前区域去噪"
+    }
+  },
+  "18": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 246813579,
+      "steps": 9,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.45,
+      "model": [
+        "6",
+        0
+      ],
+      "positive": [
+        "15",
+        0
+      ],
+      "negative": [
+        "15",
+        1
+      ],
+      "latent_image": [
+        "17",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "⑤ 背景小幅图生图"
+    }
+  },
+  "19": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "18",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAE 解码"
+    }
+  },
+  "20": {
+    "class_type": "GGCropRestore",
+    "inputs": {
+      "遮罩扩展": 0,
+      "遮罩羽化": 0,
+      "颜色还原": 0.0,
+      "接缝": [
+        "11",
+        0
+      ],
+      "裁剪图像": [
+        "19",
+        0
+      ],
+      "背景图像": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "⑥ 原坐标还原（不扩大轮廓）"
+    }
+  },
+  "21": {
+    "class_type": "GGImageMergeMask",
+    "inputs": {
+      "透明度": 1.0,
+      "遮罩扩展": 0,
+      "模糊半径": 0,
+      "匹配图像大小": false,
+      "背景图": [
+        "1",
+        0
+      ],
+      "覆盖图": [
+        "20",
+        0
+      ],
+      "遮罩": [
+        "10",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "原蒙版再次限域，保护另一部分"
+    }
+  },
+  "22": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "10",
+        4
+      ],
+      "on_false": [
+        "10",
+        0
+      ],
+      "on_true": [
+        "21",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "需求为空：返回输入原图"
+    }
+  },
+  "30": {
+    "class_type": "GGRegionEditPrepare",
+    "inputs": {
+      "处理区域": "人像",
+      "编辑需求": "仅优化人物皮肤层次、发丝和服装质感，保留真实自然细节，不改变脸型、身份、姿态、位置、比例和外轮廓。",
+      "全局要求": [
+        "2",
+        0
+      ],
+      "图像": [
+        "22",
+        0
+      ],
+      "人像遮罩": [
+        "1",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "② 人像修改需求（清空即跳过）"
+    }
+  },
+  "31": {
+    "class_type": "GGMaskCrop",
+    "inputs": {
+      "遮罩填充": false,
+      "扩展方式": "四边统一",
+      "扩展方式.扩展系数": 1.1,
+      "输出尺寸": "按宽高",
+      "输出尺寸.宽度": 768,
+      "输出尺寸.高度": 768,
+      "图像": [
+        "30",
+        0
+      ],
+      "遮罩": [
+        "30",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "③ 人像局部裁剪／等比补边"
+    }
+  },
+  "32": {
+    "class_type": "GGPromptEnhancer",
+    "inputs": {
+      "任务模式": "图生图",
+      "输出语言": "中文",
+      "增强方式": "本地LLM",
+      "api_key": "",
+      "api_base_url": "https://api.deepseek.com",
+      "model": "deepseek-flash",
+      "文生图PE模型": "clip_l.safetensors",
+      "图生图PE模型": "clip_l.safetensors",
+      "主模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
+      "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
+      "上下文长度": 8192,
+      "最大生成token": 2048,
+      "seed": 12345,
+      "生成后自动卸载模型": true,
+      "输入提示词": [
+        "30",
+        2
+      ],
+      "图片.图片1": [
+        "30",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "可选 AI：单独优化人像请求"
+    }
+  },
+  "33": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "3",
+        0
+      ],
+      "on_false": [
+        "30",
+        2
+      ],
+      "on_true": [
+        "32",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "AI 开／关：真正跳过未选分支"
+    }
+  },
+  "34": {
+    "class_type": "GGTextConcat",
+    "inputs": {
+      "文本1": [
+        "33",
+        0
+      ],
+      "文本2": [
+        "30",
+        3
+      ],
+      "文本3": "",
+      "文本4": "",
+      "文本5": "",
+      "文本6": "",
+      "文本7": "",
+      "文本8": "",
+      "文本9": "",
+      "文本10": "",
+      "文本11": "",
+      "文本12": "",
+      "文本13": "",
+      "文本14": "",
+      "文本15": "",
+      "文本16": "",
+      "文本17": "",
+      "文本18": "",
+      "文本19": "",
+      "文本20": "",
+      "分隔符": ""
+    },
+    "_meta": {
+      "title": "优化后追加固定轮廓约束"
+    }
+  },
+  "35": {
+    "class_type": "GGPromptOptimizer",
+    "inputs": {
+      "CLIP名称": "qwen\\qwen3vl_8b_int8_convrot.safetensors",
+      "CLIP类型": "qwen_image",
+      "VAE名称": "qwen\\qwen_image_2.1_vae_bf16.safetensors",
+      "分辨率": 0,
+      "正向提示词": [
+        "34",
+        0
+      ],
+      "负向提示词": "",
+      "图像.图像1": [
+        "31",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "④ Qwen 条件编码（不是文本改写）"
+    }
+  },
+  "36": {
+    "class_type": "VAEEncode",
+    "inputs": {
+      "pixels": [
+        "31",
+        1
+      ],
+      "vae": [
+        "5",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "原图像 Latent 编码"
+    }
+  },
+  "37": {
+    "class_type": "SetLatentNoiseMask",
+    "inputs": {
+      "samples": [
+        "36",
+        0
+      ],
+      "mask": [
+        "31",
+        2
+      ]
+    },
+    "_meta": {
+      "title": "采样蒙版：仅当前区域去噪"
+    }
+  },
+  "38": {
+    "class_type": "KSampler",
+    "inputs": {
+      "seed": 246813580,
+      "steps": 9,
+      "cfg": 1.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 0.25,
+      "model": [
+        "6",
+        0
+      ],
+      "positive": [
+        "35",
+        0
+      ],
+      "negative": [
+        "35",
+        1
+      ],
+      "latent_image": [
+        "37",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "⑤ 人像小幅图生图"
+    }
+  },
+  "39": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "38",
+        0
+      ],
+      "vae": [
+        "5",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "VAE 解码"
+    }
+  },
+  "40": {
+    "class_type": "GGCropRestore",
+    "inputs": {
+      "遮罩扩展": 0,
+      "遮罩羽化": 0,
+      "颜色还原": 0.0,
+      "接缝": [
+        "31",
+        0
+      ],
+      "裁剪图像": [
+        "39",
+        0
+      ],
+      "背景图像": [
+        "22",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "⑥ 原坐标还原（不扩大轮廓）"
+    }
+  },
+  "41": {
+    "class_type": "GGImageMergeMask",
+    "inputs": {
+      "透明度": 1.0,
+      "遮罩扩展": 0,
+      "模糊半径": 0,
+      "匹配图像大小": false,
+      "背景图": [
+        "22",
+        0
+      ],
+      "覆盖图": [
+        "40",
+        0
+      ],
+      "遮罩": [
+        "30",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "原蒙版再次限域，保护另一部分"
+    }
+  },
+  "42": {
+    "class_type": "ComfySwitchNode",
+    "inputs": {
+      "switch": [
+        "30",
+        4
+      ],
+      "on_false": [
+        "30",
+        0
+      ],
+      "on_true": [
+        "41",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "需求为空：返回输入原图"
+    }
+  },
+  "50": {
+    "class_type": "GGImageComparer2",
+    "inputs": {
+      "图像_A": [
+        "42",
+        0
+      ],
+      "图像_B": [
+        "1",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "⑦ 最终结果 ↔ 原图"
+    }
+  },
+  "51": {
+    "class_type": "GGImageCompressSave",
+    "inputs": {
+      "文件名前缀": "%date:yyyy_MM_dd%/GG_人像背景分区",
+      "格式": "PNG",
+      "压缩模式": "civilblur",
+      "质量": 85,
+      "目标大小KB": 0,
+      "清除内存": true,
+      "图像": [
+        "42",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "⑧ 保存 PNG（保留原画幅）"
+    }
+  },
+  "52": {
+    "class_type": "MaskToImage",
+    "inputs": {
+      "mask": [
+        "1",
+        1
+      ]
+    },
+    "_meta": {
+      "title": "检查白色是否只选中了人物"
+    }
+  },
+  "53": {
+    "class_type": "PreviewImage",
+    "inputs": {
+      "images": [
+        "52",
+        0
+      ]
+    },
+    "_meta": {
+      "title": "人物蒙版预览（无模型运算）"
+    }
+  }
+}

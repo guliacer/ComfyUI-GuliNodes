@@ -20,12 +20,22 @@ try:
 except Exception:
     io = None
 
+# 比例表与按比例算宽高的逻辑统一放在 aspect_ratio，避免与 GG Latent / GG 图像宽高 /
+# GG 遮罩裁剪 各存一份、日后漂移。
+from .aspect_ratio import (
+    ASPECT_PRESETS,
+    ASPECT_RATIOS,
+    LATENT_ASPECT_RATIOS,
+    ORIENTATION_TYPES,
+    RESOLUTION_OPTIONS,
+    SIDE_TYPES,
+    apply_orientation,
+    dimensions_by_ratio,
+    dimensions_by_resolution,
+)
+
 def _empty_image(device=None, dtype=torch.float32) -> torch.Tensor:
     return torch.zeros([1, 64, 64, 3], device=device, dtype=dtype)
-
-
-def _align_to_eight(value: int) -> int:
-    return max(8, (int(value) // 8) * 8)
 
 
 def _resize_image(image: torch.Tensor, height: int, width: int, mode: str) -> torch.Tensor:
@@ -307,61 +317,6 @@ def concatenate_images_horizontally(images: list, labels: list = None, font_size
     return torch.from_numpy(final_np).unsqueeze(0)
 
 
-_CROP_ASPECT_RATIOS = ["1:1", "3:2", "4:3", "5:4", "16:9", "21:9", "9:16", "2:3", "3:4", "4:5", "9:21"]
-_CROP_K_ASPECT_RATIOS = ["1:1", "1:2", "2:3", "3:4", "4:5", "5:7", "9:16", "10:16", "9:21"]
-_CROP_ASPECT_PRESETS = {
-    ratio: tuple(int(part) for part in ratio.split(":", 1))
-    for ratio in [*_CROP_ASPECT_RATIOS, *_CROP_K_ASPECT_RATIOS]
-}
-_CROP_RESOLUTION_OPTIONS = ["1K", "2K", "3K", "4K"]
-_CROP_RESOLUTION_EDGE_LENGTHS = {"1K": 1024, "2K": 2048, "3K": 3072, "4K": 4096}
-_CROP_SIDE_TYPES = ["最长边", "最短边"]
-_CROP_ORIENTATION_TYPES = ["横屏", "竖屏"]
-
-
-def _crop_ratio_dimensions(width_ratio: int, height_ratio: int, edge: int, edge_type: str) -> tuple[int, int]:
-    """按明确的最长边/最短边计算裁剪目标尺寸，并对齐到 8 的倍数。"""
-    width_ratio = max(1, int(width_ratio))
-    height_ratio = max(1, int(height_ratio))
-    edge = max(8, int(edge))
-    ratio_long = max(width_ratio, height_ratio)
-    ratio_short = min(width_ratio, height_ratio)
-
-    # 只有明确选择「最短边」才使用短边值；旧工作流中的空值或未知值按
-    # 默认的「最长边」处理，避免出现界面显示最长边、实际却按短边计算。
-    if edge_type == "最短边":
-        long_edge = int(edge * ratio_long / ratio_short)
-        short_edge = edge
-    else:
-        long_edge = edge
-        short_edge = int(edge * ratio_short / ratio_long)
-
-    if width_ratio >= height_ratio:
-        width, height = long_edge, short_edge
-    else:
-        width, height = short_edge, long_edge
-    return _align_to_eight(width), _align_to_eight(height)
-
-
-def _crop_resolution_dimensions(width_ratio: int, height_ratio: int, resolution: str) -> tuple[int, int]:
-    """按 K 数分辨率计算尺寸；K 数与 GG Latent 一样表示最长边。"""
-    long_edge = _CROP_RESOLUTION_EDGE_LENGTHS.get(resolution, _CROP_RESOLUTION_EDGE_LENGTHS["1K"])
-    ratio_long = max(int(width_ratio), int(height_ratio))
-    ratio_short = min(int(width_ratio), int(height_ratio))
-    short_edge = round(long_edge * ratio_short / ratio_long)
-    if width_ratio >= height_ratio:
-        return _align_to_eight(long_edge), _align_to_eight(short_edge)
-    return _align_to_eight(short_edge), _align_to_eight(long_edge)
-
-
-def _crop_apply_orientation(width_ratio: int, height_ratio: int, orientation: str) -> tuple[int, int]:
-    if orientation == "横屏" and width_ratio < height_ratio:
-        return height_ratio, width_ratio
-    if orientation == "竖屏" and width_ratio > height_ratio:
-        return height_ratio, width_ratio
-    return width_ratio, height_ratio
-
-
 def _do_crop(图像: torch.Tensor, 模式: str = "中心裁剪",
              宽度: int = 512, 高度: int = 512, X坐标: int = 0, Y坐标: int = 0,
              宽高比例: str = "16:9", 边长: int = 1024, 边长类型: str = "最长边",
@@ -379,14 +334,15 @@ def _do_crop(图像: torch.Tensor, 模式: str = "中心裁剪",
         return 图像[:, y:y+height, x:x+width, :].contiguous()
 
     if 模式 in ("按比例裁剪", "按K数分辨率"):
-        if 宽高比例 not in _CROP_ASPECT_PRESETS:
-            raise ValueError(f"不支持的宽高比例「{宽高比例}」。")
-        wr, hr = _CROP_ASPECT_PRESETS[宽高比例]
+        # 宽高比例不合法时由 dimensions_by_* 抛中文错误。
         if 模式 == "按K数分辨率":
-            wr, hr = _crop_apply_orientation(wr, hr, 画面方向)
-            target_width, target_height = _crop_resolution_dimensions(wr, hr, 分辨率)
+            target_width, target_height = dimensions_by_resolution(宽高比例, 分辨率, 画面方向)
+            wr, hr = ASPECT_PRESETS[宽高比例]
+            wr, hr = apply_orientation(wr, hr, 画面方向)
         else:
-            target_width, target_height = _crop_ratio_dimensions(wr, hr, 边长, 边长类型)
+            # 「按比例裁剪」没有画面方向参数，按比例字面值算，不摆正方向。
+            target_width, target_height = dimensions_by_ratio(宽高比例, 边长, 边长类型, None)
+            wr, hr = ASPECT_PRESETS[宽高比例]
 
         if target_width <= img_width and target_height <= img_height:
             crop_width = target_width
@@ -442,11 +398,11 @@ class GGImageCrop:
                 "高度": ("INT", {"default": 512, "min": 64, "max": 4096, "step": 8}),
                 "X坐标": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 8}),
                 "Y坐标": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 8}),
-                "宽高比例": (_CROP_ASPECT_RATIOS, {"default": "16:9"}),
+                "宽高比例": (ASPECT_RATIOS, {"default": "16:9"}),
                 "边长": ("INT", {"default": 1024, "min": 64, "max": 8192, "step": 8}),
-                "边长类型": (_CROP_SIDE_TYPES, {"default": "最长边"}),
-                "画面方向": (_CROP_ORIENTATION_TYPES, {"default": "横屏"}),
-                "分辨率": (_CROP_RESOLUTION_OPTIONS, {"default": "1K"}),
+                "边长类型": (SIDE_TYPES, {"default": "最长边"}),
+                "画面方向": (ORIENTATION_TYPES, {"default": "横屏"}),
+                "分辨率": (RESOLUTION_OPTIONS, {"default": "1K"}),
             }
         }
 
@@ -1730,14 +1686,14 @@ if io is not None:
                             io.Int.Input("Y坐标", default=0, min=0, max=4096, step=8),
                         ]),
                         io.DynamicCombo.Option(key="按比例裁剪", inputs=[
-                            io.Combo.Input("宽高比例", options=_CROP_ASPECT_RATIOS, default="16:9"),
+                            io.Combo.Input("宽高比例", options=ASPECT_RATIOS, default="16:9"),
                             io.Int.Input("边长", default=1024, min=64, max=8192, step=8),
-                            io.Combo.Input("边长类型", options=_CROP_SIDE_TYPES, default="最长边"),
+                            io.Combo.Input("边长类型", options=SIDE_TYPES, default="最长边"),
                         ]),
                         io.DynamicCombo.Option(key="按K数分辨率", inputs=[
-                            io.Combo.Input("宽高比例", options=_CROP_K_ASPECT_RATIOS, default="9:16"),
-                            io.Combo.Input("画面方向", options=_CROP_ORIENTATION_TYPES, default="横屏"),
-                            io.Combo.Input("分辨率", options=_CROP_RESOLUTION_OPTIONS, default="1K"),
+                            io.Combo.Input("宽高比例", options=LATENT_ASPECT_RATIOS, default="9:16"),
+                            io.Combo.Input("画面方向", options=ORIENTATION_TYPES, default="横屏"),
+                            io.Combo.Input("分辨率", options=RESOLUTION_OPTIONS, default="1K"),
                         ]),
                     ]),
                 ],
