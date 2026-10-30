@@ -66,6 +66,7 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - 某个方式下确实不生效的输入要一并去掉，不要照抄兄弟节点的整份输入表。例如 `GG 图像宽高` 的「按图像接入」只输出目标宽高，「缩放方法」不改变目标宽高，因此该方式下不展示它。
 - `execute` 收到的是嵌套值，用 `aspect_ratio._unpack_mode` 解包（要同时兼容嵌套 / 扁平 / 裸字符串三种形状）。
 - 同一套方式被多个节点共用时，把方式选项、`DynamicCombo` 构造、解包与分派抽成模块级共用函数，两个节点只在 `outputs` 和最终返回值上区分（见 `_latent_mode_inputs` / `_adapter_mode_inputs`）。
+- 按「宽高比例 / 边长 / 边长类型 / 画面方向 / 分辨率」算像素宽高，统一走 `aspect_ratio.dimensions_by_ratio` / `dimensions_by_resolution`（内部用 `align_to_eight` / `apply_orientation`）。**不要在节点里再写一份比例表或对齐逻辑**：`GG 图像裁剪` 曾自带一套 `_CROP_*` 常量和三个计算函数，与 `GG Latent` 逐字重复，已合并；新增按比例算尺寸的节点直接复用这几个函数，需要「不摆正方向」时给 `dimensions_by_ratio` 传 `画面方向=None`。
 - `DynamicCombo` 的 key 只能是字符串；布尔开关要改成二选一 `Combo`（见 `GGVideoCompress` 的 `分辨率处理`）。
 - 方式选择器只在 `INPUT_TYPES["required"]` 里声明一次，**不要**再放进 `optional` 扁平表——`/object_info` 会把两个桶原样发给前端，同名键可能建出两个控件。
 - 需要双路时按仓库写法：先定义 legacy 类，再在 `if io is not None:` 内定义 `..._V3(io.ComfyNode)` 并 `原名 = _V3`（见 `image_tools.GGImageCrop`）。
@@ -120,6 +121,8 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - **自动增长的槽位，接线也要算「在用」**。只按文本框内容计数时，把第一个槽位转成输入端口并接线之后，节点上就只剩一个端口、一个能打字的框都没有（`GG 文本拼接` 用户实测报的缺陷）。但也不能「有连线就参与计数」——那会隔着空位接线时把前面的空框一起撑出来。正确口径是**只在可见范围末尾顺延**：先按内容算出范围，若范围正好停在一个已接线的槽位上就往后挪，直到落到未接线的槽位；隔着空位接第 3 个槽位时范围仍停在 1。接线槽位控件里的残留文字是死数据，一律不参与计数。
 - 不要用全局轮询做高频重绘；用 `requestAnimationFrame`、设置变更回调或轻量事件钩子。
 - `MutationObserver` 挂在 `document.body`（尤其 `subtree: true`）时，回调必须防抖 / 节流，且回调里严禁整文档 `querySelectorAll` 或读 `offsetHeight` / `getBoundingClientRect` 等触发强制回流的操作——ComfyUI 前端启动时会疯狂构建 DOM，未节流的重回调会把主线程拖死、工作台白屏卡死（`gg-ui-icons.js` 等多个文件栽过这个模式）。能局部观察就不要观察 `body`，能只处理 `addedNodes` 就不要重扫全文档。
+- **用户自定义数据一律存用户区，禁止存进插件目录或裸 localStorage**。插件目录会被升级整目录覆盖（删文件夹重装、ComfyUI-Manager 更新都是这个形态），localStorage 会随清浏览器缓存 / 换浏览器丢失。前端持久化一律走 `web/gg-userdata-store.js` 的 `getUserItem / setUserItem / removeUserItem`（原始字符串语义）或 `loadUserState / saveUserState`（结构化对象语义）——它们把数据落到 ComfyUI settings（`user/default/comfy.settings.json`），localStorage 仅作过渡兜底并在读取时自动回填。`GG 密钥输入`、`GG 工具栏`、`GG 标题`、`GG 剪贴板`、`GG 编组样式` 已接入；新扩展要存任何用户状态，先走这个桥，不要直接碰 `localStorage`。
+- **任何数据落盘先自问「插件目录被整目录覆盖后会不会丢」**：会丢的设计直接否。Python 侧写文件只能写 `folder_paths.get_user_directory()` 之下、ComfyUI 的 output / temp 目录，或系统临时目录；禁止在插件目录内创建运行时状态文件（缓存、索引、用户配置都不行——插件目录里只放随仓库分发的静态资产）。用户数据盘点与备份用 `tools/userdata.py info / backup`。
 
 ## 六、依赖策略
 
@@ -154,7 +157,7 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 
 - `README.md`：主要能力、节点清单、依赖与兼容、致谢与借鉴说明、更新记录。
 - `pyproject.toml`：`tool.gulinodes.node_count`。
-- 后端注册节点数当前为 **41**（另有 1 个由前端生成：`GG 选项确认`，所以清单是 42 行）。新增前端扩展不计入；只有新增 Python 后端节点才需要改这个数字。
+- 后端注册节点数当前为 **44**（另有 1 个由前端生成：`GG 选项确认`，所以清单是 45 行）。新增前端扩展不计入；只有新增 Python 后端节点才需要改这个数字。
 - 数节点**不能按显示名数**：本机 `custom_nodes` 下还有配套包 `ComfyUI-GuliNodes-Dependencies`，它的显示名同样以 `GG` 开头（`GG 人脸磨皮`、`GG 智能人脸美化`、`GG 色彩匹配`、`GG 提示词优化`、`GG 图像反推`、`GG 反推模型`、`GG 图像风格参考`），按名字做差集会把这 7 个算进本仓库。可靠做法：`import guli_nodes` 后读 `NODE_DISPLAY_NAME_MAPPINGS`，或 `/object_info` 里按 `python_module.startswith('guli_nodes.')` 过滤。
 
 **所有改动一律写进 `README.md`「更新记录」顶部的 `### 未发布` 小节**（没有就新建），不另开小节，也不自己编版本号——写 `v1.1.3`、`v1.2.0` 这类未授权版本号、或顺手改 `pyproject.toml` 的 `version` 都算越权。

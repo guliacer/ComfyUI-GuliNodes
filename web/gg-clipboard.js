@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { getUserItem, setUserItem, removeUserItem } from "./gg-userdata-store.js";
 import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
 
 const SETTINGS_ID = "GuliNodes";
@@ -18,7 +19,7 @@ let _currentSettings = loadSettings();
 
 function loadSettings() {
     try {
-        const saved = localStorage.getItem(STORAGE_KEY);
+        const saved = getUserItem(STORAGE_KEY);
         if (!saved) return getDefaultSettings();
         const parsed = JSON.parse(saved);
         // 迁移：老版本把「没选过颜色」也存成 #ffffff / 0.92，
@@ -42,7 +43,7 @@ function getDefaultSettings() {
 
 function saveSettings() {
     try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(_currentSettings));
+        setUserItem(STORAGE_KEY, JSON.stringify(_currentSettings));
     } catch {}
 }
 

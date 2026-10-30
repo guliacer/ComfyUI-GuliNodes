@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 
+import { getUserItem, setUserItem, removeUserItem } from "./gg-userdata-store.js";
 const NODE_NAME = "GGTitleNode";
 const NODE_TITLE = "GG 标题";
 const NODE_CATEGORY = "GuliNodes/工作流/标注";
@@ -282,7 +283,7 @@ function textDecorationCss(value) {
 
 function loadToolbarStyleState() {
   try {
-    const saved = JSON.parse(localStorage.getItem(TOOLBAR_STYLE_KEY) || "{}");
+    const saved = JSON.parse(getUserItem(TOOLBAR_STYLE_KEY) || "{}");
     return {
       backgroundColor: hexColorValue(saved.backgroundColor, "#fcfdff"),
       opacity: numberValue(saved.opacity, 97, 10, 100),
@@ -294,7 +295,7 @@ function loadToolbarStyleState() {
 
 function saveToolbarStyleState() {
   try {
-    localStorage.setItem(TOOLBAR_STYLE_KEY, JSON.stringify(toolbarStyleState));
+    setUserItem(TOOLBAR_STYLE_KEY, JSON.stringify(toolbarStyleState));
   } catch {
     // localStorage can be unavailable in restricted browser contexts.
   }

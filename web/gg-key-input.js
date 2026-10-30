@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { getUserItem, setUserItem } from "./gg-userdata-store.js";
 
 const NODE_NAME = "GGKeyInput";
 const KEY_WIDGET_NAME = "密钥";
@@ -59,16 +60,18 @@ const KNOWN_API_BASE_URLS = {
   "ark.cn-beijing.volces.com": "https://ark.cn-beijing.volces.com/api/v3",
 };
 
+// 密钥是用户核心数据：走用户区存储桥（settings 优先、localStorage 兜底），
+// 插件升级整目录覆盖、清浏览器缓存都不会再丢。
 function readStore() {
   try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}") || {};
+    return JSON.parse(getUserItem(STORAGE_KEY) || "{}") || {};
   } catch {
     return {};
   }
 }
 
 function writeStore(store) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+  setUserItem(STORAGE_KEY, JSON.stringify(store));
 }
 
 function nodeStoreKey(node) {

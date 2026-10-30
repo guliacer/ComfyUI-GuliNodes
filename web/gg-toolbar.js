@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { getUserItem, setUserItem, removeUserItem } from "./gg-userdata-store.js";
 import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
 
 app.registerExtension({
@@ -1081,7 +1082,7 @@ app.registerExtension({
 
         function loadToolbarSettingsState() {
             try {
-                return JSON.parse(localStorage.getItem(TOOLBAR_SETTINGS_STATE_KEY) || "{}");
+                return JSON.parse(getUserItem(TOOLBAR_SETTINGS_STATE_KEY) || "{}");
             } catch (error) {
                 console.error("Failed to load toolbar settings state:", error);
                 return {};
@@ -1097,7 +1098,7 @@ app.registerExtension({
                 open: toolbarSettings.style.display === "block",
                 ...extra,
             };
-            localStorage.setItem(TOOLBAR_SETTINGS_STATE_KEY, JSON.stringify(nextState));
+            setUserItem(TOOLBAR_SETTINGS_STATE_KEY, JSON.stringify(nextState));
         }
 
         // 用户没动过「工具栏外观」时，一切跟着主题走；动过才用他选的颜色覆盖。
@@ -1133,7 +1134,7 @@ app.registerExtension({
                 element.style.removeProperty("background");
                 element.style.removeProperty("box-shadow");
             });
-            localStorage.removeItem("ggNodes_toolbarStyle");
+            removeUserItem("ggNodes_toolbarStyle");
         }
 
         function applyToolbarStyle(customized = true) {
@@ -1206,7 +1207,7 @@ app.registerExtension({
                 element.style.boxShadow = `inset 0 1px 0 ${hexToRgba("#ffffff", 0.55)}`;
             });
             refreshToolbarSwatches(color);
-            localStorage.setItem("ggNodes_toolbarStyle", JSON.stringify({
+            setUserItem("ggNodes_toolbarStyle", JSON.stringify({
                 color,
                 opacity: toolbarOpacityInput.value,
             }));
@@ -1215,7 +1216,7 @@ app.registerExtension({
         function loadToolbarStyle() {
             let savedStyle = {};
             try {
-                savedStyle = JSON.parse(localStorage.getItem("ggNodes_toolbarStyle") || "{}");
+                savedStyle = JSON.parse(getUserItem("ggNodes_toolbarStyle") || "{}");
                 if (savedStyle.color) toolbarBgInput.value = savedStyle.color;
                 if (savedStyle.opacity) toolbarOpacityInput.value = savedStyle.opacity;
             } catch (e) {
@@ -1383,7 +1384,7 @@ app.registerExtension({
             panel.style.display = "none";
             hideToolbarSettings();
             updateMiniIconState(false);
-            localStorage.setItem("ggNodes_visible", "false");
+            setUserItem("ggNodes_visible", "false");
         };
 
         const hidePanel = () => {
@@ -1401,13 +1402,13 @@ app.registerExtension({
             panel.style.bottom = lastPosition.bottom || "30px";
             panel.style.transform = lastPosition.top ? "none" : "translateX(-50%)";
             updateMiniIconState(true);
-            localStorage.setItem("ggNodes_visible", "true");
+            setUserItem("ggNodes_visible", "true");
         };
 
         const applyToolbarEnabled = (enabled) => {
             toolbarEnabled = enabled !== false;
             if (toolbarEnabled) {
-                if (topSwitchEnabled && localStorage.getItem("ggNodes_visible") === "false") {
+                if (topSwitchEnabled && getUserItem("ggNodes_visible") === "false") {
                     setPanelHidden();
                 } else {
                     showPanel();
@@ -1416,7 +1417,7 @@ app.registerExtension({
                 panel.style.display = "none";
                 hideToolbarSettings();
                 updateMiniIconState(false);
-                localStorage.setItem("ggNodes_visible", "false");
+                setUserItem("ggNodes_visible", "false");
             }
         };
 
@@ -1506,12 +1507,12 @@ app.registerExtension({
                 isDragging = false;
                 panel.style.cursor = "grab";
                 lastPosition = { left: panel.style.left, top: panel.style.top, bottom: "auto" };
-                localStorage.setItem("ggNodes_pos", JSON.stringify(lastPosition));
+                setUserItem("ggNodes_pos", JSON.stringify(lastPosition));
             }
         });
 
         // 加载保存的位置
-        const saved = localStorage.getItem("ggNodes_pos");
+        const saved = getUserItem("ggNodes_pos");
         if (saved) {
             try {
                 const p = JSON.parse(saved);
@@ -1939,7 +1940,7 @@ app.registerExtension({
 
         function loadColorClipboard() {
             try {
-                return normalizeToolbarColorState(JSON.parse(localStorage.getItem(GG_COLOR_CLIPBOARD_KEY) || "null"));
+                return normalizeToolbarColorState(JSON.parse(getUserItem(GG_COLOR_CLIPBOARD_KEY) || "null"));
             } catch {
                 return null;
             }
@@ -1948,9 +1949,9 @@ app.registerExtension({
         function saveColorClipboard(state) {
             copiedColorState = normalizeToolbarColorState(state);
             if (copiedColorState) {
-                localStorage.setItem(GG_COLOR_CLIPBOARD_KEY, JSON.stringify(copiedColorState));
+                setUserItem(GG_COLOR_CLIPBOARD_KEY, JSON.stringify(copiedColorState));
             } else {
-                localStorage.removeItem(GG_COLOR_CLIPBOARD_KEY);
+                removeUserItem(GG_COLOR_CLIPBOARD_KEY);
             }
             refreshColorClipboardButtons();
         }
@@ -2145,7 +2146,7 @@ app.registerExtension({
 
         function loadSizeClipboard() {
             try {
-                return normalizeNodeSize(JSON.parse(localStorage.getItem(GG_SIZE_CLIPBOARD_KEY) || "null"));
+                return normalizeNodeSize(JSON.parse(getUserItem(GG_SIZE_CLIPBOARD_KEY) || "null"));
             } catch {
                 return null;
             }
@@ -2154,9 +2155,9 @@ app.registerExtension({
         function saveSizeClipboard(size) {
             copiedNodeSize = normalizeNodeSize(size);
             if (copiedNodeSize) {
-                localStorage.setItem(GG_SIZE_CLIPBOARD_KEY, JSON.stringify(copiedNodeSize));
+                setUserItem(GG_SIZE_CLIPBOARD_KEY, JSON.stringify(copiedNodeSize));
             } else {
-                localStorage.removeItem(GG_SIZE_CLIPBOARD_KEY);
+                removeUserItem(GG_SIZE_CLIPBOARD_KEY);
             }
             refreshSizeClipboardButtons();
         }
@@ -2474,14 +2475,14 @@ app.registerExtension({
         document.querySelectorAll(".custom-color-btn").forEach(btn => {
             const index = Number(btn.dataset.index);
             const input = document.getElementById(`gg-custom-color-input-${index}`);
-            const savedColor = localStorage.getItem(`ggNodes_customColor_${index}`) || customColorDefaults[index - 1];
+            const savedColor = getUserItem(`ggNodes_customColor_${index}`) || customColorDefaults[index - 1];
             input.value = savedColor;
             btn.querySelector(".color-dot").style.background = savedColor;
             btn.querySelector(".color-dot").dataset.color = savedColor;
 
             btn.onclick = () => input.click();
             input.oninput = () => {
-                localStorage.setItem(`ggNodes_customColor_${index}`, input.value);
+                setUserItem(`ggNodes_customColor_${index}`, input.value);
                 btn.querySelector(".color-dot").style.background = input.value;
                 btn.querySelector(".color-dot").dataset.color = input.value;
                 applyNodeColor(input.value);

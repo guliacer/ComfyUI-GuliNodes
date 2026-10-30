@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { getUserItem, setUserItem, removeUserItem } from "./gg-userdata-store.js";
 
 const SETTINGS_ID = "GuliNodes.groupStyler";
 const INSTALL_FLAG = Symbol.for("GuliNodes.groupStyler.installed");
@@ -944,7 +945,7 @@ function isScaleStateExpired(value, now = Date.now()) {
 
 function readScaleCache() {
     try {
-        const raw = localStorage.getItem(SCALE_HIDE_CACHE_KEY);
+        const raw = getUserItem(SCALE_HIDE_CACHE_KEY);
         const parsed = raw ? JSON.parse(raw) : null;
         if (parsed && typeof parsed === "object" && parsed.entries && typeof parsed.entries === "object") {
             return parsed;
@@ -962,7 +963,7 @@ function writeScaleCache(cache) {
             .filter(([, entry]) => !isScaleStateExpired(entry, now))
             .sort((left, right) => getScaleStateUpdatedAt(right[1]) - getScaleStateUpdatedAt(left[1]))
             .slice(0, SCALE_HIDE_CACHE_LIMIT);
-        localStorage.setItem(SCALE_HIDE_CACHE_KEY, JSON.stringify({
+        setUserItem(SCALE_HIDE_CACHE_KEY, JSON.stringify({
             version: 1,
             entries: Object.fromEntries(entries),
         }));
