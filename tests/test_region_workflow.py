@@ -71,7 +71,8 @@ class RegionWorkflowContractTests(unittest.TestCase):
         self.assertEqual(pick["type"], "ComfySwitchNode")
         # 手绘来源必须仍直连原图 MASK，自动来源必须是 SAM3 的 obj_masks
         self.assertEqual(self.source(pick, "on_false", links), (roles["original"]["id"], 1))
-        self.assertEqual(self.source(pick, "on_true", links), (roles["auto_mask"]["id"], 2))
+        # on_true 接 SAM3 的 masks(槽0 合并单张)，不是 obj_masks(槽2 多对象堆叠)
+        self.assertEqual(self.source(pick, "on_true", links), (roles["auto_mask"]["id"], 0))
         for region in ("background", "person"):
             prep = roles[region + "_prepare"]
             self.assertEqual(prep["type"], "GGRegionEditPrepare")
