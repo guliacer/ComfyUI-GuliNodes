@@ -111,7 +111,8 @@ class RegionWorkflowContractTests(unittest.TestCase):
             values = sampler["widgets_values_named"]
             self.assertEqual(values["cfg"], 1.0)
             self.assertEqual(values["sampler_name"], "euler")
-            self.assertLessEqual(values["denoise"], 0.55)
+            # 降噪必须足以看出变化：背景 0.6、人像 0.35（低到 0.25 实测接近直通）
+            self.assertEqual(values["denoise"], 0.6 if region == "background" else 0.35)
 
     def test_original_soft_masks_gate_final_merges(self):
         _, _, roles, links = self.load_graph()
@@ -128,11 +129,11 @@ class RegionWorkflowContractTests(unittest.TestCase):
         _, _, roles, _ = self.load_graph()
         for region in ("background", "person"):
             values = roles[region + "_crop"]["widgets_values_named"]
-            self.assertEqual(values["输出尺寸"], "按宽高")
+            # 裁剪必须按原像素保持原图比例：曾经固定 768×768 会把竖图压扁，
+            # 采样后拉伸回来把改动稀释掉，实测几乎等于直通。
+            self.assertEqual(values["输出尺寸"], "原像素")
             self.assertFalse(values["遮罩填充"])
-            for key in ("输出尺寸.宽度", "输出尺寸.高度"):
-                self.assertEqual(values[key] % 32, 0)
-                self.assertLessEqual(values[key], 1024)
+            self.assertEqual(values["输出尺寸.倍数取整"] % 8, 0)
             restored = roles[region + "_restore"]["widgets_values_named"]
             self.assertEqual(restored["遮罩扩展"], 0)
             self.assertEqual(restored["遮罩羽化"], 0)

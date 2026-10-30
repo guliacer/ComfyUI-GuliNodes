@@ -200,8 +200,8 @@ def build(definitions):
         label = "背景" if region == "background" else "人像"
         request = "保持场景结构与物体位置，只优化背景的曝光层次、色彩和材质细节，使画面更自然干净。" if region == "background" else "仅优化人物皮肤层次、发丝和服装质感，保留真实自然细节，不改变脸型、身份、姿态、位置、比例和外轮廓。"
         graph.node(base, "GGRegionEditPrepare", region + "_prepare", "② " + label + "修改需求（清空即跳过）", (970, offset), {"处理区域": label, "编辑需求": request}, size=(420, 370))
-        crop_values = {"遮罩填充": False, "扩展方式": "四边统一", "扩展方式.扩展系数": 1.1, "输出尺寸": "按宽高", "输出尺寸.宽度": 768, "输出尺寸.高度": 768}
-        graph.node(base + 1, "GGMaskCrop", region + "_crop", "③ " + label + "局部裁剪／等比补边", (1450, offset), crop_values, size=(410, 300), dynamic={"扩展方式": {"扩展系数": ["FLOAT", {"default": 1.4}]}, "输出尺寸": {"宽度": ["INT", {"default": 1024}], "高度": ["INT", {"default": 1024}]}})
+        crop_values = {"遮罩填充": False, "扩展方式": "四边统一", "扩展方式.扩展系数": 1.1, "输出尺寸": "原像素", "输出尺寸.倍数取整": 8}
+        graph.node(base + 1, "GGMaskCrop", region + "_crop", "③ " + label + "局部裁剪／等比补边", (1450, offset), crop_values, size=(410, 300), dynamic={"扩展方式": {"扩展系数": ["FLOAT", {"default": 1.4}]}, "输出尺寸": {"倍数取整": ["INT", {"default": 8}]}})
         enhancer_values = {"任务模式": "图生图", "输出语言": "中文", "增强方式": "本地LLM", "api_key": "", "主模型": option(defs["GGPromptEnhancer"], "主模型", "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf", fallback="Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf"), "mmproj": option(defs["GGPromptEnhancer"], "mmproj", "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf", fallback="Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf"), "上下文长度": 8192, "最大生成token": 2048, "生成后自动卸载模型": True, "seed": 12345}
         graph.node(base + 2, "GGPromptEnhancer", region + "_enhance", "可选 AI：单独优化" + label + "请求", (1910, offset), enhancer_values, size=(420, 600), grow={"图片": [("图片1", "IMAGE")]})
         graph.node(base + 3, "ComfySwitchNode", region + "_prompt_select", "AI 开／关：真正跳过未选分支", (1910, offset + 690), size=(420, 150), output_type="STRING")
@@ -209,7 +209,7 @@ def build(definitions):
         graph.node(base + 5, "GGPromptOptimizer", region + "_condition", "④ Qwen 条件编码（不是文本改写）", (2370, offset), {"CLIP名称": clip, "CLIP类型": "qwen_image", "VAE名称": vae, "分辨率": 0}, size=(420, 520), grow={"图像": [("图像1", "IMAGE")]})
         graph.node(base + 6, "VAEEncode", region + "_vae_encode", "原图像 Latent 编码", (2830, offset), size=(300, 110))
         graph.node(base + 7, "SetLatentNoiseMask", region + "_latent_mask", "采样蒙版：仅当前区域去噪", (2830, offset + 200), size=(300, 120))
-        graph.node(base + 8, "KSampler", region + "_sample", "⑤ " + label + "小幅图生图", (3170, offset), {"seed": 246813579 if region == "background" else 246813580, "steps": 9, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 0.45 if region == "background" else 0.25}, size=(410, 450))
+        graph.node(base + 8, "KSampler", region + "_sample", "⑤ " + label + "小幅图生图", (3170, offset), {"seed": 246813579 if region == "background" else 246813580, "steps": 9, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 0.6 if region == "background" else 0.35}, size=(410, 450))
         graph.node(base + 9, "VAEDecode", region + "_decode", "VAE 解码", (3620, offset), size=(300, 120))
         graph.node(base + 10, "GGCropRestore", region + "_restore", "⑥ 原坐标还原（不扩大轮廓）", (3970, offset), {"遮罩扩展": 0, "遮罩羽化": 0, "颜色还原": 0.0}, size=(410, 220))
         graph.node(base + 11, "GGImageMergeMask", region + "_merge", "原蒙版再次限域，保护另一部分", (4420, offset), {"透明度": 1.0, "遮罩扩展": 0, "模糊半径": 0, "匹配图像大小": False}, size=(410, 260))
@@ -255,7 +255,7 @@ def build(definitions):
     graph.node(51, "GGImageCompressSave", "save", "⑧ 保存 PNG（保留原画幅）", (5420, 1370), {"文件名前缀": "%date:yyyy_MM_dd%/GG_人像背景分区", "格式": "PNG", "清除内存": True}, size=(520, 360))
     graph.node(52, "MaskToImage", "mask_to_image", "检查白色是否只选中了人物", (40, 1150), size=(310, 100))
     graph.node(53, "PreviewImage", "mask_preview", "人物蒙版预览（无模型运算）", (40, 1310), size=(420, 600))
-    graph.node(54, "Note", "instructions", "使用前必读", (40, 2030), {"text": "1. 先上传原图，右键加载图像→遮罩编辑器，只涂人物并保存。\n2. 白色=人物；背景会自动反转，不需再画一次。\n3. 编辑需求清空/只留空格=跳过该区域。\n4. AI优化为独立开关；未验证本地模型兼容前保持关闭。\n5. 本版默认768×768等比补边，恢复到原坐标和原画幅。\n6. 最终合成严格按原蒙版限域，人物外轮廓不扩大；人物内部姿态仍依赖模型。\n7. 人像降噪0.25、背景0.45为保守起点，可进一步调低。\n8. 未涂蒙版会中文报错，而不是自动重绘全图。"}, size=(420, 500))
+    graph.node(54, "Note", "instructions", "使用前必读", (40, 2030), {"text": "1. 先上传原图，右键加载图像→遮罩编辑器，只涂人物并保存。\n2. 白色=人物；背景会自动反转，不需再画一次。\n3. 编辑需求清空/只留空格=跳过该区域。\n4. AI优化为独立开关；未验证本地模型兼容前保持关闭。\n5. 本版按原像素裁剪（不再压成正方形），保持原图比例，恢复到原坐标和原画幅。\n6. 最终合成严格按原蒙版限域，人物外轮廓不扩大；人物内部姿态仍依赖模型。\n7. 背景降噪0.6、人像0.35为默认；更强改0.7/0.45，更保守改0.5/0.25。低于0.4基本看不出变化。\n8. 未涂蒙版会中文报错，而不是自动重绘全图。"}, size=(420, 500))
     graph.connect("person_select", 0, "compare", "图像_A")
     graph.connect("original", 0, "compare", "图像_B")
     graph.connect("person_select", 0, "save", "图像")
