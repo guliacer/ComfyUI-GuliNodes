@@ -1174,14 +1174,14 @@
         "cnr_id": "comfyui-gulinodes"
       },
       "widgets_values": [
-        false,
+        true,
         "四边统一",
         1.1,
         "原像素",
         8
       ],
       "widgets_values_named": {
-        "遮罩填充": false,
+        "遮罩填充": true,
         "扩展方式": "四边统一",
         "扩展方式.扩展系数": 1.1,
         "输出尺寸": "原像素",
@@ -2144,14 +2144,14 @@
         "cnr_id": "comfyui-gulinodes"
       },
       "widgets_values": [
-        0,
-        0,
-        0.0
+        4,
+        5,
+        1.0
       ],
       "widgets_values_named": {
-        "遮罩扩展": 0,
-        "遮罩羽化": 0,
-        "颜色还原": 0.0
+        "遮罩扩展": 4,
+        "遮罩羽化": 5,
+        "颜色还原": 1.0
       }
     },
     {
@@ -2412,14 +2412,14 @@
         "cnr_id": "comfyui-gulinodes"
       },
       "widgets_values": [
-        false,
+        true,
         "四边统一",
         1.1,
         "原像素",
         8
       ],
       "widgets_values_named": {
-        "遮罩填充": false,
+        "遮罩填充": true,
         "扩展方式": "四边统一",
         "扩展方式.扩展系数": 1.1,
         "输出尺寸": "原像素",
@@ -3382,14 +3382,14 @@
         "cnr_id": "comfyui-gulinodes"
       },
       "widgets_values": [
-        0,
-        0,
-        0.0
+        4,
+        5,
+        1.0
       ],
       "widgets_values_named": {
-        "遮罩扩展": 0,
-        "遮罩羽化": 0,
-        "颜色还原": 0.0
+        "遮罩扩展": 4,
+        "遮罩羽化": 5,
+        "颜色还原": 1.0
       }
     },
     {
@@ -4372,12 +4372,12 @@
       "widgets_values": [
         false,
         12,
-        6
+        0
       ],
       "widgets_values_named": {
         "invert_mask": false,
         "grow": 12,
-        "blur": 6
+        "blur": 0
       }
     }
   ],
