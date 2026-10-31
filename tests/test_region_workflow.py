@@ -155,9 +155,10 @@ class RegionWorkflowContractTests(unittest.TestCase):
             self.assertTrue(values["遮罩填充"])
             self.assertEqual(values["输出尺寸.倍数取整"] % 8, 0)
             restored = roles[region + "_restore"]["widgets_values_named"]
-            self.assertEqual(restored["遮罩扩展"], 0)
-            self.assertEqual(restored["遮罩羽化"], 0)
-            self.assertEqual(restored["颜色还原"], 0.0)
+            # 贴回参数对齐孤海：扩展 4% / 羽化 5% / 颜色还原 1.0（消除边缘生硬与偏色残影）
+            self.assertEqual(restored["遮罩扩展"], 4)
+            self.assertEqual(restored["遮罩羽化"], 5)
+            self.assertEqual(restored["颜色还原"], 1.0)
 
     def test_constraints_are_appended_after_optional_ai(self):
         _, _, roles, links = self.load_graph()
