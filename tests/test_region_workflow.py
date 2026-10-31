@@ -60,7 +60,8 @@ class RegionWorkflowContractTests(unittest.TestCase):
     def test_only_core_and_gg_node_types_are_used(self):
         _, nodes, _, _ = self.load_graph()
         allowed_core = {"LoadImage", "UNETLoader", "CLIPLoader", "VAELoader", "VAEEncode", "VAEDecode", "SetLatentNoiseMask", "KSampler", "ComfySwitchNode", "PrimitiveBoolean", "PrimitiveInt", "PrimitiveString", "Note", "PreviewImage", "MaskToImage",
-                        "easy sam3ModelLoader", "easy sam3ImageSegmentation", "LayerMask: MaskGrow"}
+                        "easy sam3ModelLoader", "easy sam3ImageSegmentation", "LayerMask: MaskGrow",
+                        "RandomNoise", "KSamplerSelect", "ManualSigmas", "BasicGuider", "SamplerCustomAdvanced"}
         for node in nodes.values():
             self.assertTrue(node["type"].startswith("GG") or node["type"] in allowed_core, node["type"])
         self.assertEqual(sum(n["type"] == "GGRegionEditPrepare" for n in nodes.values()), 2)
@@ -75,7 +76,9 @@ class RegionWorkflowContractTests(unittest.TestCase):
         grow = roles["mask_grow"]
         self.assertEqual(grow["type"], "LayerMask: MaskGrow")
         self.assertEqual(self.source(grow, "mask", links), (roles["auto_mask"]["id"], 0))
-        self.assertEqual(self.source(pick, "on_true", links), (grow["id"], 0))
+        shrink = roles["mask_shrink"]
+        self.assertEqual(self.source(shrink, "mask", links), (grow["id"], 0))
+        self.assertEqual(self.source(pick, "on_true", links), (shrink["id"], 0))
         for region in ("background", "person"):
             prep = roles[region + "_prepare"]
             self.assertEqual(prep["type"], "GGRegionEditPrepare")
@@ -122,18 +125,20 @@ class RegionWorkflowContractTests(unittest.TestCase):
             vae = roles[region + "_vae_encode"]
             latent = roles[region + "_latent_mask"]
             sampler = roles[region + "_sample"]
+            # 人像分支用孤海同款高级采样（SamplerCustomAdvanced + ManualSigmas），背景用 KSampler
+            self.assertIn(sampler["type"], ("KSampler", "SamplerCustomAdvanced"))
             self.assertEqual(vae["type"], "VAEEncode")
             self.assertEqual(latent["type"], "SetLatentNoiseMask")
             self.assertEqual(self.source(vae, "pixels", links), (crop["id"], 1))
             self.assertEqual(self.source(latent, "samples", links), (vae["id"], 0))
             self.assertEqual(self.source(latent, "mask", links), (crop["id"], 2))
             self.assertEqual(self.source(sampler, "latent_image", links), (latent["id"], 0))
-            self.assertEqual(sampler["type"], "KSampler")
-            values = sampler["widgets_values_named"]
-            self.assertEqual(values["cfg"], 1.0)
-            self.assertEqual(values["sampler_name"], "euler")
-            # 暗图提亮实测：0.6/0.85 几乎不动，0.95 才生效（turbo 9 步对降噪极敏感）
-            self.assertEqual(values["denoise"], 0.95)
+            if sampler["type"] == "KSampler":
+                values = sampler["widgets_values_named"]
+                self.assertEqual(values["cfg"], 1.0)
+                self.assertEqual(values["sampler_name"], "euler")
+                # 暗图提亮实测：0.6/0.85 几乎不动，0.95 才生效
+                self.assertEqual(values["denoise"], 0.95)
 
     def test_background_stage_uses_inverted_mask_via_prepare(self):
         # 背景阶段通过「处理区域=背景」在 prepare 内反相人像蒙版，得到背景遮罩

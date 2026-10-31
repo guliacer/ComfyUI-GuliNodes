@@ -1,8 +1,8 @@
 {
   "id": "ff2efab8-a663-4b23-8f94-64c05ed16101",
   "revision": 0,
-  "last_node_id": 74,
-  "last_link_id": 107,
+  "last_node_id": 79,
+  "last_link_id": 120,
   "nodes": [
     {
       "id": 1,
@@ -876,8 +876,8 @@
           "name": "模型",
           "type": "MODEL",
           "links": [
-            20,
-            53
+            114,
+            116
           ]
         }
       ],
@@ -1781,14 +1781,14 @@
           "name": "正面条件",
           "type": "CONDITIONING",
           "links": [
-            21
+            117
           ]
         },
         {
           "name": "负面条件",
           "type": "CONDITIONING",
           "links": [
-            22
+            118
           ]
         }
       ],
@@ -1890,7 +1890,7 @@
           "name": "LATENT",
           "type": "LATENT",
           "links": [
-            23
+            119
           ]
         }
       ],
@@ -1901,124 +1901,6 @@
       },
       "widgets_values": [],
       "widgets_values_named": {}
-    },
-    {
-      "id": 18,
-      "type": "KSampler",
-      "title": "⑤ 背景小幅图生图",
-      "pos": [
-        3170,
-        180
-      ],
-      "size": [
-        410,
-        450
-      ],
-      "flags": {},
-      "order": 14,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 20
-        },
-        {
-          "name": "seed",
-          "type": "INT",
-          "link": null,
-          "widget": {
-            "name": "seed"
-          }
-        },
-        {
-          "name": "steps",
-          "type": "INT",
-          "link": null,
-          "widget": {
-            "name": "steps"
-          }
-        },
-        {
-          "name": "cfg",
-          "type": "FLOAT",
-          "link": null,
-          "widget": {
-            "name": "cfg"
-          }
-        },
-        {
-          "name": "sampler_name",
-          "type": "COMBO",
-          "link": null,
-          "widget": {
-            "name": "sampler_name"
-          }
-        },
-        {
-          "name": "scheduler",
-          "type": "COMBO",
-          "link": null,
-          "widget": {
-            "name": "scheduler"
-          }
-        },
-        {
-          "name": "positive",
-          "type": "CONDITIONING",
-          "link": 21
-        },
-        {
-          "name": "negative",
-          "type": "CONDITIONING",
-          "link": 22
-        },
-        {
-          "name": "latent_image",
-          "type": "LATENT",
-          "link": 23
-        },
-        {
-          "name": "denoise",
-          "type": "FLOAT",
-          "link": null,
-          "widget": {
-            "name": "denoise"
-          }
-        }
-      ],
-      "outputs": [
-        {
-          "name": "LATENT",
-          "type": "LATENT",
-          "links": [
-            24
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "KSampler",
-        "gg_region_role": "background_sample",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": [
-        246813579,
-        "fixed",
-        9,
-        1.0,
-        "euler",
-        "simple",
-        0.95
-      ],
-      "widgets_values_named": {
-        "seed": 246813579,
-        "control_after_generate": "fixed",
-        "steps": 9,
-        "cfg": 1.0,
-        "sampler_name": "euler",
-        "scheduler": "simple",
-        "denoise": 0.95
-      }
     },
     {
       "id": 19,
@@ -2039,7 +1921,7 @@
         {
           "name": "samples",
           "type": "LATENT",
-          "link": 24
+          "link": 120
         },
         {
           "name": "vae",
@@ -2312,12 +2194,12 @@
       },
       "widgets_values": [
         "人像",
-        "保持人物长相、五官、发型、姿态、双手各拿一个苹果的动作、白蕾丝裙与红色围裙款式不变，提高人物亮度与通透感：面部、手臂、腿部皮肤明亮干净、肤色自然，白裙洁白，红围裙鲜亮，黄雨靴透亮；补光方向与背景阳光一致，人物边缘过渡柔和，不过曝不发灰。",
+        "保持人物长相、五官、发型、姿态、双手各拿一个苹果的动作、白蕾丝裙与红色围裙款式完全不变，把人物整体提亮到阳光下明亮通透的肤色：面部、手臂、腿部皮肤均匀明亮、干净光滑，腿部不能有任何深色阴影、暗斑、斑驳或污渍，双腿皮肤色调完全一致；白裙洁白、红围裙鲜亮、黄雨靴透亮；补光方向与背景阳光一致，边缘过渡柔和，不过曝不发灰。",
         ""
       ],
       "widgets_values_named": {
         "处理区域": "人像",
-        "编辑需求": "保持人物长相、五官、发型、姿态、双手各拿一个苹果的动作、白蕾丝裙与红色围裙款式不变，提高人物亮度与通透感：面部、手臂、腿部皮肤明亮干净、肤色自然，白裙洁白，红围裙鲜亮，黄雨靴透亮；补光方向与背景阳光一致，人物边缘过渡柔和，不过曝不发灰。",
+        "编辑需求": "保持人物长相、五官、发型、姿态、双手各拿一个苹果的动作、白蕾丝裙与红色围裙款式完全不变，把人物整体提亮到阳光下明亮通透的肤色：面部、手臂、腿部皮肤均匀明亮、干净光滑，腿部不能有任何深色阴影、暗斑、斑驳或污渍，双腿皮肤色调完全一致；白裙洁白、红围裙鲜亮、黄雨靴透亮；补光方向与背景阳光一致，边缘过渡柔和，不过曝不发灰。",
         "全局要求": ""
       }
     },
@@ -3019,7 +2901,8 @@
           "name": "正面条件",
           "type": "CONDITIONING",
           "links": [
-            54
+            54,
+            115
           ]
         },
         {
@@ -3128,7 +3011,8 @@
           "name": "LATENT",
           "type": "LATENT",
           "links": [
-            56
+            56,
+            112
           ]
         }
       ],
@@ -3229,9 +3113,7 @@
         {
           "name": "LATENT",
           "type": "LATENT",
-          "links": [
-            57
-          ]
+          "links": []
         }
       ],
       "properties": {
@@ -3277,7 +3159,7 @@
         {
           "name": "samples",
           "type": "LATENT",
-          "link": 57
+          "link": 113
         },
         {
           "name": "vae",
@@ -4407,14 +4289,14 @@
           "name": "mask",
           "type": "MASK",
           "links": [
-            105,
             107
           ],
           "slot_index": 0
         }
       ],
       "properties": {
-        "Node name for S&R": "LayerMask: MaskGrow"
+        "Node name for S&R": "LayerMask: MaskGrow",
+        "gg_region_role": "mask_shrink"
       },
       "widgets_values": [
         false,
@@ -4425,6 +4307,359 @@
         "invert_mask": false,
         "grow": -20,
         "blur": 0
+      }
+    },
+    {
+      "id": 75,
+      "type": "RandomNoise",
+      "title": "噪声种子",
+      "pos": [
+        3170,
+        1950
+      ],
+      "size": [
+        320,
+        90
+      ],
+      "flags": {},
+      "order": 57,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise_seed",
+          "type": "INT",
+          "widget": {
+            "name": "noise_seed"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "NOISE",
+          "type": "NOISE",
+          "links": [
+            108
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "RandomNoise"
+      },
+      "widgets_values": [
+        12345,
+        "randomize"
+      ]
+    },
+    {
+      "id": 76,
+      "type": "KSamplerSelect",
+      "title": "采样器",
+      "pos": [
+        3170,
+        2070
+      ],
+      "size": [
+        320,
+        80
+      ],
+      "flags": {},
+      "order": 58,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "sampler_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler_name"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SAMPLER",
+          "type": "SAMPLER",
+          "links": [
+            110
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "KSamplerSelect"
+      },
+      "widgets_values": [
+        "euler"
+      ]
+    },
+    {
+      "id": 77,
+      "type": "ManualSigmas",
+      "title": "Qwen 手动 sigma 曲线（孤海同款）",
+      "pos": [
+        3170,
+        2170
+      ],
+      "size": [
+        420,
+        150
+      ],
+      "flags": {},
+      "order": 59,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "sigmas",
+          "type": "STRING",
+          "widget": {
+            "name": "sigmas"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SIGMAS",
+          "type": "SIGMAS",
+          "links": [
+            111
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ManualSigmas"
+      },
+      "widgets_values": [
+        "1.0, 0.978453, 0.954180, 0.926626, 0.895080, 0.845148, 0.704534, 0.414568, 0.150000, 0"
+      ],
+      "widgets_values_named": {
+        "sigmas": "1.0, 0.978453, 0.954180, 0.926626, 0.895080, 0.845148, 0.704534, 0.414568, 0.150000, 0"
+      }
+    },
+    {
+      "id": 78,
+      "type": "BasicGuider",
+      "title": "引导（turbo 无 CFG）",
+      "pos": [
+        3170,
+        2340
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 60,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 114
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 115
+        }
+      ],
+      "outputs": [
+        {
+          "name": "GUIDER",
+          "type": "GUIDER",
+          "links": [
+            109
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicGuider"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 79,
+      "type": "SamplerCustomAdvanced",
+      "title": "高级采样（手动 sigma）",
+      "pos": [
+        3690,
+        1430
+      ],
+      "size": [
+        340,
+        260
+      ],
+      "flags": {},
+      "order": 61,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 108
+        },
+        {
+          "name": "guider",
+          "type": "GUIDER",
+          "link": 109
+        },
+        {
+          "name": "sampler",
+          "type": "SAMPLER",
+          "link": 110
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 111
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 112
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "LATENT",
+          "links": [
+            113
+          ],
+          "slot_index": 0
+        },
+        {
+          "name": "denoised_output",
+          "type": "LATENT",
+          "links": [],
+          "slot_index": 1
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SamplerCustomAdvanced",
+        "gg_region_role": "person_sample"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 18,
+      "type": "KSampler",
+      "title": "⑤ 背景采样",
+      "pos": [
+        3170,
+        180
+      ],
+      "size": [
+        410,
+        450
+      ],
+      "flags": {},
+      "order": 62,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 116
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 117
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": 118
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 119
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "widget": {
+            "name": "seed"
+          },
+          "link": null
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "widget": {
+            "name": "steps"
+          },
+          "link": null
+        },
+        {
+          "name": "cfg",
+          "type": "FLOAT",
+          "widget": {
+            "name": "cfg"
+          },
+          "link": null
+        },
+        {
+          "name": "sampler_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "sampler_name"
+          },
+          "link": null
+        },
+        {
+          "name": "scheduler",
+          "type": "COMBO",
+          "widget": {
+            "name": "scheduler"
+          },
+          "link": null
+        },
+        {
+          "name": "denoise",
+          "type": "FLOAT",
+          "widget": {
+            "name": "denoise"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            120
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "KSampler",
+        "gg_region_role": "background_sample"
+      },
+      "widgets_values": [
+        246813579,
+        "fixed",
+        9,
+        1.0,
+        "euler",
+        "simple",
+        0.95
+      ],
+      "widgets_values_named": {
+        "seed": 246813579,
+        "steps": 9,
+        "cfg": 1.0,
+        "sampler_name": "euler",
+        "scheduler": "simple",
+        "denoise": 0.95
       }
     }
   ],
@@ -4572,46 +4807,6 @@
       17,
       1,
       "MASK"
-    ],
-    [
-      20,
-      6,
-      0,
-      18,
-      0,
-      "MODEL"
-    ],
-    [
-      21,
-      15,
-      0,
-      18,
-      6,
-      "CONDITIONING"
-    ],
-    [
-      22,
-      15,
-      1,
-      18,
-      7,
-      "CONDITIONING"
-    ],
-    [
-      23,
-      17,
-      0,
-      18,
-      8,
-      "LATENT"
-    ],
-    [
-      24,
-      18,
-      0,
-      19,
-      0,
-      "LATENT"
     ],
     [
       25,
@@ -4790,14 +4985,6 @@
       "MASK"
     ],
     [
-      53,
-      6,
-      0,
-      38,
-      0,
-      "MODEL"
-    ],
-    [
       54,
       35,
       0,
@@ -4819,14 +5006,6 @@
       0,
       38,
       8,
-      "LATENT"
-    ],
-    [
-      57,
-      38,
-      0,
-      39,
-      0,
       "LATENT"
     ],
     [
@@ -5102,14 +5281,6 @@
       "MASK"
     ],
     [
-      105,
-      74,
-      0,
-      61,
-      2,
-      "MASK"
-    ],
-    [
       106,
       73,
       0,
@@ -5124,6 +5295,110 @@
       61,
       2,
       "MASK"
+    ],
+    [
+      108,
+      75,
+      0,
+      79,
+      0,
+      "NOISE"
+    ],
+    [
+      109,
+      78,
+      0,
+      79,
+      1,
+      "GUIDER"
+    ],
+    [
+      110,
+      76,
+      0,
+      79,
+      2,
+      "SAMPLER"
+    ],
+    [
+      111,
+      77,
+      0,
+      79,
+      3,
+      "SIGMAS"
+    ],
+    [
+      112,
+      37,
+      0,
+      79,
+      4,
+      "LATENT"
+    ],
+    [
+      113,
+      79,
+      0,
+      39,
+      0,
+      "LATENT"
+    ],
+    [
+      114,
+      6,
+      0,
+      78,
+      0,
+      "MODEL"
+    ],
+    [
+      115,
+      35,
+      0,
+      78,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      116,
+      6,
+      0,
+      18,
+      0,
+      "MODEL"
+    ],
+    [
+      117,
+      15,
+      0,
+      18,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      118,
+      15,
+      1,
+      18,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      119,
+      17,
+      0,
+      18,
+      3,
+      "LATENT"
+    ],
+    [
+      120,
+      18,
+      0,
+      19,
+      0,
+      "LATENT"
     ]
   ],
   "groups": [
