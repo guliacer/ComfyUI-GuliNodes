@@ -60,7 +60,7 @@ class RegionWorkflowContractTests(unittest.TestCase):
     def test_only_core_and_gg_node_types_are_used(self):
         _, nodes, _, _ = self.load_graph()
         allowed_core = {"LoadImage", "UNETLoader", "CLIPLoader", "VAELoader", "VAEEncode", "VAEDecode", "SetLatentNoiseMask", "KSampler", "ComfySwitchNode", "PrimitiveBoolean", "PrimitiveInt", "PrimitiveString", "Note", "PreviewImage", "MaskToImage",
-                        "easy sam3ModelLoader", "easy sam3ImageSegmentation"}
+                        "easy sam3ModelLoader", "easy sam3ImageSegmentation", "LayerMask: MaskGrow"}
         for node in nodes.values():
             self.assertTrue(node["type"].startswith("GG") or node["type"] in allowed_core, node["type"])
         self.assertEqual(sum(n["type"] == "GGRegionEditPrepare" for n in nodes.values()), 2)
@@ -71,8 +71,11 @@ class RegionWorkflowContractTests(unittest.TestCase):
         self.assertEqual(pick["type"], "ComfySwitchNode")
         # 手绘来源必须仍直连原图 MASK，自动来源必须是 SAM3 的 obj_masks
         self.assertEqual(self.source(pick, "on_false", links), (roles["original"]["id"], 1))
-        # on_true 接 SAM3 的 masks(槽0 合并单张)，不是 obj_masks(槽2 多对象堆叠)
-        self.assertEqual(self.source(pick, "on_true", links), (roles["auto_mask"]["id"], 0))
+        # on_true 经「蒙版修边」节点（膨胀+羽化防残影），其来源是 SAM3 的 masks(槽0)
+        grow = roles["mask_grow"]
+        self.assertEqual(grow["type"], "LayerMask: MaskGrow")
+        self.assertEqual(self.source(grow, "mask", links), (roles["auto_mask"]["id"], 0))
+        self.assertEqual(self.source(pick, "on_true", links), (grow["id"], 0))
         for region in ("background", "person"):
             prep = roles[region + "_prepare"]
             self.assertEqual(prep["type"], "GGRegionEditPrepare")
@@ -129,8 +132,8 @@ class RegionWorkflowContractTests(unittest.TestCase):
             values = sampler["widgets_values_named"]
             self.assertEqual(values["cfg"], 1.0)
             self.assertEqual(values["sampler_name"], "euler")
-            # 降噪必须足以看出变化：背景 0.6、人像 0.35（低到 0.25 实测接近直通）
-            self.assertEqual(values["denoise"], 0.6 if region == "background" else 0.35)
+            # 暗图提亮实测：0.6/0.85 几乎不动，0.95 才生效（turbo 9 步对降噪极敏感）
+            self.assertEqual(values["denoise"], 0.95)
 
     def test_background_stage_uses_inverted_mask_via_prepare(self):
         # 背景阶段通过「处理区域=背景」在 prepare 内反相人像蒙版，得到背景遮罩

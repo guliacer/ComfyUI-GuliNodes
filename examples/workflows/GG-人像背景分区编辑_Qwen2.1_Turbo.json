@@ -1,8 +1,8 @@
 {
   "id": "ff2efab8-a663-4b23-8f94-64c05ed16101",
   "revision": 0,
-  "last_node_id": 72,
-  "last_link_id": 103,
+  "last_node_id": 73,
+  "last_link_id": 105,
   "nodes": [
     {
       "id": 1,
@@ -3889,7 +3889,7 @@
           "name": "masks",
           "type": "MASK",
           "links": [
-            85
+            104
           ],
           "slot_index": 0
         },
@@ -3993,7 +3993,7 @@
         {
           "name": "on_true",
           "type": "MASK",
-          "link": 85
+          "link": 105
         }
       ],
       "outputs": [
@@ -4332,6 +4332,53 @@
         "gg_region_role": "step_preview"
       },
       "widgets_values": []
+    },
+    {
+      "id": 73,
+      "type": "LayerMask: MaskGrow",
+      "title": "蒙版修边：膨胀+羽化（防残影）",
+      "pos": [
+        -990,
+        1380
+      ],
+      "size": [
+        380,
+        180
+      ],
+      "flags": {},
+      "order": 55,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 104
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "links": [
+            105
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayerMask: MaskGrow",
+        "gg_region_role": "mask_grow"
+      },
+      "widgets_values": [
+        false,
+        12,
+        6
+      ],
+      "widgets_values_named": {
+        "invert_mask": false,
+        "grow": 12,
+        "blur": 6
+      }
     }
   ],
   "links": [
@@ -4848,14 +4895,6 @@
       "IMAGE"
     ],
     [
-      85,
-      59,
-      0,
-      61,
-      2,
-      "MASK"
-    ],
-    [
       81,
       60,
       0,
@@ -5006,6 +5045,22 @@
       72,
       0,
       "IMAGE"
+    ],
+    [
+      104,
+      59,
+      0,
+      73,
+      0,
+      "MASK"
+    ],
+    [
+      105,
+      73,
+      0,
+      61,
+      2,
+      "MASK"
     ]
   ],
   "groups": [

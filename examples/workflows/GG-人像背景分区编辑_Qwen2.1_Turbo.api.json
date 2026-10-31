@@ -764,9 +764,21 @@
         1
       ],
       "on_true": [
-        "71",
+        "74",
         0
       ]
+    }
+  },
+  "74": {
+    "class_type": "LayerMask: MaskGrow",
+    "inputs": {
+      "mask": [
+        "71",
+        0
+      ],
+      "invert_mask": false,
+      "grow": 12,
+      "blur": 6
     }
   }
 }
