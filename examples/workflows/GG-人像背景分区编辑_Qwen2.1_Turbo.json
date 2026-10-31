@@ -1,8 +1,8 @@
 {
   "id": "ff2efab8-a663-4b23-8f94-64c05ed16101",
   "revision": 0,
-  "last_node_id": 73,
-  "last_link_id": 105,
+  "last_node_id": 74,
+  "last_link_id": 107,
   "nodes": [
     {
       "id": 1,
@@ -3993,7 +3993,7 @@
         {
           "name": "on_true",
           "type": "MASK",
-          "link": 105
+          "link": 107
         }
       ],
       "outputs": [
@@ -4360,7 +4360,7 @@
           "name": "mask",
           "type": "MASK",
           "links": [
-            105
+            106
           ],
           "slot_index": 0
         }
@@ -4371,12 +4371,59 @@
       },
       "widgets_values": [
         false,
-        12,
+        35,
         0
       ],
       "widgets_values_named": {
         "invert_mask": false,
-        "grow": 12,
+        "grow": 35,
+        "blur": 0
+      }
+    },
+    {
+      "id": 74,
+      "type": "LayerMask: MaskGrow",
+      "title": "蒙版收缩回边界",
+      "pos": [
+        -570,
+        1380
+      ],
+      "size": [
+        380,
+        150
+      ],
+      "flags": {},
+      "order": 56,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "link": 106
+        }
+      ],
+      "outputs": [
+        {
+          "name": "mask",
+          "type": "MASK",
+          "links": [
+            105,
+            107
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LayerMask: MaskGrow"
+      },
+      "widgets_values": [
+        false,
+        -20,
+        0
+      ],
+      "widgets_values_named": {
+        "invert_mask": false,
+        "grow": -20,
         "blur": 0
       }
     }
@@ -5056,7 +5103,23 @@
     ],
     [
       105,
+      74,
+      0,
+      61,
+      2,
+      "MASK"
+    ],
+    [
+      106,
       73,
+      0,
+      74,
+      0,
+      "MASK"
+    ],
+    [
+      107,
+      74,
       0,
       61,
       2,
