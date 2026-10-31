@@ -1,8 +1,8 @@
 {
   "id": "ff2efab8-a663-4b23-8f94-64c05ed16101",
   "revision": 0,
-  "last_node_id": 62,
-  "last_link_id": 92,
+  "last_node_id": 72,
+  "last_link_id": 103,
   "nodes": [
     {
       "id": 1,
@@ -37,7 +37,8 @@
             73,
             84,
             90,
-            91
+            91,
+            93
           ]
         },
         {
@@ -282,7 +283,7 @@
         "cnr_id": "comfyui-gulinodes"
       },
       "widgets_values": [
-        "保持原画幅、机位、透视和摄影风格。人物与背景的主光方向、色温和明暗关系协调，不新增人物，不改变构图。",
+        "保持原画幅、机位、透视和摄影风格。光源来自背景方向，人物与背景的主光方向、色温和明暗关系协调统一，整体明亮通透；不新增人物或物体，不改变构图与画面结构。",
         "",
         "",
         "",
@@ -305,7 +306,7 @@
         ""
       ],
       "widgets_values_named": {
-        "文本1": "保持原画幅、机位、透视和摄影风格。人物与背景的主光方向、色温和明暗关系协调，不新增人物，不改变构图。",
+        "文本1": "保持原画幅、机位、透视和摄影风格。光源来自背景方向，人物与背景的主光方向、色温和明暗关系协调统一，整体明亮通透；不新增人物或物体，不改变构图与画面结构。",
         "文本2": "",
         "文本3": "",
         "文本4": "",
@@ -369,10 +370,10 @@
         "cnr_id": "comfy-core"
       },
       "widgets_values": [
-        false
+        true
       ],
       "widgets_values_named": {
-        "value": false
+        "value": true
       }
     },
     {
@@ -1032,7 +1033,8 @@
           "links": [
             5,
             8,
-            33
+            33,
+            99
           ]
         },
         {
@@ -1072,12 +1074,12 @@
       },
       "widgets_values": [
         "背景",
-        "保持场景结构与物体位置，只优化背景的曝光层次、色彩和材质细节，使画面更自然干净。",
+        "将背景从昏暗的树林改成明亮的夏日树林：提高曝光让树冠透出阳光，但不要过曝、不要发白，保留树叶的绿色层次、枝干细节和远近虚化；阳光透过树叶形成柔和的暖金色圆形散景光斑；整体通透自然，色彩干净不发黄，保持原有树林结构与构图。",
         ""
       ],
       "widgets_values_named": {
         "处理区域": "背景",
-        "编辑需求": "保持场景结构与物体位置，只优化背景的曝光层次、色彩和材质细节，使画面更自然干净。",
+        "编辑需求": "将背景从昏暗的树林改成明亮的夏日树林：提高曝光让树冠透出阳光，但不要过曝、不要发白，保留树叶的绿色层次、枝干细节和远近虚化；阳光透过树叶形成柔和的暖金色圆形散景光斑；整体通透自然，色彩干净不发黄，保持原有树林结构与构图。",
         "全局要求": ""
       }
     },
@@ -1153,7 +1155,8 @@
           "type": "IMAGE",
           "links": [
             15,
-            16
+            16,
+            100
           ]
         },
         {
@@ -2005,7 +2008,7 @@
         1.0,
         "euler",
         "simple",
-        0.6
+        0.95
       ],
       "widgets_values_named": {
         "seed": 246813579,
@@ -2014,7 +2017,7 @@
         "cfg": 1.0,
         "sampler_name": "euler",
         "scheduler": "simple",
-        "denoise": 0.6
+        "denoise": 0.95
       }
     },
     {
@@ -2049,7 +2052,8 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            27
+            27,
+            101
           ]
         }
       ],
@@ -2129,7 +2133,8 @@
           "name": "图像",
           "type": "IMAGE",
           "links": [
-            88
+            88,
+            102
           ]
         }
       ],
@@ -2191,7 +2196,8 @@
           "name": "output",
           "type": "IMAGE",
           "links": [
-            92
+            92,
+            103
           ]
         }
       ],
@@ -2265,7 +2271,8 @@
           "links": [
             38,
             41,
-            66
+            66,
+            94
           ]
         },
         {
@@ -2305,12 +2312,12 @@
       },
       "widgets_values": [
         "人像",
-        "仅优化人物皮肤层次、发丝和服装质感，保留真实自然细节，不改变脸型、身份、姿态、位置、比例和外轮廓。",
+        "保持人物长相、五官、发型、姿态、双手各拿一个苹果的动作、白蕾丝裙与红色围裙款式不变，提高人物亮度与通透感：面部、手臂、腿部皮肤明亮干净、肤色自然，白裙洁白，红围裙鲜亮，黄雨靴透亮；补光方向与背景阳光一致，人物边缘过渡柔和，不过曝不发灰。",
         ""
       ],
       "widgets_values_named": {
         "处理区域": "人像",
-        "编辑需求": "仅优化人物皮肤层次、发丝和服装质感，保留真实自然细节，不改变脸型、身份、姿态、位置、比例和外轮廓。",
+        "编辑需求": "保持人物长相、五官、发型、姿态、双手各拿一个苹果的动作、白蕾丝裙与红色围裙款式不变，提高人物亮度与通透感：面部、手臂、腿部皮肤明亮干净、肤色自然，白裙洁白，红围裙鲜亮，黄雨靴透亮；补光方向与背景阳光一致，人物边缘过渡柔和，不过曝不发灰。",
         "全局要求": ""
       }
     },
@@ -2386,7 +2393,8 @@
           "type": "IMAGE",
           "links": [
             48,
-            49
+            49,
+            95
           ]
         },
         {
@@ -3238,7 +3246,7 @@
         1.0,
         "euler",
         "simple",
-        0.35
+        0.95
       ],
       "widgets_values_named": {
         "seed": 246813580,
@@ -3247,7 +3255,7 @@
         "cfg": 1.0,
         "sampler_name": "euler",
         "scheduler": "simple",
-        "denoise": 0.35
+        "denoise": 0.95
       }
     },
     {
@@ -3282,7 +3290,8 @@
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            60
+            60,
+            96
           ]
         }
       ],
@@ -3362,7 +3371,8 @@
           "name": "图像",
           "type": "IMAGE",
           "links": [
-            89
+            89,
+            97
           ]
         }
       ],
@@ -3425,7 +3435,8 @@
           "type": "IMAGE",
           "links": [
             2,
-            28
+            28,
+            98
           ]
         }
       ],
@@ -4000,6 +4011,325 @@
       "properties": {
         "Node name for S&R": "ComfySwitchNode",
         "gg_region_role": "mask_pick"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 62,
+      "type": "PreviewImage",
+      "title": "① 原图（输入）",
+      "pos": [
+        5300,
+        80
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 44,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 93
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 63,
+      "type": "PreviewImage",
+      "title": "② 人像·准备输入",
+      "pos": [
+        5300,
+        500
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 45,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 94
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 64,
+      "type": "PreviewImage",
+      "title": "③ 人像·裁剪图",
+      "pos": [
+        5300,
+        920
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 46,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 95
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 65,
+      "type": "PreviewImage",
+      "title": "④ 人像·采样结果",
+      "pos": [
+        5300,
+        1340
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 47,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 96
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 66,
+      "type": "PreviewImage",
+      "title": "⑤ 人像·贴回",
+      "pos": [
+        5300,
+        1760
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 48,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 97
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 67,
+      "type": "PreviewImage",
+      "title": "⑥ 人像·结果",
+      "pos": [
+        5300,
+        2180
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 49,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 98
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 68,
+      "type": "PreviewImage",
+      "title": "⑦ 背景·准备输入（=人像结果）",
+      "pos": [
+        5300,
+        2600
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 50,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 99
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 69,
+      "type": "PreviewImage",
+      "title": "⑧ 背景·裁剪图",
+      "pos": [
+        5300,
+        3020
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 51,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 100
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 70,
+      "type": "PreviewImage",
+      "title": "⑨ 背景·采样结果",
+      "pos": [
+        5300,
+        3440
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 52,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 101
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 71,
+      "type": "PreviewImage",
+      "title": "⑩ 背景·贴回",
+      "pos": [
+        5300,
+        3860
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 53,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 102
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 72,
+      "type": "PreviewImage",
+      "title": "⑪ 背景·结果（最终输出）",
+      "pos": [
+        5300,
+        4280
+      ],
+      "size": [
+        420,
+        380
+      ],
+      "flags": {},
+      "order": 54,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 103
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview"
       },
       "widgets_values": []
     }
@@ -4586,6 +4916,94 @@
       22,
       0,
       51,
+      0,
+      "IMAGE"
+    ],
+    [
+      93,
+      1,
+      0,
+      62,
+      0,
+      "IMAGE"
+    ],
+    [
+      94,
+      30,
+      0,
+      63,
+      0,
+      "IMAGE"
+    ],
+    [
+      95,
+      31,
+      1,
+      64,
+      0,
+      "IMAGE"
+    ],
+    [
+      96,
+      39,
+      0,
+      65,
+      0,
+      "IMAGE"
+    ],
+    [
+      97,
+      40,
+      0,
+      66,
+      0,
+      "IMAGE"
+    ],
+    [
+      98,
+      42,
+      0,
+      67,
+      0,
+      "IMAGE"
+    ],
+    [
+      99,
+      10,
+      0,
+      68,
+      0,
+      "IMAGE"
+    ],
+    [
+      100,
+      11,
+      1,
+      69,
+      0,
+      "IMAGE"
+    ],
+    [
+      101,
+      19,
+      0,
+      70,
+      0,
+      "IMAGE"
+    ],
+    [
+      102,
+      20,
+      0,
+      71,
+      0,
+      "IMAGE"
+    ],
+    [
+      103,
+      22,
+      0,
+      72,
       0,
       "IMAGE"
     ]

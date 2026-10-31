@@ -107,7 +107,7 @@ class RegionWorkflowContractTests(unittest.TestCase):
             self.assertEqual(switch["type"], "ComfySwitchNode")
             self.assertEqual(self.source(switch, "switch", links), (prep["id"], 4))
             self.assertEqual(self.source(switch, "on_false", links), (prep["id"], 0))
-        output_roles = {"save", "mask_preview", "instructions", "auto_mask", "auto_mask_switch", "mask_pick"}
+        output_roles = {"save", "mask_preview", "instructions", "auto_mask", "auto_mask_switch", "mask_pick", "step_preview"}
         for node in nodes.values():
             if node["type"] in {"GGImageCompressSave", "PreviewImage", "easy sam3ImageSegmentation"}:
                 self.assertIn(node.get("properties", {}).get("gg_region_role"), output_roles)
