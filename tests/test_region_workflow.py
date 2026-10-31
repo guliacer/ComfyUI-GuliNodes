@@ -151,7 +151,8 @@ class RegionWorkflowContractTests(unittest.TestCase):
             # 裁剪必须按原像素保持原图比例：曾经固定 768×768 会把竖图压扁，
             # 采样后拉伸回来把改动稀释掉，实测几乎等于直通。
             self.assertEqual(values["输出尺寸"], "原像素")
-            self.assertFalse(values["遮罩填充"])
+            # 遮罩填充开启（孤海同款）：填实 SAM3 软值/空洞，防止贴回时混入原图暗色残影
+            self.assertTrue(values["遮罩填充"])
             self.assertEqual(values["输出尺寸.倍数取整"] % 8, 0)
             restored = roles[region + "_restore"]["widgets_values_named"]
             self.assertEqual(restored["遮罩扩展"], 0)
