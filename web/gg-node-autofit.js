@@ -7,7 +7,17 @@ const TITLE_PADDING = 38;
 const WIDGET_LABEL_PADDING = 68;
 const SLOT_PADDING = 48;
 const HIDDEN_WIDGET_PREFIX = "ggHiddenLoRA";
-const AUTOFIT_EXCLUDED_NODE_NAMES = new Set(["GGTitleNode", "GGGroupControllerM", "GGGroupControllerS", "GGPromptEnhancer", "GGOptionConfirm"]);
+// GGImageSuperResolution 的高度交给原生布局：底部那行提示文字是一个真正的
+// custom widget，高度已经算进 node.computeSize()。autofit 再按内容定高一次会
+// 把用户拖动的高度压回去，所以整体跳过（宽度也交回原生）。
+const AUTOFIT_EXCLUDED_NODE_NAMES = new Set([
+    "GGTitleNode",
+    "GGGroupControllerM",
+    "GGGroupControllerS",
+    "GGPromptEnhancer",
+    "GGOptionConfirm",
+    "GGImageSuperResolution",
+]);
 
 let measureContext = null;
 const scheduledNodes = new WeakSet();

@@ -1,4 +1,13 @@
-"""按本机节点定义生成 GG 人像/背景分区编辑工作流（不执行模型）。"""
+"""按本机节点定义生成 GG 人像/背景分区编辑工作流（不执行模型）。
+
+⚠️ 这个脚本产出的是**初版骨架**。当前实际在用的工作流已经手工改过：
+人像分支换成 ManualSigmas + SamplerCustomAdvanced 手动 sigma 采样、
+加了 SAM3 自动蒙版分支与蒙版诊断、删掉了冗余预览、画布布局也重排过
+（见 tools/layout_region_edit_workflow.py）。本脚本不会生成这些改动，
+直接跑会把你改好的工作流覆盖成骨架。
+
+所以：写盘前必须先加 --force；只想看新节点参数长什么样就用默认（只看不写）。
+"""
 from __future__ import annotations
 
 import argparse
@@ -291,7 +300,21 @@ def main():
     parser.add_argument("--output", type=Path, default=OUT)
     parser.add_argument("--snapshot", type=Path, default=ROOT / "tools" / "region_edit_schema_snapshot.json")
     parser.add_argument("--from-snapshot", action="store_true")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="允许覆盖已存在的工作流文件（默认拒绝，防止冲掉手工改过的版本）",
+    )
     args = parser.parse_args()
+
+    # 产物已被手工改过（见模块说明），默认不碰已有文件。
+    if args.output.exists() and not args.force:
+        raise SystemExit(
+            f"目标已存在，拒绝覆盖：{args.output}\n"
+            "这份工作流已经手工改过（手动 sigma 采样、SAM3 蒙版、布局重排）。\n"
+            "确实要用骨架覆盖，加 --force；只想改排版，用 tools/layout_region_edit_workflow.py。"
+        )
+
     definitions = json.loads(args.snapshot.read_text(encoding="utf-8")) if args.from_snapshot else fetch_defs(args.url)
     args.snapshot.parent.mkdir(parents=True, exist_ok=True)
     args.snapshot.write_text(json.dumps(definitions, ensure_ascii=False, indent=2), encoding="utf-8")

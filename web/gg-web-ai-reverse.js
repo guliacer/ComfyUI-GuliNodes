@@ -30,6 +30,8 @@ const PLATFORM_URLS = Object.freeze({
     "Kimi": "https://www.kimi.com/",
     "讯飞星火": "https://xinghuo.xfyun.cn/",
     "可灵AI": "https://klingai.com/",
+    // 百度翻译的图文翻译页：带 hash 路由，去掉 #/ 会落到首页，别改。
+    "百度翻译": "https://fanyi.baidu.com/mtpe-individual/transText#/",
 });
 
 function clampNumber(value, min, max, fallback) {

@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import io as _io
 import json
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -60,8 +61,27 @@ METHOD_LLM = "本地LLM"
 
 DEFAULT_API_BASE_URL = "https://api.deepseek.com"
 DEFAULT_API_MODEL = "deepseek-flash"
-DEFAULT_MAX_OUTPUT_TOKENS = 4096
-DEFAULT_CONTEXT_LENGTH = 8192
+# 提示词增强的正常输出在 250~600 token；上限留到 1536 是为了偶发的长描述，
+# 再高只会让跑偏的生成一路拖到几十秒（实测跑满 2048 token 要 70 秒）。
+DEFAULT_MAX_OUTPUT_TOKENS = 1536
+# 图生图的官方规则提示词本身就占约 4000 token（实测 prompt_tokens 4025），
+# 加上 1024~1617 token/张 的参考图与 2048 输出，8192 明显不够；
+# 16384 能装下「规则 + 6 张参考图 + 2048 输出」，KV 显存约 512 MiB（9B 每 8192 约 256 MiB）。
+DEFAULT_CONTEXT_LENGTH = 16384
+# 每张参考图的上下文预算。llama.cpp 对 Qwen-VL 有 image_min_tokens 下限（日志里的
+# "Qwen-VL models require at minimum 1024 image tokens"），大图实际落在 1024~1617 token，
+# 早前按 128 预留是 10 倍低估，直接把 n_ctx 算小、生成阶段抢不到 KV 槽位。
+LLM_IMAGE_TOKEN_BUDGET = 2048
+LLM_PROMPT_HEADROOM = 256
+# 本地LLM 直接送图的张数上限；超过就拼成一张网格图（见 _llm_reference_images）。
+# 每多一个图像 chunk 就多一份 M-RoPE 位置账本误差，2 张以上拼图更稳也更省上下文。
+LLM_DIRECT_IMAGE_LIMIT = 2
+# 自动抬高上下文的上限；用户手动设得更大时以用户值为准。
+LLM_MAX_CONTEXT = 32768
+# 上下文不足时自动放大重试的次数。估算不可能永远准，宁可多花一次加载时间也不报错。
+LLM_CONTEXT_RETRY = 2
+# 为 LLM 进程预留的额外显存（KV + compute + 视觉投影），在 GGUF 文件大小之外。
+LLM_VRAM_OVERHEAD = 1536 * 1024 ** 2
 API_TIMEOUT = 600
 API_CONNECT_TIMEOUT = 30
 API_RETRY_ATTEMPTS = 3
@@ -73,7 +93,14 @@ PE_TEMPERATURE = 0.7
 PE_TOP_K = 20
 PE_TOP_P = 0.95
 PE_REPETITION_PENALTY = 1.05
-LLM_TEMPERATURE = 0.7
+LLM_TEMPERATURE = 0.5
+LLM_TOP_P = 0.8
+LLM_TOP_K = 20
+LLM_REPEAT_PENALTY = 1.05
+# 本地LLM 生成硬上限。旧工作流里存着 4096/8192 的 max_tokens 时不会随默认值更新，
+# 一旦模型跑偏就会一路生成到上限（实测 2048 token 已要 70 秒）。直接对齐默认值 1536，
+# 正常输出 250~600 token 完全够用，跑偏时最多拖 50 秒。
+LLM_LOCAL_MAX_OUTPUT_CEILING = DEFAULT_MAX_OUTPUT_TOKENS
 JPEG_QUALITY = 90
 DEFAULT_IMAGE_MAX_EDGE = 2048
 DEFAULT_IMAGE_MAX_PIXELS = 1_048_576
@@ -291,6 +318,36 @@ def _image_to_jpeg_base64(tensor: torch.Tensor) -> str:
 
 def _images_to_jpeg_base64(frames: Sequence[torch.Tensor]) -> list:
     return [_image_to_jpeg_base64(item) for item in frames]
+
+
+def _pack_image_grid(frames: Sequence[torch.Tensor], max_edge: int = DEFAULT_IMAGE_MAX_EDGE) -> torch.Tensor:
+    """把多张参考图拼成一张九宫格样式的大图，等比缩放居中、白底留边。"""
+    images = [_tensor_to_pil(item[0] if item.ndim == 4 else item).convert("RGB") for item in frames]
+    cols = max(1, math.ceil(math.sqrt(len(images))))
+    rows = max(1, math.ceil(len(images) / cols))
+    cell = max(64, max_edge // cols)
+    canvas = Image.new("RGB", (cell * cols, cell * rows), (255, 255, 255))
+    for index, image in enumerate(images):
+        thumb = image.copy()
+        thumb.thumbnail((cell, cell), Image.LANCZOS)
+        canvas.paste(thumb, ((index % cols) * cell + (cell - thumb.width) // 2,
+                             (index // cols) * cell + (cell - thumb.height) // 2))
+    array = np.asarray(canvas, dtype=np.float32) / 255.0
+    return torch.from_numpy(array).unsqueeze(0)
+
+
+def _llm_reference_images(frames: Sequence[torch.Tensor]) -> list:
+    """本地LLM 的参考图编码：少量原样送，多了拼成一张。
+
+    llama.cpp 的 Qwen3.5 走 M-RoPE + hybrid KV cache，每多一个图像 chunk 就累积一次
+    位置账本误差（worker stderr 里 `find_slot: non-consecutive token position`），
+    实测第 8 张起必然 `failed to find a memory slot`，4 张以内稳定。
+    拼成单图后只有一个图像 chunk，位置只算一次，20 张也能稳定出结果。
+    """
+    if len(frames) <= LLM_DIRECT_IMAGE_LIMIT:
+        return [_image_to_jpeg_base64(item) for item in frames]
+    print(f"[GG 本地LLM] {len(frames)} 张参考图拼成单张网格图（绕开 M-RoPE 多图位置错位）", flush=True)
+    return [_image_to_jpeg_base64(_pack_image_grid(frames))]
 
 
 def _resize_image_tensor_max_pixels(tensor: torch.Tensor) -> torch.Tensor:
@@ -578,61 +635,151 @@ def _resolve_gguf_path(model_name: str) -> str:
 class _LocalLLMStorage:
     llm = None
     key = None
+    context_length = 0
 
     @classmethod
     def load(cls, model_name: str, mmproj_name: str, context_length: int):
         mmproj = "" if not mmproj_name or mmproj_name == NO_MMPROJ else mmproj_name
-        key = (model_name, mmproj, int(context_length))
-        if cls.llm is not None and cls.key == key:
+        key = (model_name, mmproj)
+        need = max(512, int(context_length))
+        # 参考图张数变了只会抬高需求，已按更大上下文加载过就直接复用，不重复载入权重。
+        if cls.llm is not None and cls.key == key and cls.context_length >= need:
             return cls.llm
         cls.unload()
         model_path = _resolve_gguf_path(model_name)
         mmproj_path = _resolve_gguf_path(mmproj) if mmproj else ""
         from .local_llm_bridge import LocalLLMProxy
 
-        # 原生 LLM 不归 Comfy 管理：启动前先释放上一阶段扩散模型占用的显存。
+        # 原生 LLM 不归 Comfy 管理：只腾出它自己要用的显存，够用就不动已加载的扩散模型。
+        # 无条件 unload_all_models() 会把用户的 UNET/CLIP 全踢掉，后续采样重新从磁盘
+        # 加载几十 GB 权重，整个工作流能多出 200 秒以上。
+        interrupt_check = None
         try:
             import comfy.model_management as mm
         except ImportError:
             pass
         else:
-            mm.unload_all_models()
-            mm.soft_empty_cache(force=True)
-        llm = LocalLLMProxy(model_path, mmproj_path, int(context_length))
+            interrupt_check = getattr(mm, "throw_exception_if_processing_interrupted", None)
+            try:
+                vram_need = Path(model_path).stat().st_size + LLM_VRAM_OVERHEAD
+            except OSError:
+                vram_need = 8 * 1024 ** 3
+            try:
+                mm.free_memory(vram_need, mm.get_torch_device())
+            except Exception:
+                mm.unload_all_models()
+                mm.soft_empty_cache(force=True)
+        print(f"[GG 本地LLM] 正在加载 {Path(model_path).name}（n_ctx={need}）…", flush=True)
+        llm = LocalLLMProxy(model_path, mmproj_path, need, interrupt_check=interrupt_check)
         cls.llm = llm
         cls.key = key
+        cls.context_length = need
         return llm
 
     @classmethod
     def unload(cls) -> None:
-        llm, cls.llm, cls.key = cls.llm, None, None
+        llm, cls.llm, cls.key, cls.context_length = cls.llm, None, None, 0
         if llm is not None:
             llm.close()
 
 
+def _estimate_tokens(text: str) -> int:
+    """粗估 token 数：中日韩约 1 字/token，其余约 4 字符/token。只用于上下文预算。"""
+    cjk = sum(1 for ch in text if "\u2e80" <= ch <= "\u9fff")
+    return cjk + (len(text) - cjk + 3) // 4
+
+
+def _local_llm_context_needed(system_prompt: str, user_prompt: str, image_count: int, max_output_tokens: int) -> int:
+    """n_ctx 必须同时装下提示词、参考图与全部输出 token，否则生成阶段会拿不到 KV 槽位。"""
+    text = int((_estimate_tokens(system_prompt) + _estimate_tokens(user_prompt)) * 1.15) + LLM_PROMPT_HEADROOM
+    return text + LLM_IMAGE_TOKEN_BUDGET * int(image_count) + int(max_output_tokens)
+
+
+def _local_output_guard(language: str) -> str:
+    """本地模型的末位输出约束：只出正文，别翻译、别解析，避免一路生成到 max_tokens。"""
+    if language == "英文":
+        return "\n\nOutput only the final English prompt text. No translation, no analysis, no Chinese notes."
+    return "\n\n只输出最终的中文提示词正文，不要翻译、不要分析、不要输出任何英文说明。"
+
+
+def _is_context_overflow(exc: BaseException) -> bool:
+    """判断失败是不是 KV 槽位/上下文装不下——只有这类才值得放大 n_ctx 重试。"""
+    text = str(exc)
+    return any(
+        marker in text
+        for marker in ("上下文不足", "memory slot", "batch size 1", "Context Shift")
+    )
+
+
 def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt, user_prompt, max_output_tokens, image_base64_list) -> str:
-    llm = _LocalLLMStorage.load(model_name, mmproj_name, context_length)
-    user_content: Any = user_prompt
     images = list(image_base64_list or [])
+    requested_output = int(max_output_tokens)
+    max_output_tokens = min(requested_output, LLM_LOCAL_MAX_OUTPUT_CEILING)
+    if max_output_tokens != requested_output:
+        print(
+            f"[GG 本地LLM] 最大生成 token {requested_output} 超过本地上限，按 {max_output_tokens} 执行",
+            flush=True,
+        )
+    needed = _local_llm_context_needed(system_prompt, user_prompt, len(images), max_output_tokens)
+    # 实测 8448 在拼图/多图时必然抢不到 KV 槽位（prompt 才 4408 token 也一样），
+    # 16384 稳定通过。低于默认值的旧工作流设置不再生效，避免用户手动调小后又踩同一个坑。
+    target = max(512, int(context_length), DEFAULT_CONTEXT_LENGTH)
+    if needed > target:
+        # 用户手动设得更大就以用户值为准，只有自动抬高会撞上限时才拒绝。
+        if needed > LLM_MAX_CONTEXT:
+            prompt_tokens = int((_estimate_tokens(system_prompt) + _estimate_tokens(user_prompt)) * 1.15) + LLM_PROMPT_HEADROOM
+            raise ValueError(
+                f"本地LLM 上下文不够：提示词约 {prompt_tokens} token + 参考图 {len(images)} 张 × "
+                f"{LLM_IMAGE_TOKEN_BUDGET} + 最大生成 {int(max_output_tokens)} token，共需约 {needed}，"
+                f"超过上限 {LLM_MAX_CONTEXT}。请减少参考图张数或降低最大生成token。"
+            )
+        target = needed
+    user_content: Any = user_prompt
     if images:
         user_content = [{"type": "text", "text": user_prompt}]
         user_content.extend(
             {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + item}}
             for item in images
         )
-    try:
-        result = llm.create_chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content},
-            ],
-            max_tokens=int(max_output_tokens),
-            temperature=LLM_TEMPERATURE,
-        )
-    except Exception:
-        # 失败的桥接已释放 child；清掉代理缓存，让同一选择可以重新启动。
-        _LocalLLMStorage.unload()
-        raise
+    attempt = 0
+    while True:
+        loaded = target
+        llm = _LocalLLMStorage.load(model_name, mmproj_name, target)
+        started = time.monotonic()
+        try:
+            result = llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content},
+                ],
+                max_tokens=int(max_output_tokens),
+                temperature=LLM_TEMPERATURE,
+                top_p=LLM_TOP_P,
+                top_k=LLM_TOP_K,
+                # 增强规则写得很长，放开重复惩罚会退化成复读，一直生成到 max_tokens 才停。
+                repeat_penalty=LLM_REPEAT_PENALTY,
+            )
+        except Exception as exc:
+            # 失败的桥接已释放 child；清掉代理缓存，让同一选择可以重新启动。
+            _LocalLLMStorage.unload()
+            attempt += 1
+            if attempt > LLM_CONTEXT_RETRY or loaded >= LLM_MAX_CONTEXT or not _is_context_overflow(exc):
+                raise
+            # token 估算不可能永远准（图像下限、模板差异都会变），装不下就直接放大重来，
+            # 比让用户自己去猜上下文长度可靠。实测一次重试约多花 5~10 秒。
+            target = min(LLM_MAX_CONTEXT, max(loaded * 2, loaded + 4096))
+            print(
+                f"[GG 本地LLM] 上下文不足（n_ctx={loaded}），自动提高到 n_ctx={target} 重试"
+                f"（{attempt}/{LLM_CONTEXT_RETRY}）…",
+                flush=True,
+            )
+            continue
+        usage = result.get("usage") if isinstance(result, dict) else None
+        detail = ""
+        if isinstance(usage, dict):
+            detail = f"，prompt {usage.get('prompt_tokens')} / 生成 {usage.get('completion_tokens')} token"
+        print(f"[GG 本地LLM] 生成完成，用时 {time.monotonic() - started:.1f}s（n_ctx={loaded}）{detail}", flush=True)
+        break
     choices = result.get("choices") if isinstance(result, dict) else None
     if choices:
         message = choices[0].get("message") if isinstance(choices[0], dict) else None
@@ -704,9 +851,12 @@ def _enhance(
                 mmproj_name=mmproj_model,
                 context_length=context_length,
                 system_prompt=_build_llm_system(task_mode, language),
-                user_prompt=user_prompt,
+                # 本地模型偶尔先输出一段英文任务解析（"The user's instruction is in Chinese: ..."）
+                # 再一路生成到 max_tokens。实测在需求末尾追加这句，同一请求从 56 秒/1536 token
+                # 收到 20.6 秒/249 token，且直接给中文正文。
+                user_prompt=user_prompt + _local_output_guard(language),
                 max_output_tokens=max_output_tokens,
-                image_base64_list=_images_to_jpeg_base64(edit_images),
+                image_base64_list=_llm_reference_images(edit_images),
             )
             if auto_unload:
                 _LocalLLMStorage.unload()
@@ -781,8 +931,8 @@ def _v3_inputs() -> list:
         io.Combo.Input(P_PE_I2I, options=pe, default=_default_option(pe, ""), tooltip="本地PE 图生图模型（需支持视觉输入）。"),
         io.Combo.Input(P_LLM, options=gguf, default=_default_option(gguf, ""), tooltip="本地LLM 的 GGUF 主模型。"),
         io.Combo.Input(P_MMPROJ, options=mmproj, default=NO_MMPROJ, tooltip="本地LLM 视觉投影 mmproj，图生图需要。"),
-        io.Int.Input(P_CTX, default=DEFAULT_CONTEXT_LENGTH, min=512, max=131072, step=512, tooltip="本地LLM 上下文长度。"),
-        io.Int.Input(P_MAXTOK, default=DEFAULT_MAX_OUTPUT_TOKENS, min=256, max=32768, step=256, tooltip="最大生成 token（本地PE / 本地LLM 生效）。"),
+        io.Int.Input(P_CTX, default=DEFAULT_CONTEXT_LENGTH, min=512, max=131072, step=512, tooltip="本地LLM 上下文长度。默认 16384 已是最优值；填得比它小会被自动抬回 16384，装不下时还会继续自动放大并重试，一般不用手调。"),
+        io.Int.Input(P_MAXTOK, default=DEFAULT_MAX_OUTPUT_TOKENS, min=256, max=32768, step=256, tooltip="最大生成 token。正常输出 250~600 token，默认 1536 已够；本地LLM 方式填更大也只按 1536 执行，避免跑偏时一路生成几十秒。"),
         io.Int.Input(P_SEED, default=0, min=0, max=MAX_SEED, tooltip="本地PE 随机种子；负数按随机处理。"),
         io.Boolean.Input(P_UNLOAD, default=True, tooltip="本地PE / 本地LLM 生成后自动卸载模型释放显存。"),
         io.String.Input(P_PROMPT, multiline=True, dynamic_prompts=True, placeholder="输入要增强的文生图/图生图需求"),

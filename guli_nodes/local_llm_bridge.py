@@ -19,13 +19,16 @@ _EOF = object()
 
 
 class LocalLLMProxy:
-    def __init__(self, model_path, mmproj_path, context_length):
+    def __init__(self, model_path, mmproj_path, context_length, interrupt_check=None):
         self._lock = threading.RLock()
         self._stderr_lock = threading.Lock()
         self._stderr_tail = bytearray()
         self._responses = queue.Queue(maxsize=4)
         self._reader_error = ""
         self._closed = False
+        self._interrupted = False
+        # ComfyUI 的取消信号；轮询等待期间调用它，用户点「取消」能立刻退出，不必等满超时。
+        self._interrupt_check = interrupt_check
         self._request_id = 0
         self._process = None
         self._stdout_thread = self._stderr_thread = self._writer_thread = None
@@ -100,11 +103,27 @@ class LocalLLMProxy:
                 self._reader_error = f"worker 请求写入失败：{exc}"[:4096]
                 self._publish(_EOF)
 
+    def _wait_response(self, op, timeout):
+        """按 0.25 秒粒度等待响应，期间检查取消信号；否则一次 get 会僵等到超时。"""
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError(f"{op} 请求超时（{timeout:g} 秒）")
+            try:
+                return self._responses.get(timeout=min(0.25, remaining))
+            except queue.Empty:
+                if self._interrupt_check is not None:
+                    try:
+                        self._interrupt_check()
+                    except BaseException:
+                        self._interrupted = True
+                        raise
+
     def _request(self, op, timeout, **payload):
         with self._lock:
             if self._closed:
                 raise RuntimeError("本地LLM 隔离进程已经关闭，请重新执行节点。")
-            deadline = time.monotonic() + timeout
             try:
                 if self._reader_error:
                     raise RuntimeError(self._reader_error)
@@ -117,10 +136,7 @@ class LocalLLMProxy:
                 self._writer_thread = threading.Thread(target=self._write_request, args=(data,),
                                                        name="GGLocalLLM-write", daemon=True)
                 self._writer_thread.start()
-                try:
-                    response = self._responses.get(timeout=max(0, deadline - time.monotonic()))
-                except queue.Empty:
-                    raise RuntimeError(f"{op} 请求超时（{timeout:g} 秒）") from None
+                response = self._wait_response(op, timeout)
                 if self._reader_error:
                     raise RuntimeError(self._reader_error)
                 if response is _EOF:
@@ -131,6 +147,10 @@ class LocalLLMProxy:
                     raise RuntimeError(str(response.get("error") or "worker 返回失败")[:4096])
                 return response.get("result")
             except Exception as exc:
+                if self._interrupted:
+                    # 用户主动取消：释放子进程后原样抛出，让 ComfyUI 记成「已中断」而不是报错。
+                    self._dispose()
+                    raise
                 raise self._failure(str(exc)) from exc
             finally:
                 if self._writer_thread is not None:
@@ -140,8 +160,13 @@ class LocalLLMProxy:
         self._dispose()
         with self._stderr_lock:
             tail = bytes(self._stderr_tail).decode("utf-8", errors="replace").strip()
-        message = (f"本地LLM 隔离进程失败：{reason[:4096]}。"
-                   "请检查 GGUF/mmproj 与 llama-cpp-python，或改用 API / 本地PE 后重试。")
+        text = str(reason)
+        if text.startswith("本地LLM "):
+            # worker 已经给出中文可行动提示，不再叠加「检查 GGUF/mmproj」这类无关建议。
+            message = text
+        else:
+            message = (f"本地LLM 隔离进程失败：{text[:4096]}。"
+                       "请检查 GGUF/mmproj 与 llama-cpp-python，或改用 API / 本地PE 后重试。")
         if tail:
             message += "\nworker stderr（末尾）：" + tail
         return RuntimeError(message)
@@ -181,7 +206,11 @@ class LocalLLMProxy:
         return self._request("generate", QUERY_TIMEOUT, kwargs=kwargs)
 
     def close(self):
-        with self._lock:
+        # 生成请求可能持锁好几分钟；关闭不能排在它后面，否则用户点取消/退出会一直卡住。
+        if not self._lock.acquire(blocking=False):
+            self._dispose()
+            return
+        try:
             if self._closed:
                 return
             try:
@@ -190,3 +219,5 @@ class LocalLLMProxy:
                 pass
             finally:
                 self._dispose(wait_first=True)
+        finally:
+            self._lock.release()

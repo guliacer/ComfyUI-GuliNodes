@@ -7,7 +7,6 @@
     {
       "id": 1,
       "type": "LoadImage",
-      "title": "① 上传原图／右键画人物蒙版",
       "pos": [
         40,
         80
@@ -21,16 +20,27 @@
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "image",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "image"
-          }
+          },
+          "link": null
+        },
+        {
+          "localized_name": "选择文件上传",
+          "name": "upload",
+          "type": "IMAGEUPLOAD",
+          "widget": {
+            "name": "upload"
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "图像",
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
@@ -42,6 +52,7 @@
           ]
         },
         {
+          "localized_name": "遮罩",
           "name": "MASK",
           "type": "MASK",
           "links": [
@@ -49,226 +60,258 @@
           ]
         }
       ],
+      "title": "① 上传原图／右键画人物蒙版",
       "properties": {
         "Node name for S&R": "LoadImage",
         "gg_region_role": "original",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "guhaiImageValue": "image (60).png",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "image": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
-        "77d2c42db7b0e56286aec070a54d1437.png"
+        "image (60).png",
+        "image"
       ],
       "widgets_values_named": {
-        "image": "77d2c42db7b0e56286aec070a54d1437.png"
+        "image": "image (60).png",
+        "upload": "image"
       }
     },
     {
       "id": 2,
       "type": "GGTextConcat",
-      "title": "共同摄影要求（两区共享）",
       "pos": [
         40,
-        820
+        1110
       ],
       "size": [
         420,
-        260
+        166
       ],
       "flags": {},
       "order": 1,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "文本1",
           "name": "文本1",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本1"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本2",
           "name": "文本2",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本2"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本3",
           "name": "文本3",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本3"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本4",
           "name": "文本4",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本4"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本5",
           "name": "文本5",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本5"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本6",
           "name": "文本6",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本6"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本7",
           "name": "文本7",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本7"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本8",
           "name": "文本8",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本8"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本9",
           "name": "文本9",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本9"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本10",
           "name": "文本10",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本10"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本11",
           "name": "文本11",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本11"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本12",
           "name": "文本12",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本12"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本13",
           "name": "文本13",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本13"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本14",
           "name": "文本14",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本14"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本15",
           "name": "文本15",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本15"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本16",
           "name": "文本16",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本16"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本17",
           "name": "文本17",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本17"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本18",
           "name": "文本18",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本18"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本19",
           "name": "文本19",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本19"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本20",
           "name": "文本20",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本20"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "分隔符",
           "name": "分隔符",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "分隔符"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "文本",
           "name": "文本",
           "type": "STRING",
           "links": [
@@ -277,10 +320,38 @@
           ]
         }
       ],
+      "title": "共同摄影要求（两区共享）",
       "properties": {
         "Node name for S&R": "GGTextConcat",
         "gg_region_role": "global_rules",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "文本1": true,
+            "文本2": true,
+            "文本3": true,
+            "文本4": true,
+            "文本5": true,
+            "文本6": true,
+            "文本7": true,
+            "文本8": true,
+            "文本9": true,
+            "文本10": true,
+            "文本11": true,
+            "文本12": true,
+            "文本13": true,
+            "文本14": true,
+            "文本15": true,
+            "文本16": true,
+            "文本17": true,
+            "文本18": true,
+            "文本19": true,
+            "文本20": true,
+            "分隔符": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "保持原画幅、机位、透视和摄影风格。光源来自背景方向，人物与背景的主光方向、色温和明暗关系协调统一，整体明亮通透；不新增人物或物体，不改变构图与画面结构。",
@@ -332,7 +403,6 @@
     {
       "id": 3,
       "type": "PrimitiveBoolean",
-      "title": "启用 AI 提示词优化（本地LLM）",
       "pos": [
         970,
         65
@@ -346,16 +416,18 @@
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "值",
           "name": "value",
           "type": "BOOLEAN",
-          "link": null,
           "widget": {
             "name": "value"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "布尔",
           "name": "BOOLEAN",
           "type": "BOOLEAN",
           "links": [
@@ -364,10 +436,18 @@
           ]
         }
       ],
+      "title": "启用 AI 提示词优化（本地LLM）",
       "properties": {
         "Node name for S&R": "PrimitiveBoolean",
         "gg_region_role": "enable_ai",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "value": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         true
@@ -379,7 +459,6 @@
     {
       "id": 4,
       "type": "UNETLoader",
-      "title": "Qwen2.1 Turbo 模型",
       "pos": [
         510,
         80
@@ -393,24 +472,27 @@
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "UNet名称",
           "name": "unet_name",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "unet_name"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "数据类型",
           "name": "weight_dtype",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "weight_dtype"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "模型",
           "name": "MODEL",
           "type": "MODEL",
           "links": [
@@ -418,10 +500,19 @@
           ]
         }
       ],
+      "title": "Qwen2.1 Turbo 模型",
       "properties": {
         "Node name for S&R": "UNETLoader",
         "gg_region_role": "unet",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "unet_name": true,
+            "weight_dtype": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "qwen\\qwen_image_2.1_turbo_int8_convrot.safetensors",
@@ -435,10 +526,9 @@
     {
       "id": 5,
       "type": "VAELoader",
-      "title": "Qwen2.1 VAE",
       "pos": [
         510,
-        535
+        370
       ],
       "size": [
         390,
@@ -449,16 +539,18 @@
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "vae名称",
           "name": "vae_name",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "vae_name"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "VAE",
           "name": "VAE",
           "type": "VAE",
           "links": [
@@ -469,10 +561,18 @@
           ]
         }
       ],
+      "title": "Qwen2.1 VAE",
       "properties": {
         "Node name for S&R": "VAELoader",
         "gg_region_role": "vae",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "vae_name": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "qwen\\qwen_image_2.1_vae_bf16.safetensors"
@@ -484,395 +584,437 @@
     {
       "id": 6,
       "type": "GGLoRACustomLoader",
-      "title": "一致性 LoRA（可设强度 0 禁用）",
       "pos": [
         510,
-        250
+        220
       ],
       "size": [
         390,
-        230
+        106
       ],
       "flags": {},
-      "order": 5,
+      "order": 12,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "模型",
           "name": "模型",
           "type": "MODEL",
           "link": 1
         },
         {
+          "localized_name": "LoRA数量",
           "name": "LoRA数量",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "LoRA数量"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA1名称",
           "name": "LoRA1名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA1名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA1强度",
           "name": "LoRA1强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA1强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA2名称",
           "name": "LoRA2名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA2名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA2强度",
           "name": "LoRA2强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA2强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA3名称",
           "name": "LoRA3名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA3名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA3强度",
           "name": "LoRA3强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA3强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA4名称",
           "name": "LoRA4名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA4名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA4强度",
           "name": "LoRA4强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA4强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA5名称",
           "name": "LoRA5名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA5名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA5强度",
           "name": "LoRA5强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA5强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA6名称",
           "name": "LoRA6名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA6名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA6强度",
           "name": "LoRA6强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA6强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA7名称",
           "name": "LoRA7名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA7名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA7强度",
           "name": "LoRA7强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA7强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA8名称",
           "name": "LoRA8名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA8名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA8强度",
           "name": "LoRA8强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA8强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA9名称",
           "name": "LoRA9名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA9名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA9强度",
           "name": "LoRA9强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA9强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA10名称",
           "name": "LoRA10名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA10名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA10强度",
           "name": "LoRA10强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA10强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA11名称",
           "name": "LoRA11名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA11名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA11强度",
           "name": "LoRA11强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA11强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA12名称",
           "name": "LoRA12名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA12名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA12强度",
           "name": "LoRA12强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA12强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA13名称",
           "name": "LoRA13名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA13名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA13强度",
           "name": "LoRA13强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA13强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA14名称",
           "name": "LoRA14名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA14名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA14强度",
           "name": "LoRA14强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA14强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA15名称",
           "name": "LoRA15名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA15名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA15强度",
           "name": "LoRA15强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA15强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA16名称",
           "name": "LoRA16名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA16名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA16强度",
           "name": "LoRA16强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA16强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA17名称",
           "name": "LoRA17名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA17名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA17强度",
           "name": "LoRA17强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA17强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA18名称",
           "name": "LoRA18名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA18名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA18强度",
           "name": "LoRA18强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA18强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA19名称",
           "name": "LoRA19名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA19名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA19强度",
           "name": "LoRA19强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA19强度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA20名称",
           "name": "LoRA20名称",
-          "type": "COMBO",
-          "link": null,
           "shape": 7,
+          "type": "COMBO",
           "widget": {
             "name": "LoRA20名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "LoRA20强度",
           "name": "LoRA20强度",
-          "type": "FLOAT",
-          "link": null,
           "shape": 7,
+          "type": "FLOAT",
           "widget": {
             "name": "LoRA20强度"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "模型",
           "name": "模型",
           "type": "MODEL",
           "links": [
@@ -881,163 +1023,216 @@
           ]
         }
       ],
+      "title": "一致性 LoRA（可设强度 0 禁用）",
       "properties": {
         "Node name for S&R": "GGLoRACustomLoader",
         "gg_region_role": "lora",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "LoRA数量": true,
+            "LoRA1名称": true,
+            "LoRA1强度": true,
+            "LoRA2名称": true,
+            "LoRA2强度": true,
+            "LoRA3名称": true,
+            "LoRA3强度": true,
+            "LoRA4名称": true,
+            "LoRA4强度": true,
+            "LoRA5名称": true,
+            "LoRA5强度": true,
+            "LoRA6名称": true,
+            "LoRA6强度": true,
+            "LoRA7名称": true,
+            "LoRA7强度": true,
+            "LoRA8名称": true,
+            "LoRA8强度": true,
+            "LoRA9名称": true,
+            "LoRA9强度": true,
+            "LoRA10名称": true,
+            "LoRA10强度": true,
+            "LoRA11名称": true,
+            "LoRA11强度": true,
+            "LoRA12名称": true,
+            "LoRA12强度": true,
+            "LoRA13名称": true,
+            "LoRA13强度": true,
+            "LoRA14名称": true,
+            "LoRA14强度": true,
+            "LoRA15名称": true,
+            "LoRA15强度": true,
+            "LoRA16名称": true,
+            "LoRA16强度": true,
+            "LoRA17名称": true,
+            "LoRA17强度": true,
+            "LoRA18名称": true,
+            "LoRA18强度": true,
+            "LoRA19名称": true,
+            "LoRA19强度": true,
+            "LoRA20名称": true,
+            "LoRA20强度": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         1,
         "qwen\\编辑\\Qwen2.1 一致性无偏移_GH_V1.0.safetensors",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "None",
-        1.0,
+        1,
         "新增LoRA"
       ],
       "widgets_values_named": {
         "LoRA数量": 1,
         "LoRA1名称": "qwen\\编辑\\Qwen2.1 一致性无偏移_GH_V1.0.safetensors",
-        "LoRA1强度": 1.0,
+        "LoRA1强度": 1,
         "LoRA2名称": "None",
-        "LoRA2强度": 1.0,
+        "LoRA2强度": 1,
         "LoRA3名称": "None",
-        "LoRA3强度": 1.0,
+        "LoRA3强度": 1,
         "LoRA4名称": "None",
-        "LoRA4强度": 1.0,
+        "LoRA4强度": 1,
         "LoRA5名称": "None",
-        "LoRA5强度": 1.0,
+        "LoRA5强度": 1,
         "LoRA6名称": "None",
-        "LoRA6强度": 1.0,
+        "LoRA6强度": 1,
         "LoRA7名称": "None",
-        "LoRA7强度": 1.0,
+        "LoRA7强度": 1,
         "LoRA8名称": "None",
-        "LoRA8强度": 1.0,
+        "LoRA8强度": 1,
         "LoRA9名称": "None",
-        "LoRA9强度": 1.0,
+        "LoRA9强度": 1,
         "LoRA10名称": "None",
-        "LoRA10强度": 1.0,
+        "LoRA10强度": 1,
         "LoRA11名称": "None",
-        "LoRA11强度": 1.0,
+        "LoRA11强度": 1,
         "LoRA12名称": "None",
-        "LoRA12强度": 1.0,
+        "LoRA12强度": 1,
         "LoRA13名称": "None",
-        "LoRA13强度": 1.0,
+        "LoRA13强度": 1,
         "LoRA14名称": "None",
-        "LoRA14强度": 1.0,
+        "LoRA14强度": 1,
         "LoRA15名称": "None",
-        "LoRA15强度": 1.0,
+        "LoRA15强度": 1,
         "LoRA16名称": "None",
-        "LoRA16强度": 1.0,
+        "LoRA16强度": 1,
         "LoRA17名称": "None",
-        "LoRA17强度": 1.0,
+        "LoRA17强度": 1,
         "LoRA18名称": "None",
-        "LoRA18强度": 1.0,
+        "LoRA18强度": 1,
         "LoRA19名称": "None",
-        "LoRA19强度": 1.0,
+        "LoRA19强度": 1,
         "LoRA20名称": "None",
-        "LoRA20强度": 1.0,
+        "LoRA20强度": 1,
         "新增LoRA": "新增LoRA"
       }
     },
     {
       "id": 10,
       "type": "GGRegionEditPrepare",
-      "title": "② 背景修改需求（清空即跳过）",
       "pos": [
-        970,
-        180
+        1000,
+        1080
       ],
       "size": [
         420,
         370
       ],
       "flags": {},
-      "order": 6,
+      "order": 38,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "link": 2
         },
         {
+          "localized_name": "人像遮罩",
           "name": "人像遮罩",
           "type": "MASK",
           "link": 77
         },
         {
+          "localized_name": "处理区域",
           "name": "处理区域",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "处理区域"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "编辑需求",
           "name": "编辑需求",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "编辑需求"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "全局要求",
           "name": "全局要求",
           "type": "STRING",
-          "link": 4,
           "widget": {
             "name": "全局要求"
-          }
+          },
+          "link": 4
         }
       ],
       "outputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "links": [
             5,
             8,
-            33,
-            99
+            33
           ]
         },
         {
+          "localized_name": "区域遮罩",
           "name": "区域遮罩",
           "type": "MASK",
           "links": [
@@ -1045,6 +1240,7 @@
           ]
         },
         {
+          "localized_name": "区域请求",
           "name": "区域请求",
           "type": "STRING",
           "links": [
@@ -1053,6 +1249,7 @@
           ]
         },
         {
+          "localized_name": "锁定约束",
           "name": "锁定约束",
           "type": "STRING",
           "links": [
@@ -1060,6 +1257,7 @@
           ]
         },
         {
+          "localized_name": "是否编辑",
           "name": "是否编辑",
           "type": "BOOLEAN",
           "links": [
@@ -1067,10 +1265,20 @@
           ]
         }
       ],
+      "title": "② 背景修改需求（清空即跳过）",
       "properties": {
         "Node name for S&R": "GGRegionEditPrepare",
         "gg_region_role": "background_prepare",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "处理区域": true,
+            "编辑需求": true,
+            "全局要求": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "背景",
@@ -1086,38 +1294,41 @@
     {
       "id": 11,
       "type": "GGMaskCrop",
-      "title": "③ 背景局部裁剪／等比补边",
       "pos": [
-        1450,
-        180
+        1470,
+        1080
       ],
       "size": [
         410,
         300
       ],
       "flags": {},
-      "order": 7,
+      "order": 41,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "link": 5
         },
         {
+          "localized_name": "遮罩",
           "name": "遮罩",
           "type": "MASK",
           "link": 6
         },
         {
+          "localized_name": "遮罩填充",
           "name": "遮罩填充",
           "type": "BOOLEAN",
-          "link": null,
           "widget": {
             "name": "遮罩填充"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "扩展方式",
           "name": "扩展方式",
           "type": "COMFY_DYNAMICCOMBO_V3",
           "widget": {
@@ -1126,24 +1337,36 @@
           "link": null
         },
         {
+          "localized_name": "扩展系数",
           "name": "扩展方式.扩展系数",
           "type": "FLOAT",
-          "link": null,
           "widget": {
             "name": "扩展方式.扩展系数"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "输出尺寸",
           "name": "输出尺寸",
           "type": "COMFY_DYNAMICCOMBO_V3",
           "widget": {
             "name": "输出尺寸"
           },
           "link": null
+        },
+        {
+          "localized_name": "倍数取整",
+          "name": "输出尺寸.倍数取整",
+          "type": "INT",
+          "widget": {
+            "name": "输出尺寸.倍数取整"
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "接缝",
           "name": "接缝",
           "type": "GG_SEAM",
           "links": [
@@ -1151,15 +1374,16 @@
           ]
         },
         {
+          "localized_name": "裁剪图像",
           "name": "裁剪图像",
           "type": "IMAGE",
           "links": [
             15,
-            16,
-            100
+            16
           ]
         },
         {
+          "localized_name": "裁剪遮罩",
           "name": "裁剪遮罩",
           "type": "MASK",
           "links": [
@@ -1168,10 +1392,21 @@
           ]
         }
       ],
+      "title": "③ 背景局部裁剪／等比补边",
       "properties": {
         "Node name for S&R": "GGMaskCrop",
         "gg_region_role": "background_crop",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "遮罩填充": true,
+            "扩展方式": true,
+            "扩展方式.扩展系数": true,
+            "输出尺寸": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         true,
@@ -1191,148 +1426,171 @@
     {
       "id": 12,
       "type": "GGPromptEnhancer",
-      "title": "可选 AI：单独优化背景请求",
       "pos": [
-        1910,
-        180
+        1940,
+        1080
       ],
       "size": [
         420,
-        600
+        488
       ],
       "flags": {},
-      "order": 8,
+      "order": 42,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图片1",
+          "name": "图片.图片1",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 8
+        },
+        {
+          "localized_name": "图片2",
+          "name": "图片.图片2",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "localized_name": "任务模式",
           "name": "任务模式",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "任务模式"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "输出语言",
           "name": "输出语言",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "输出语言"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "增强方式",
           "name": "增强方式",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "增强方式"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "api_key",
           "name": "api_key",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "api_key"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "api_base_url",
           "name": "api_base_url",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "api_base_url"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "model",
           "name": "model",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "model"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文生图PE模型",
           "name": "文生图PE模型",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "文生图PE模型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "图生图PE模型",
           "name": "图生图PE模型",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "图生图PE模型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "主模型",
           "name": "主模型",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "主模型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "mmproj",
           "name": "mmproj",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "mmproj"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "上下文长度",
           "name": "上下文长度",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "上下文长度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "最大生成token",
           "name": "最大生成token",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "最大生成token"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "seed",
           "name": "seed",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "seed"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "生成后自动卸载模型",
           "name": "生成后自动卸载模型",
           "type": "BOOLEAN",
-          "link": null,
           "widget": {
             "name": "生成后自动卸载模型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "输入提示词",
           "name": "输入提示词",
           "type": "STRING",
-          "link": 7,
           "widget": {
             "name": "输入提示词"
-          }
-        },
-        {
-          "name": "图片.图片1",
-          "type": "IMAGE",
-          "link": 8,
-          "shape": 7
+          },
+          "link": 7
         }
       ],
       "outputs": [
         {
+          "localized_name": "增强提示词",
           "name": "增强提示词",
           "type": "STRING",
           "links": [
@@ -1340,10 +1598,32 @@
           ]
         }
       ],
+      "title": "可选 AI：单独优化背景请求",
       "properties": {
         "Node name for S&R": "GGPromptEnhancer",
         "gg_region_role": "background_enhance",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "任务模式": true,
+            "输出语言": true,
+            "增强方式": true,
+            "api_key": true,
+            "api_base_url": true,
+            "model": true,
+            "文生图PE模型": true,
+            "图生图PE模型": true,
+            "主模型": true,
+            "mmproj": true,
+            "上下文长度": true,
+            "最大生成token": true,
+            "seed": true,
+            "生成后自动卸载模型": true,
+            "输入提示词": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "图生图",
@@ -1356,10 +1636,11 @@
         "clip_l.safetensors",
         "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
-        8192,
-        2048,
+        16384,
+        1536,
         12345,
         true,
+        "",
         ""
       ],
       "widgets_values_named": {
@@ -1373,52 +1654,56 @@
         "图生图PE模型": "clip_l.safetensors",
         "主模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
-        "上下文长度": 8192,
-        "最大生成token": 2048,
+        "上下文长度": 16384,
+        "最大生成token": 1536,
         "seed": 12345,
-        "生成后自动卸载模型": true,
+        "control_after_generate": true,
+        "生成后自动卸载模型": "",
         "输入提示词": ""
       }
     },
     {
       "id": 13,
       "type": "ComfySwitchNode",
-      "title": "AI 开／关：真正跳过未选分支",
       "pos": [
-        1910,
-        870
+        1940,
+        1608
       ],
       "size": [
         420,
         150
       ],
       "flags": {},
-      "order": 9,
+      "order": 45,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "为假时",
+          "name": "on_false",
+          "shape": 7,
+          "type": "STRING",
+          "link": 10
+        },
+        {
+          "localized_name": "为真时",
+          "name": "on_true",
+          "shape": 7,
+          "type": "STRING",
+          "link": 11
+        },
+        {
+          "localized_name": "切换",
           "name": "switch",
           "type": "BOOLEAN",
-          "link": 9,
           "widget": {
             "name": "switch"
-          }
-        },
-        {
-          "name": "on_false",
-          "type": "STRING",
-          "link": 10,
-          "shape": 7
-        },
-        {
-          "name": "on_true",
-          "type": "STRING",
-          "link": 11,
-          "shape": 7
+          },
+          "link": 9
         }
       ],
       "outputs": [
         {
+          "localized_name": "输出",
           "name": "output",
           "type": "STRING",
           "links": [
@@ -1426,10 +1711,18 @@
           ]
         }
       ],
+      "title": "AI 开／关：真正跳过未选分支",
       "properties": {
         "Node name for S&R": "ComfySwitchNode",
         "gg_region_role": "background_prompt_select",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "switch": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         false
@@ -1441,211 +1734,232 @@
     {
       "id": 14,
       "type": "GGTextConcat",
-      "title": "优化后追加固定轮廓约束",
       "pos": [
-        2370,
-        870
+        2410,
+        1640
       ],
       "size": [
         420,
-        220
+        200
       ],
       "flags": {},
-      "order": 10,
+      "order": 47,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "文本1",
           "name": "文本1",
-          "type": "STRING",
-          "link": 12,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本1"
-          }
+          },
+          "link": 12
         },
         {
+          "localized_name": "文本2",
           "name": "文本2",
-          "type": "STRING",
-          "link": 13,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本2"
-          }
+          },
+          "link": 13
         },
         {
+          "localized_name": "文本3",
           "name": "文本3",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本3"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本4",
           "name": "文本4",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本4"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本5",
           "name": "文本5",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本5"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本6",
           "name": "文本6",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本6"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本7",
           "name": "文本7",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本7"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本8",
           "name": "文本8",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本8"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本9",
           "name": "文本9",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本9"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本10",
           "name": "文本10",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本10"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本11",
           "name": "文本11",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本11"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本12",
           "name": "文本12",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本12"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本13",
           "name": "文本13",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本13"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本14",
           "name": "文本14",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本14"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本15",
           "name": "文本15",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本15"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本16",
           "name": "文本16",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本16"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本17",
           "name": "文本17",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本17"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本18",
           "name": "文本18",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本18"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本19",
           "name": "文本19",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本19"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本20",
           "name": "文本20",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本20"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "分隔符",
           "name": "分隔符",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "分隔符"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "文本",
           "name": "文本",
           "type": "STRING",
           "links": [
@@ -1653,10 +1967,38 @@
           ]
         }
       ],
+      "title": "优化后追加固定轮廓约束",
       "properties": {
         "Node name for S&R": "GGTextConcat",
         "gg_region_role": "background_prompt_final",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "文本1": true,
+            "文本2": true,
+            "文本3": true,
+            "文本4": true,
+            "文本5": true,
+            "文本6": true,
+            "文本7": true,
+            "文本8": true,
+            "文本9": true,
+            "文本10": true,
+            "文本11": true,
+            "文本12": true,
+            "文本13": true,
+            "文本14": true,
+            "文本15": true,
+            "文本16": true,
+            "文本17": true,
+            "文本18": true,
+            "文本19": true,
+            "文本20": true,
+            "分隔符": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "",
@@ -1708,76 +2050,90 @@
     {
       "id": 15,
       "type": "GGPromptOptimizer",
-      "title": "④ Qwen 条件编码（不是文本改写）",
       "pos": [
-        2370,
-        180
+        2410,
+        1080
       ],
       "size": [
         420,
         520
       ],
       "flags": {},
-      "order": 11,
+      "order": 48,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像1",
+          "name": "图像.图像1",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 15
+        },
+        {
+          "localized_name": "图像2",
+          "name": "图像.图像2",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "localized_name": "CLIP名称",
           "name": "CLIP名称",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "CLIP名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "CLIP类型",
           "name": "CLIP类型",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "CLIP类型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "VAE名称",
           "name": "VAE名称",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "VAE名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "分辨率",
           "name": "分辨率",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "分辨率"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "正向提示词",
           "name": "正向提示词",
           "type": "STRING",
-          "link": 14,
           "widget": {
             "name": "正向提示词"
-          }
+          },
+          "link": 14
         },
         {
+          "localized_name": "负向提示词",
           "name": "负向提示词",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "负向提示词"
-          }
-        },
-        {
-          "name": "图像.图像1",
-          "type": "IMAGE",
-          "link": 15,
-          "shape": 7
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "正面条件",
           "name": "正面条件",
           "type": "CONDITIONING",
           "links": [
@@ -1785,6 +2141,7 @@
           ]
         },
         {
+          "localized_name": "负面条件",
           "name": "负面条件",
           "type": "CONDITIONING",
           "links": [
@@ -1792,10 +2149,23 @@
           ]
         }
       ],
+      "title": "④ Qwen 条件编码（不是文本改写）",
       "properties": {
         "Node name for S&R": "GGPromptOptimizer",
         "gg_region_role": "background_condition",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "CLIP名称": true,
+            "CLIP类型": true,
+            "VAE名称": true,
+            "分辨率": true,
+            "正向提示词": true,
+            "负向提示词": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "qwen\\qwen3vl_8b_int8_convrot.safetensors",
@@ -1817,25 +2187,26 @@
     {
       "id": 16,
       "type": "VAEEncode",
-      "title": "原图像 Latent 编码",
       "pos": [
-        2830,
-        180
+        2880,
+        1080
       ],
       "size": [
         300,
         110
       ],
       "flags": {},
-      "order": 12,
+      "order": 43,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "像素",
           "name": "pixels",
           "type": "IMAGE",
           "link": 16
         },
         {
+          "localized_name": "vae",
           "name": "vae",
           "type": "VAE",
           "link": 17
@@ -1843,6 +2214,7 @@
       ],
       "outputs": [
         {
+          "localized_name": "Latent",
           "name": "LATENT",
           "type": "LATENT",
           "links": [
@@ -1850,36 +2222,41 @@
           ]
         }
       ],
+      "title": "原图像 Latent 编码",
       "properties": {
         "Node name for S&R": "VAEEncode",
         "gg_region_role": "background_vae_encode",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": [],
-      "widgets_values_named": {}
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
     },
     {
       "id": 17,
       "type": "SetLatentNoiseMask",
-      "title": "采样蒙版：仅当前区域去噪",
       "pos": [
-        2830,
-        380
+        2880,
+        1230
       ],
       "size": [
         300,
         120
       ],
       "flags": {},
-      "order": 13,
+      "order": 46,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "Latent",
           "name": "samples",
           "type": "LATENT",
           "link": 18
         },
         {
+          "localized_name": "遮罩",
           "name": "mask",
           "type": "MASK",
           "link": 19
@@ -1887,6 +2264,7 @@
       ],
       "outputs": [
         {
+          "localized_name": "Latent",
           "name": "LATENT",
           "type": "LATENT",
           "links": [
@@ -1894,36 +2272,41 @@
           ]
         }
       ],
+      "title": "采样蒙版：仅当前区域去噪",
       "properties": {
         "Node name for S&R": "SetLatentNoiseMask",
         "gg_region_role": "background_latent_mask",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": [],
-      "widgets_values_named": {}
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
     },
     {
       "id": 19,
       "type": "VAEDecode",
-      "title": "VAE 解码",
       "pos": [
-        3620,
-        180
+        3690,
+        1080
       ],
       "size": [
         300,
         120
       ],
       "flags": {},
-      "order": 15,
+      "order": 50,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "Latent",
           "name": "samples",
           "type": "LATENT",
           "link": 120
         },
         {
+          "localized_name": "vae",
           "name": "vae",
           "type": "VAE",
           "link": 25
@@ -1931,150 +2314,173 @@
       ],
       "outputs": [
         {
+          "localized_name": "图像",
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            27,
-            101
+            27
           ]
         }
       ],
+      "title": "VAE Decode",
       "properties": {
         "Node name for S&R": "VAEDecode",
         "gg_region_role": "background_decode",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": [],
-      "widgets_values_named": {}
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
     },
     {
       "id": 20,
       "type": "GGCropRestore",
-      "title": "⑥ 原坐标还原（不扩大轮廓）",
       "pos": [
-        3970,
-        180
+        4040,
+        1080
       ],
       "size": [
         410,
         220
       ],
       "flags": {},
-      "order": 16,
+      "order": 51,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "接缝",
           "name": "接缝",
           "type": "GG_SEAM",
           "link": 26
         },
         {
+          "localized_name": "裁剪图像",
           "name": "裁剪图像",
           "type": "IMAGE",
           "link": 27
         },
         {
+          "localized_name": "裁剪遮罩",
+          "name": "裁剪遮罩",
+          "shape": 7,
+          "type": "MASK",
+          "link": 86
+        },
+        {
+          "localized_name": "背景图像",
+          "name": "背景图像",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 28
+        },
+        {
+          "localized_name": "遮罩扩展",
           "name": "遮罩扩展",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "遮罩扩展"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "遮罩羽化",
           "name": "遮罩羽化",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "遮罩羽化"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "颜色还原",
           "name": "颜色还原",
           "type": "FLOAT",
-          "link": null,
           "widget": {
             "name": "颜色还原"
-          }
-        },
-        {
-          "name": "裁剪遮罩",
-          "type": "MASK",
-          "link": 86,
-          "shape": 7
-        },
-        {
-          "name": "背景图像",
-          "type": "IMAGE",
-          "link": 28,
-          "shape": 7
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "links": [
-            88,
-            102
+            88
           ]
         }
       ],
+      "title": "⑥ 原坐标还原（不扩大轮廓）",
       "properties": {
         "Node name for S&R": "GGCropRestore",
         "gg_region_role": "background_restore",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "遮罩扩展": true,
+            "遮罩羽化": true,
+            "颜色还原": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         4,
         5,
-        1.0
+        1
       ],
       "widgets_values_named": {
         "遮罩扩展": 4,
         "遮罩羽化": 5,
-        "颜色还原": 1.0
+        "颜色还原": 1
       }
     },
     {
       "id": 22,
       "type": "ComfySwitchNode",
-      "title": "需求为空：返回输入原图",
       "pos": [
-        4870,
-        180
+        4500,
+        1080
       ],
       "size": [
         410,
         170
       ],
       "flags": {},
-      "order": 18,
+      "order": 53,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "为假时",
+          "name": "on_false",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 33
+        },
+        {
+          "localized_name": "为真时",
+          "name": "on_true",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 88
+        },
+        {
+          "localized_name": "切换",
           "name": "switch",
           "type": "BOOLEAN",
-          "link": 32,
           "widget": {
             "name": "switch"
-          }
-        },
-        {
-          "name": "on_false",
-          "type": "IMAGE",
-          "link": 33,
-          "shape": 7
-        },
-        {
-          "name": "on_true",
-          "type": "IMAGE",
-          "link": 88,
-          "shape": 7
+          },
+          "link": 32
         }
       ],
       "outputs": [
         {
+          "localized_name": "输出",
           "name": "output",
           "type": "IMAGE",
           "links": [
@@ -2083,10 +2489,18 @@
           ]
         }
       ],
+      "title": "需求为空：返回输入原图",
       "properties": {
         "Node name for S&R": "ComfySwitchNode",
         "gg_region_role": "background_select",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "switch": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         false
@@ -2098,66 +2512,71 @@
     {
       "id": 30,
       "type": "GGRegionEditPrepare",
-      "title": "② 人像修改需求（清空即跳过）",
       "pos": [
-        970,
-        1430
+        1000,
+        180
       ],
       "size": [
         420,
         370
       ],
       "flags": {},
-      "order": 19,
+      "order": 17,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "link": 90
         },
         {
+          "localized_name": "人像遮罩",
           "name": "人像遮罩",
           "type": "MASK",
           "link": 78
         },
         {
+          "localized_name": "处理区域",
           "name": "处理区域",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "处理区域"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "编辑需求",
           "name": "编辑需求",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "编辑需求"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "全局要求",
           "name": "全局要求",
           "type": "STRING",
-          "link": 37,
           "widget": {
             "name": "全局要求"
-          }
+          },
+          "link": 37
         }
       ],
       "outputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "links": [
             38,
             41,
-            66,
-            94
+            66
           ]
         },
         {
+          "localized_name": "区域遮罩",
           "name": "区域遮罩",
           "type": "MASK",
           "links": [
@@ -2165,6 +2584,7 @@
           ]
         },
         {
+          "localized_name": "区域请求",
           "name": "区域请求",
           "type": "STRING",
           "links": [
@@ -2173,6 +2593,7 @@
           ]
         },
         {
+          "localized_name": "锁定约束",
           "name": "锁定约束",
           "type": "STRING",
           "links": [
@@ -2180,6 +2601,7 @@
           ]
         },
         {
+          "localized_name": "是否编辑",
           "name": "是否编辑",
           "type": "BOOLEAN",
           "links": [
@@ -2187,29 +2609,38 @@
           ]
         }
       ],
+      "title": "② 人像修改需求（清空即跳过）",
       "properties": {
         "Node name for S&R": "GGRegionEditPrepare",
         "gg_region_role": "person_prepare",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "处理区域": true,
+            "编辑需求": true,
+            "全局要求": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "人像",
-        "保持人物长相、五官、发型、姿态、双手各拿一个苹果的动作、白蕾丝裙与红色围裙款式完全不变，把人物整体提亮到阳光下明亮通透的肤色：面部、手臂、腿部皮肤均匀明亮、干净光滑，腿部不能有任何深色阴影、暗斑、斑驳或污渍，双腿皮肤色调完全一致；白裙洁白、红围裙鲜亮、黄雨靴透亮；补光方向与背景阳光一致，边缘过渡柔和，不过曝不发灰。",
+        "",
         ""
       ],
       "widgets_values_named": {
         "处理区域": "人像",
-        "编辑需求": "保持人物长相、五官、发型、姿态、双手各拿一个苹果的动作、白蕾丝裙与红色围裙款式完全不变，把人物整体提亮到阳光下明亮通透的肤色：面部、手臂、腿部皮肤均匀明亮、干净光滑，腿部不能有任何深色阴影、暗斑、斑驳或污渍，双腿皮肤色调完全一致；白裙洁白、红围裙鲜亮、黄雨靴透亮；补光方向与背景阳光一致，边缘过渡柔和，不过曝不发灰。",
+        "编辑需求": "",
         "全局要求": ""
       }
     },
     {
       "id": 31,
       "type": "GGMaskCrop",
-      "title": "③ 人像局部裁剪／等比补边",
       "pos": [
-        1450,
-        1430
+        1470,
+        180
       ],
       "size": [
         410,
@@ -2220,24 +2651,28 @@
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "link": 38
         },
         {
+          "localized_name": "遮罩",
           "name": "遮罩",
           "type": "MASK",
           "link": 39
         },
         {
+          "localized_name": "遮罩填充",
           "name": "遮罩填充",
           "type": "BOOLEAN",
-          "link": null,
           "widget": {
             "name": "遮罩填充"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "扩展方式",
           "name": "扩展方式",
           "type": "COMFY_DYNAMICCOMBO_V3",
           "widget": {
@@ -2246,24 +2681,36 @@
           "link": null
         },
         {
+          "localized_name": "扩展系数",
           "name": "扩展方式.扩展系数",
           "type": "FLOAT",
-          "link": null,
           "widget": {
             "name": "扩展方式.扩展系数"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "输出尺寸",
           "name": "输出尺寸",
           "type": "COMFY_DYNAMICCOMBO_V3",
           "widget": {
             "name": "输出尺寸"
           },
           "link": null
+        },
+        {
+          "localized_name": "倍数取整",
+          "name": "输出尺寸.倍数取整",
+          "type": "INT",
+          "widget": {
+            "name": "输出尺寸.倍数取整"
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "接缝",
           "name": "接缝",
           "type": "GG_SEAM",
           "links": [
@@ -2271,15 +2718,16 @@
           ]
         },
         {
+          "localized_name": "裁剪图像",
           "name": "裁剪图像",
           "type": "IMAGE",
           "links": [
             48,
-            49,
-            95
+            49
           ]
         },
         {
+          "localized_name": "裁剪遮罩",
           "name": "裁剪遮罩",
           "type": "MASK",
           "links": [
@@ -2288,10 +2736,21 @@
           ]
         }
       ],
+      "title": "③ 人像局部裁剪／等比补边",
       "properties": {
         "Node name for S&R": "GGMaskCrop",
         "gg_region_role": "person_crop",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "遮罩填充": true,
+            "扩展方式": true,
+            "扩展方式.扩展系数": true,
+            "输出尺寸": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         true,
@@ -2311,148 +2770,171 @@
     {
       "id": 32,
       "type": "GGPromptEnhancer",
-      "title": "可选 AI：单独优化人像请求",
       "pos": [
-        1910,
-        1430
+        1940,
+        180
       ],
       "size": [
         420,
-        600
+        488
       ],
       "flags": {},
       "order": 21,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图片1",
+          "name": "图片.图片1",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 41
+        },
+        {
+          "localized_name": "图片2",
+          "name": "图片.图片2",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "localized_name": "任务模式",
           "name": "任务模式",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "任务模式"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "输出语言",
           "name": "输出语言",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "输出语言"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "增强方式",
           "name": "增强方式",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "增强方式"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "api_key",
           "name": "api_key",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "api_key"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "api_base_url",
           "name": "api_base_url",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "api_base_url"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "model",
           "name": "model",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "model"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文生图PE模型",
           "name": "文生图PE模型",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "文生图PE模型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "图生图PE模型",
           "name": "图生图PE模型",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "图生图PE模型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "主模型",
           "name": "主模型",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "主模型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "mmproj",
           "name": "mmproj",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "mmproj"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "上下文长度",
           "name": "上下文长度",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "上下文长度"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "最大生成token",
           "name": "最大生成token",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "最大生成token"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "seed",
           "name": "seed",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "seed"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "生成后自动卸载模型",
           "name": "生成后自动卸载模型",
           "type": "BOOLEAN",
-          "link": null,
           "widget": {
             "name": "生成后自动卸载模型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "输入提示词",
           "name": "输入提示词",
           "type": "STRING",
-          "link": 40,
           "widget": {
             "name": "输入提示词"
-          }
-        },
-        {
-          "name": "图片.图片1",
-          "type": "IMAGE",
-          "link": 41,
-          "shape": 7
+          },
+          "link": 40
         }
       ],
       "outputs": [
         {
+          "localized_name": "增强提示词",
           "name": "增强提示词",
           "type": "STRING",
           "links": [
@@ -2460,10 +2942,32 @@
           ]
         }
       ],
+      "title": "可选 AI：单独优化人像请求",
       "properties": {
         "Node name for S&R": "GGPromptEnhancer",
         "gg_region_role": "person_enhance",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "任务模式": true,
+            "输出语言": true,
+            "增强方式": true,
+            "api_key": true,
+            "api_base_url": true,
+            "model": true,
+            "文生图PE模型": true,
+            "图生图PE模型": true,
+            "主模型": true,
+            "mmproj": true,
+            "上下文长度": true,
+            "最大生成token": true,
+            "seed": true,
+            "生成后自动卸载模型": true,
+            "输入提示词": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "图生图",
@@ -2476,10 +2980,11 @@
         "clip_l.safetensors",
         "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
-        8192,
-        2048,
+        16384,
+        1536,
         12345,
         true,
+        "",
         ""
       ],
       "widgets_values_named": {
@@ -2493,52 +2998,56 @@
         "图生图PE模型": "clip_l.safetensors",
         "主模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
-        "上下文长度": 8192,
-        "最大生成token": 2048,
+        "上下文长度": 16384,
+        "最大生成token": 1536,
         "seed": 12345,
-        "生成后自动卸载模型": true,
+        "control_after_generate": true,
+        "生成后自动卸载模型": "",
         "输入提示词": ""
       }
     },
     {
       "id": 33,
       "type": "ComfySwitchNode",
-      "title": "AI 开／关：真正跳过未选分支",
       "pos": [
-        1910,
-        2120
+        1940,
+        708
       ],
       "size": [
         420,
         150
       ],
       "flags": {},
-      "order": 22,
+      "order": 26,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "为假时",
+          "name": "on_false",
+          "shape": 7,
+          "type": "STRING",
+          "link": 43
+        },
+        {
+          "localized_name": "为真时",
+          "name": "on_true",
+          "shape": 7,
+          "type": "STRING",
+          "link": 44
+        },
+        {
+          "localized_name": "切换",
           "name": "switch",
           "type": "BOOLEAN",
-          "link": 42,
           "widget": {
             "name": "switch"
-          }
-        },
-        {
-          "name": "on_false",
-          "type": "STRING",
-          "link": 43,
-          "shape": 7
-        },
-        {
-          "name": "on_true",
-          "type": "STRING",
-          "link": 44,
-          "shape": 7
+          },
+          "link": 42
         }
       ],
       "outputs": [
         {
+          "localized_name": "输出",
           "name": "output",
           "type": "STRING",
           "links": [
@@ -2546,10 +3055,18 @@
           ]
         }
       ],
+      "title": "AI 开／关：真正跳过未选分支",
       "properties": {
         "Node name for S&R": "ComfySwitchNode",
         "gg_region_role": "person_prompt_select",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "switch": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         false
@@ -2561,211 +3078,232 @@
     {
       "id": 34,
       "type": "GGTextConcat",
-      "title": "优化后追加固定轮廓约束",
       "pos": [
-        2370,
-        2120
+        2410,
+        740
       ],
       "size": [
         420,
-        220
+        200
       ],
       "flags": {},
-      "order": 23,
+      "order": 28,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "文本1",
           "name": "文本1",
-          "type": "STRING",
-          "link": 45,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本1"
-          }
+          },
+          "link": 45
         },
         {
+          "localized_name": "文本2",
           "name": "文本2",
-          "type": "STRING",
-          "link": 46,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本2"
-          }
+          },
+          "link": 46
         },
         {
+          "localized_name": "文本3",
           "name": "文本3",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本3"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本4",
           "name": "文本4",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本4"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本5",
           "name": "文本5",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本5"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本6",
           "name": "文本6",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本6"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本7",
           "name": "文本7",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本7"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本8",
           "name": "文本8",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本8"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本9",
           "name": "文本9",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本9"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本10",
           "name": "文本10",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本10"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本11",
           "name": "文本11",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本11"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本12",
           "name": "文本12",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本12"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本13",
           "name": "文本13",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本13"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本14",
           "name": "文本14",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本14"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本15",
           "name": "文本15",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本15"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本16",
           "name": "文本16",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本16"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本17",
           "name": "文本17",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本17"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本18",
           "name": "文本18",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本18"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本19",
           "name": "文本19",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本19"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "文本20",
           "name": "文本20",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "文本20"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "分隔符",
           "name": "分隔符",
-          "type": "STRING",
-          "link": null,
           "shape": 7,
+          "type": "STRING",
           "widget": {
             "name": "分隔符"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "文本",
           "name": "文本",
           "type": "STRING",
           "links": [
@@ -2773,10 +3311,38 @@
           ]
         }
       ],
+      "title": "优化后追加固定轮廓约束",
       "properties": {
         "Node name for S&R": "GGTextConcat",
         "gg_region_role": "person_prompt_final",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "文本1": true,
+            "文本2": true,
+            "文本3": true,
+            "文本4": true,
+            "文本5": true,
+            "文本6": true,
+            "文本7": true,
+            "文本8": true,
+            "文本9": true,
+            "文本10": true,
+            "文本11": true,
+            "文本12": true,
+            "文本13": true,
+            "文本14": true,
+            "文本15": true,
+            "文本16": true,
+            "文本17": true,
+            "文本18": true,
+            "文本19": true,
+            "文本20": true,
+            "分隔符": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "",
@@ -2828,95 +3394,120 @@
     {
       "id": 35,
       "type": "GGPromptOptimizer",
-      "title": "④ Qwen 条件编码（不是文本改写）",
       "pos": [
-        2370,
-        1430
+        2410,
+        180
       ],
       "size": [
         420,
         520
       ],
       "flags": {},
-      "order": 24,
+      "order": 29,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像1",
+          "name": "图像.图像1",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 48
+        },
+        {
+          "localized_name": "图像2",
+          "name": "图像.图像2",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "localized_name": "CLIP名称",
           "name": "CLIP名称",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "CLIP名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "CLIP类型",
           "name": "CLIP类型",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "CLIP类型"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "VAE名称",
           "name": "VAE名称",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "VAE名称"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "分辨率",
           "name": "分辨率",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "分辨率"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "正向提示词",
           "name": "正向提示词",
           "type": "STRING",
-          "link": 47,
           "widget": {
             "name": "正向提示词"
-          }
+          },
+          "link": 47
         },
         {
+          "localized_name": "负向提示词",
           "name": "负向提示词",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "负向提示词"
-          }
-        },
-        {
-          "name": "图像.图像1",
-          "type": "IMAGE",
-          "link": 48,
-          "shape": 7
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "正面条件",
           "name": "正面条件",
           "type": "CONDITIONING",
           "links": [
-            54,
             115
           ]
         },
         {
+          "localized_name": "负面条件",
           "name": "负面条件",
           "type": "CONDITIONING",
-          "links": [
-            55
-          ]
+          "links": null
         }
       ],
+      "title": "④ Qwen 条件编码（不是文本改写）",
       "properties": {
         "Node name for S&R": "GGPromptOptimizer",
         "gg_region_role": "person_condition",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "CLIP名称": true,
+            "CLIP类型": true,
+            "VAE名称": true,
+            "分辨率": true,
+            "正向提示词": true,
+            "负向提示词": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "qwen\\qwen3vl_8b_int8_convrot.safetensors",
@@ -2938,25 +3529,26 @@
     {
       "id": 36,
       "type": "VAEEncode",
-      "title": "原图像 Latent 编码",
       "pos": [
-        2830,
-        1430
+        2880,
+        180
       ],
       "size": [
         300,
         110
       ],
       "flags": {},
-      "order": 25,
+      "order": 24,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "像素",
           "name": "pixels",
           "type": "IMAGE",
           "link": 49
         },
         {
+          "localized_name": "vae",
           "name": "vae",
           "type": "VAE",
           "link": 50
@@ -2964,6 +3556,7 @@
       ],
       "outputs": [
         {
+          "localized_name": "Latent",
           "name": "LATENT",
           "type": "LATENT",
           "links": [
@@ -2971,36 +3564,41 @@
           ]
         }
       ],
+      "title": "原图像 Latent 编码",
       "properties": {
         "Node name for S&R": "VAEEncode",
         "gg_region_role": "person_vae_encode",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": [],
-      "widgets_values_named": {}
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
     },
     {
       "id": 37,
       "type": "SetLatentNoiseMask",
-      "title": "采样蒙版：仅当前区域去噪",
       "pos": [
-        2830,
-        1630
+        2880,
+        330
       ],
       "size": [
         300,
         120
       ],
       "flags": {},
-      "order": 26,
+      "order": 27,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "Latent",
           "name": "samples",
           "type": "LATENT",
           "link": 51
         },
         {
+          "localized_name": "遮罩",
           "name": "mask",
           "type": "MASK",
           "link": 52
@@ -3008,160 +3606,49 @@
       ],
       "outputs": [
         {
+          "localized_name": "Latent",
           "name": "LATENT",
           "type": "LATENT",
           "links": [
-            56,
             112
           ]
         }
       ],
+      "title": "采样蒙版：仅当前区域去噪",
       "properties": {
         "Node name for S&R": "SetLatentNoiseMask",
         "gg_region_role": "person_latent_mask",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": [],
-      "widgets_values_named": {}
-    },
-    {
-      "id": 38,
-      "type": "KSampler",
-      "title": "⑤ 人像小幅图生图",
-      "pos": [
-        3170,
-        1430
-      ],
-      "size": [
-        410,
-        450
-      ],
-      "flags": {},
-      "order": 27,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "model",
-          "type": "MODEL",
-          "link": 53
-        },
-        {
-          "name": "seed",
-          "type": "INT",
-          "link": null,
-          "widget": {
-            "name": "seed"
-          }
-        },
-        {
-          "name": "steps",
-          "type": "INT",
-          "link": null,
-          "widget": {
-            "name": "steps"
-          }
-        },
-        {
-          "name": "cfg",
-          "type": "FLOAT",
-          "link": null,
-          "widget": {
-            "name": "cfg"
-          }
-        },
-        {
-          "name": "sampler_name",
-          "type": "COMBO",
-          "link": null,
-          "widget": {
-            "name": "sampler_name"
-          }
-        },
-        {
-          "name": "scheduler",
-          "type": "COMBO",
-          "link": null,
-          "widget": {
-            "name": "scheduler"
-          }
-        },
-        {
-          "name": "positive",
-          "type": "CONDITIONING",
-          "link": 54
-        },
-        {
-          "name": "negative",
-          "type": "CONDITIONING",
-          "link": 55
-        },
-        {
-          "name": "latent_image",
-          "type": "LATENT",
-          "link": 56
-        },
-        {
-          "name": "denoise",
-          "type": "FLOAT",
-          "link": null,
-          "widget": {
-            "name": "denoise"
-          }
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
         }
-      ],
-      "outputs": [
-        {
-          "name": "LATENT",
-          "type": "LATENT",
-          "links": []
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "KSampler",
-        "gg_region_role": "person_sample",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": [
-        246813580,
-        "fixed",
-        9,
-        1.0,
-        "euler",
-        "simple",
-        0.95
-      ],
-      "widgets_values_named": {
-        "seed": 246813580,
-        "control_after_generate": "fixed",
-        "steps": 9,
-        "cfg": 1.0,
-        "sampler_name": "euler",
-        "scheduler": "simple",
-        "denoise": 0.95
       }
     },
     {
       "id": 39,
       "type": "VAEDecode",
-      "title": "VAE 解码",
       "pos": [
-        3620,
-        1430
+        3690,
+        330
       ],
       "size": [
         300,
         120
       ],
       "flags": {},
-      "order": 28,
+      "order": 33,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "Latent",
           "name": "samples",
           "type": "LATENT",
           "link": 113
         },
         {
+          "localized_name": "vae",
           "name": "vae",
           "type": "VAE",
           "link": 58
@@ -3169,150 +3656,173 @@
       ],
       "outputs": [
         {
+          "localized_name": "图像",
           "name": "IMAGE",
           "type": "IMAGE",
           "links": [
-            60,
-            96
+            60
           ]
         }
       ],
+      "title": "VAE Decode",
       "properties": {
         "Node name for S&R": "VAEDecode",
         "gg_region_role": "person_decode",
-        "cnr_id": "comfy-core"
-      },
-      "widgets_values": [],
-      "widgets_values_named": {}
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
     },
     {
       "id": 40,
       "type": "GGCropRestore",
-      "title": "⑥ 原坐标还原（不扩大轮廓）",
       "pos": [
-        3970,
-        1430
+        4040,
+        180
       ],
       "size": [
         410,
         220
       ],
       "flags": {},
-      "order": 29,
+      "order": 34,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "接缝",
           "name": "接缝",
           "type": "GG_SEAM",
           "link": 59
         },
         {
+          "localized_name": "裁剪图像",
           "name": "裁剪图像",
           "type": "IMAGE",
           "link": 60
         },
         {
+          "localized_name": "裁剪遮罩",
+          "name": "裁剪遮罩",
+          "shape": 7,
+          "type": "MASK",
+          "link": 87
+        },
+        {
+          "localized_name": "背景图像",
+          "name": "背景图像",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 91
+        },
+        {
+          "localized_name": "遮罩扩展",
           "name": "遮罩扩展",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "遮罩扩展"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "遮罩羽化",
           "name": "遮罩羽化",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "遮罩羽化"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "颜色还原",
           "name": "颜色还原",
           "type": "FLOAT",
-          "link": null,
           "widget": {
             "name": "颜色还原"
-          }
-        },
-        {
-          "name": "裁剪遮罩",
-          "type": "MASK",
-          "link": 87,
-          "shape": 7
-        },
-        {
-          "name": "背景图像",
-          "type": "IMAGE",
-          "link": 91,
-          "shape": 7
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "links": [
-            89,
-            97
+            89
           ]
         }
       ],
+      "title": "⑥ 原坐标还原（不扩大轮廓）",
       "properties": {
         "Node name for S&R": "GGCropRestore",
         "gg_region_role": "person_restore",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "遮罩扩展": true,
+            "遮罩羽化": true,
+            "颜色还原": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         4,
         5,
-        1.0
+        1
       ],
       "widgets_values_named": {
         "遮罩扩展": 4,
         "遮罩羽化": 5,
-        "颜色还原": 1.0
+        "颜色还原": 1
       }
     },
     {
       "id": 42,
       "type": "ComfySwitchNode",
-      "title": "需求为空：返回输入原图",
       "pos": [
-        4870,
-        1430
+        4500,
+        180
       ],
       "size": [
         410,
         170
       ],
       "flags": {},
-      "order": 31,
+      "order": 36,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "为假时",
+          "name": "on_false",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 66
+        },
+        {
+          "localized_name": "为真时",
+          "name": "on_true",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 89
+        },
+        {
+          "localized_name": "切换",
           "name": "switch",
           "type": "BOOLEAN",
-          "link": 65,
           "widget": {
             "name": "switch"
-          }
-        },
-        {
-          "name": "on_false",
-          "type": "IMAGE",
-          "link": 66,
-          "shape": 7
-        },
-        {
-          "name": "on_true",
-          "type": "IMAGE",
-          "link": 89,
-          "shape": 7
+          },
+          "link": 65
         }
       ],
       "outputs": [
         {
+          "localized_name": "输出",
           "name": "output",
           "type": "IMAGE",
           "links": [
@@ -3322,10 +3832,18 @@
           ]
         }
       ],
+      "title": "需求为空：返回输入原图",
       "properties": {
         "Node name for S&R": "ComfySwitchNode",
         "gg_region_role": "person_select",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "switch": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         false
@@ -3337,84 +3855,105 @@
     {
       "id": 51,
       "type": "GGImageCompressSave",
-      "title": "⑧ 保存 PNG（保留原画幅）",
       "pos": [
-        5420,
-        1370
+        5060,
+        1420
       ],
       "size": [
         520,
         360
       ],
       "flags": {},
-      "order": 33,
+      "order": 55,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "link": 92
         },
         {
+          "localized_name": "文件名前缀",
           "name": "文件名前缀",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "文件名前缀"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "格式",
           "name": "格式",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "格式"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "压缩模式",
           "name": "压缩模式",
           "type": "COMBO",
-          "link": null,
           "widget": {
             "name": "压缩模式"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "质量",
           "name": "质量",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "质量"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "目标大小KB",
           "name": "目标大小KB",
           "type": "INT",
-          "link": null,
           "widget": {
             "name": "目标大小KB"
-          }
+          },
+          "link": null
         },
         {
+          "localized_name": "清除内存",
           "name": "清除内存",
           "type": "BOOLEAN",
-          "link": null,
           "widget": {
             "name": "清除内存"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "images",
           "name": "images",
           "type": "IMAGE",
-          "links": []
+          "links": null
         }
       ],
+      "title": "⑧ 保存 PNG（保留原画幅）",
       "properties": {
         "Node name for S&R": "GGImageCompressSave",
         "gg_region_role": "save",
-        "cnr_id": "comfyui-gulinodes"
+        "cnr_id": "comfyui-gulinodes",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "文件名前缀": true,
+            "格式": true,
+            "压缩模式": true,
+            "质量": true,
+            "目标大小KB": true,
+            "清除内存": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        },
+        "_ggCompressSaveFormatInitialized": true
       },
       "widgets_values": [
         "%date:yyyy_MM_dd%/GG_人像背景分区",
@@ -3436,68 +3975,79 @@
     {
       "id": 54,
       "type": "Note",
-      "title": "使用前必读",
       "pos": [
         40,
-        2030
+        1320
       ],
       "size": [
         420,
         500
       ],
       "flags": {},
-      "order": 36,
+      "order": 5,
       "mode": 0,
       "inputs": [
         {
           "name": "text",
           "type": "STRING",
-          "link": null,
           "widget": {
             "name": "text"
-          }
+          },
+          "link": null
         }
       ],
       "outputs": [],
+      "title": "使用前必读",
       "properties": {
         "Node name for S&R": "Note",
         "gg_region_role": "instructions",
-        "cnr_id": "comfy-core"
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "text": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "1. 先上传原图，右键加载图像→遮罩编辑器，只涂人物并保存。\n2. 白色=人物；背景会自动反转，不需再画一次。\n3. 编辑需求清空/只留空格=跳过该区域。\n4. AI优化为独立开关；未验证本地模型兼容前保持关闭。\n5. 本版按原像素裁剪（不再压成正方形），保持原图比例，恢复到原坐标和原画幅。\n6. 最终合成严格按原蒙版限域，人物外轮廓不扩大；人物内部姿态仍依赖模型。\n7. 背景降噪0.6、人像0.35为默认；想要更强改0.7/0.45，更保守改0.5/0.25。降噪低于0.4基本看不出变化。\n8. 未涂蒙版会中文报错，而不是自动重绘全图。\n9. 超大图（长边超2000）建议先缩小，原像素采样会更慢。"
       ],
       "widgets_values_named": {
         "text": "1. 先上传原图，右键加载图像→遮罩编辑器，只涂人物并保存。\n2. 白色=人物；背景会自动反转，不需再画一次。\n3. 编辑需求清空/只留空格=跳过该区域。\n4. AI优化为独立开关；未验证本地模型兼容前保持关闭。\n5. 本版按原像素裁剪（不再压成正方形），保持原图比例，恢复到原坐标和原画幅。\n6. 最终合成严格按原蒙版限域，人物外轮廓不扩大；人物内部姿态仍依赖模型。\n7. 背景降噪0.6、人像0.35为默认；想要更强改0.7/0.45，更保守改0.5/0.25。降噪低于0.4基本看不出变化。\n8. 未涂蒙版会中文报错，而不是自动重绘全图。\n9. 超大图（长边超2000）建议先缩小，原像素采样会更慢。"
-      }
+      },
+      "color": "#432",
+      "bgcolor": "#653"
     },
     {
       "id": 55,
       "type": "GGMaskCheck",
-      "title": "① 蒙版诊断（颜色落在人物身上才算涂对）",
       "pos": [
         40,
-        760
+        770
       ],
       "size": [
         430,
         300
       ],
       "flags": {},
-      "order": 37,
+      "order": 18,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "图像",
           "type": "IMAGE",
           "link": 73
         },
         {
+          "localized_name": "人像遮罩",
           "name": "人像遮罩",
           "type": "MASK",
           "link": 80
         },
         {
+          "localized_name": "叠加颜色",
           "name": "叠加颜色",
           "type": "COMBO",
           "widget": {
@@ -3506,6 +4056,7 @@
           "link": null
         },
         {
+          "localized_name": "叠加不透明度",
           "name": "叠加不透明度",
           "type": "FLOAT",
           "widget": {
@@ -3514,6 +4065,7 @@
           "link": null
         },
         {
+          "localized_name": "背景压暗",
           "name": "背景压暗",
           "type": "FLOAT",
           "widget": {
@@ -3524,30 +4076,43 @@
       ],
       "outputs": [
         {
+          "localized_name": "预览图",
           "name": "预览图",
           "type": "IMAGE",
+          "slot_index": 0,
           "links": [
             75
-          ],
-          "slot_index": 0
+          ]
         },
         {
+          "localized_name": "诊断",
           "name": "诊断",
           "type": "STRING",
+          "slot_index": 1,
           "links": [
             76
-          ],
-          "slot_index": 1
+          ]
         },
         {
+          "localized_name": "是否可用",
           "name": "是否可用",
           "type": "BOOLEAN",
-          "links": [],
-          "slot_index": 2
+          "slot_index": 2,
+          "links": null
         }
       ],
+      "title": "① 蒙版诊断（颜色落在人物身上才算涂对）",
       "properties": {
-        "Node name for S&R": "GGMaskCheck"
+        "Node name for S&R": "GGMaskCheck",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "叠加颜色": true,
+            "叠加不透明度": true,
+            "背景压暗": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "青绿",
@@ -3563,90 +4128,119 @@
     {
       "id": 56,
       "type": "PreviewImage",
-      "title": "蒙版诊断预览（青绿=会编辑的人物区）",
       "pos": [
-        490,
-        760
+        510,
+        490
       ],
       "size": [
         470,
         540
       ],
       "flags": {},
-      "order": 38,
+      "order": 22,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "images",
           "type": "IMAGE",
           "link": 75
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
+        }
+      ],
+      "title": "② 蒙版诊断",
       "properties": {
         "Node name for S&R": "PreviewImage",
-        "gg_region_role": "mask_preview"
-      },
-      "widgets_values": []
+        "gg_region_role": "mask_preview",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
     },
     {
       "id": 57,
       "type": "GGTextDisplayCopy",
-      "title": "蒙版诊断说明（占比／改法）",
       "pos": [
-        490,
-        1330
+        510,
+        1070
       ],
       "size": [
         470,
         220
       ],
       "flags": {},
-      "order": 39,
+      "order": 23,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "文本输入",
           "name": "文本输入",
+          "shape": 7,
           "type": "STRING",
           "link": 76
+        },
+        {
+          "localized_name": "文本",
+          "name": "文本",
+          "type": "STRING",
+          "widget": {
+            "name": "文本"
+          },
+          "link": null
         }
       ],
       "outputs": [
         {
+          "localized_name": "文本",
           "name": "文本",
           "type": "STRING",
-          "links": [],
-          "slot_index": 0
+          "slot_index": 0,
+          "links": null
         }
       ],
+      "title": "蒙版诊断说明（占比／改法）",
       "properties": {
         "Node name for S&R": "GGTextDisplayCopy",
-        "gg_region_role": "instructions"
+        "gg_region_role": "instructions",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
-        ""
+        "图像 1080×1620，蒙版 1080×1620：尺寸一致\n人物有效区 64.48%，背景 35.52%；有效区平均权重 1.00，最高 1.00。\n结论：可用"
       ],
       "widgets_values_named": {
-        "文本": ""
+        "文本": "图像 1080×1620，蒙版 1080×1620：尺寸一致\n人物有效区 64.48%，背景 35.52%；有效区平均权重 1.00，最高 1.00。\n结论：可用"
       }
     },
     {
       "id": 58,
       "type": "easy sam3ModelLoader",
-      "title": "自动蒙版：SAM3 模型",
       "pos": [
-        -560,
-        760
+        -500,
+        240
       ],
       "size": [
-        380,
+        420,
         160
       ],
       "flags": {},
-      "order": 40,
+      "order": 6,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "模型",
           "name": "model",
           "type": "COMBO",
           "widget": {
@@ -3655,6 +4249,7 @@
           "link": null
         },
         {
+          "localized_name": "分割器",
           "name": "segmentor",
           "type": "COMBO",
           "widget": {
@@ -3663,6 +4258,7 @@
           "link": null
         },
         {
+          "localized_name": "设备",
           "name": "device",
           "type": "COMBO",
           "widget": {
@@ -3671,6 +4267,7 @@
           "link": null
         },
         {
+          "localized_name": "精度",
           "name": "precision",
           "type": "COMBO",
           "widget": {
@@ -3681,51 +4278,99 @@
       ],
       "outputs": [
         {
+          "localized_name": "SAM3 模型",
           "name": "sam3_model",
           "type": "EASY_SAM3_MODEL",
+          "slot_index": 0,
           "links": [
             83
-          ],
-          "slot_index": 0
+          ]
         }
       ],
+      "title": "自动蒙版：SAM3 模型",
       "properties": {
-        "Node name for S&R": "easy sam3ModelLoader"
+        "Node name for S&R": "easy sam3ModelLoader",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "model": true,
+            "segmentor": true,
+            "device": true,
+            "precision": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "sam3.pt",
         "image",
         "cuda",
         "fp16"
-      ]
+      ],
+      "widgets_values_named": {
+        "model": "sam3.pt",
+        "segmentor": "image",
+        "device": "cuda",
+        "precision": "fp16"
+      }
     },
     {
       "id": 59,
       "type": "easy sam3ImageSegmentation",
-      "title": "自动蒙版：文本识别人像（person）",
       "pos": [
-        -560,
-        1000
+        -500,
+        430
       ],
       "size": [
-        380,
+        420,
         330
       ],
       "flags": {},
-      "order": 41,
+      "order": 13,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "SAM3 模型",
           "name": "sam3_model",
           "type": "EASY_SAM3_MODEL",
           "link": 83
         },
         {
+          "localized_name": "图像",
           "name": "images",
           "type": "IMAGE",
           "link": 84
         },
         {
+          "localized_name": "正向点坐标",
+          "name": "coordinates_positive",
+          "shape": 7,
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "localized_name": "负向点坐标",
+          "name": "coordinates_negative",
+          "shape": 7,
+          "type": "STRING",
+          "link": null
+        },
+        {
+          "localized_name": "边界框",
+          "name": "bboxes",
+          "shape": 7,
+          "type": "BBOX",
+          "link": null
+        },
+        {
+          "localized_name": "遮罩",
+          "name": "mask",
+          "shape": 7,
+          "type": "MASK",
+          "link": null
+        },
+        {
+          "localized_name": "提示词",
           "name": "prompt",
           "type": "STRING",
           "widget": {
@@ -3734,6 +4379,7 @@
           "link": null
         },
         {
+          "localized_name": "置信度",
           "name": "threshold",
           "type": "FLOAT",
           "widget": {
@@ -3742,6 +4388,7 @@
           "link": null
         },
         {
+          "localized_name": "保持模型加载",
           "name": "keep_model_loaded",
           "type": "BOOLEAN",
           "widget": {
@@ -3750,6 +4397,7 @@
           "link": null
         },
         {
+          "localized_name": "添加背景",
           "name": "add_background",
           "type": "COMBO",
           "widget": {
@@ -3758,6 +4406,7 @@
           "link": null
         },
         {
+          "localized_name": "检测对象限制",
           "name": "detection_limit",
           "type": "INT",
           "widget": {
@@ -3768,41 +4417,58 @@
       ],
       "outputs": [
         {
+          "localized_name": "遮罩",
           "name": "masks",
           "type": "MASK",
+          "slot_index": 0,
           "links": [
             104
-          ],
-          "slot_index": 0
+          ]
         },
         {
+          "localized_name": "图像",
           "name": "images",
           "type": "IMAGE",
-          "links": [],
-          "slot_index": 1
+          "slot_index": 1,
+          "links": null
         },
         {
+          "localized_name": "对象遮罩",
           "name": "obj_masks",
           "type": "MASK",
-          "links": [],
-          "slot_index": 2
+          "slot_index": 2,
+          "links": null
         },
         {
+          "localized_name": "边界框",
           "name": "boxes",
           "type": "BBOX",
-          "links": [],
-          "slot_index": 3
+          "slot_index": 3,
+          "links": null
         },
         {
+          "localized_name": "置信度分",
           "name": "scores",
           "type": "FLOAT",
-          "links": [],
-          "slot_index": 4
+          "slot_index": 4,
+          "links": null
         }
       ],
+      "title": "自动蒙版：文本识别人像（person）",
       "properties": {
         "Node name for S&R": "easy sam3ImageSegmentation",
-        "gg_region_role": "auto_mask"
+        "gg_region_role": "auto_mask",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "prompt": true,
+            "threshold": true,
+            "keep_model_loaded": true,
+            "add_background": true,
+            "detection_limit": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "person",
@@ -3810,522 +4476,443 @@
         false,
         "none",
         -1
-      ]
+      ],
+      "widgets_values_named": {
+        "prompt": "person",
+        "threshold": 0.4,
+        "keep_model_loaded": false,
+        "add_background": "none",
+        "detection_limit": -1
+      }
     },
     {
       "id": 60,
       "type": "PrimitiveBoolean",
-      "title": "自动识别人像（关掉=用手绘蒙版）",
       "pos": [
-        -1000,
-        760
+        -500,
+        100
       ],
       "size": [
-        400,
+        420,
         90
       ],
       "flags": {},
-      "order": 42,
+      "order": 7,
       "mode": 0,
-      "inputs": [],
-      "outputs": [
+      "inputs": [
         {
-          "name": "BOOLEAN",
+          "localized_name": "值",
+          "name": "value",
           "type": "BOOLEAN",
-          "links": [
-            81
-          ],
-          "slot_index": 0
+          "widget": {
+            "name": "value"
+          },
+          "link": null
         }
       ],
+      "outputs": [
+        {
+          "localized_name": "布尔",
+          "name": "BOOLEAN",
+          "type": "BOOLEAN",
+          "slot_index": 0,
+          "links": [
+            81
+          ]
+        }
+      ],
+      "title": "自动识别人像（关掉=用手绘蒙版）",
       "properties": {
         "Node name for S&R": "PrimitiveBoolean",
-        "gg_region_role": "auto_mask_switch"
+        "gg_region_role": "auto_mask_switch",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         true
-      ]
+      ],
+      "widgets_values_named": {
+        "value": true
+      }
     },
     {
       "id": 61,
       "type": "ComfySwitchNode",
-      "title": "蒙版来源：自动 / 手绘",
       "pos": [
-        -560,
-        1380
+        -500,
+        1200
       ],
       "size": [
-        380,
+        420,
         120
       ],
       "flags": {},
-      "order": 43,
+      "order": 16,
       "mode": 0,
       "inputs": [
         {
-          "name": "switch",
-          "type": "BOOLEAN",
-          "link": 81
-        },
-        {
+          "localized_name": "为假时",
           "name": "on_false",
+          "shape": 7,
           "type": "MASK",
           "link": 82
         },
         {
+          "localized_name": "为真时",
           "name": "on_true",
+          "shape": 7,
           "type": "MASK",
           "link": 107
+        },
+        {
+          "localized_name": "切换",
+          "name": "switch",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "switch"
+          },
+          "link": 81
         }
       ],
       "outputs": [
         {
+          "localized_name": "输出",
           "name": "output",
           "type": "MASK",
+          "slot_index": 0,
           "links": [
             77,
             78,
             80
-          ],
-          "slot_index": 0
+          ]
         }
       ],
+      "title": "蒙版来源：自动 / 手绘",
       "properties": {
         "Node name for S&R": "ComfySwitchNode",
-        "gg_region_role": "mask_pick"
+        "gg_region_role": "mask_pick",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "switch": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
-      "widgets_values": []
+      "widgets_values": [
+        false
+      ],
+      "widgets_values_named": {
+        "switch": false
+      }
     },
     {
       "id": 62,
       "type": "PreviewImage",
-      "title": "① 原图（输入）",
       "pos": [
-        5300,
-        80
+        5060,
+        60
       ],
       "size": [
-        420,
+        520,
         380
       ],
       "flags": {},
-      "order": 44,
+      "order": 11,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "images",
           "type": "IMAGE",
           "link": 93
         }
       ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 63,
-      "type": "PreviewImage",
-      "title": "② 人像·准备输入",
-      "pos": [
-        5300,
-        500
-      ],
-      "size": [
-        420,
-        380
-      ],
-      "flags": {},
-      "order": 45,
-      "mode": 0,
-      "inputs": [
+      "outputs": [
         {
+          "localized_name": "images",
           "name": "images",
           "type": "IMAGE",
-          "link": 94
+          "links": null
         }
       ],
-      "outputs": [],
+      "title": "① 原图",
       "properties": {
         "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 64,
-      "type": "PreviewImage",
-      "title": "③ 人像·裁剪图",
-      "pos": [
-        5300,
-        920
-      ],
-      "size": [
-        420,
-        380
-      ],
-      "flags": {},
-      "order": 46,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 95
+        "gg_region_role": "step_preview",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
         }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 65,
-      "type": "PreviewImage",
-      "title": "④ 人像·采样结果",
-      "pos": [
-        5300,
-        1340
-      ],
-      "size": [
-        420,
-        380
-      ],
-      "flags": {},
-      "order": 47,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 96
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 66,
-      "type": "PreviewImage",
-      "title": "⑤ 人像·贴回",
-      "pos": [
-        5300,
-        1760
-      ],
-      "size": [
-        420,
-        380
-      ],
-      "flags": {},
-      "order": 48,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 97
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
+      }
     },
     {
       "id": 67,
       "type": "PreviewImage",
-      "title": "⑥ 人像·结果",
       "pos": [
-        5300,
-        2180
+        5060,
+        520
       ],
       "size": [
-        420,
+        520,
         380
       ],
       "flags": {},
-      "order": 49,
+      "order": 39,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "图像",
           "name": "images",
           "type": "IMAGE",
           "link": 98
         }
       ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 68,
-      "type": "PreviewImage",
-      "title": "⑦ 背景·准备输入（=人像结果）",
-      "pos": [
-        5300,
-        2600
-      ],
-      "size": [
-        420,
-        380
-      ],
-      "flags": {},
-      "order": 50,
-      "mode": 0,
-      "inputs": [
+      "outputs": [
         {
+          "localized_name": "images",
           "name": "images",
           "type": "IMAGE",
-          "link": 99
+          "links": null
         }
       ],
-      "outputs": [],
+      "title": "③ 人像结果",
       "properties": {
         "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 69,
-      "type": "PreviewImage",
-      "title": "⑧ 背景·裁剪图",
-      "pos": [
-        5300,
-        3020
-      ],
-      "size": [
-        420,
-        380
-      ],
-      "flags": {},
-      "order": 51,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 100
+        "gg_region_role": "step_preview",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
         }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 70,
-      "type": "PreviewImage",
-      "title": "⑨ 背景·采样结果",
-      "pos": [
-        5300,
-        3440
-      ],
-      "size": [
-        420,
-        380
-      ],
-      "flags": {},
-      "order": 52,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 101
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 71,
-      "type": "PreviewImage",
-      "title": "⑩ 背景·贴回",
-      "pos": [
-        5300,
-        3860
-      ],
-      "size": [
-        420,
-        380
-      ],
-      "flags": {},
-      "order": 53,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 102
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
+      }
     },
     {
       "id": 72,
       "type": "PreviewImage",
-      "title": "⑪ 背景·结果（最终输出）",
       "pos": [
-        5300,
-        4280
+        5060,
+        980
       ],
       "size": [
-        420,
+        520,
         380
-      ],
-      "flags": {},
-      "order": 54,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "images",
-          "type": "IMAGE",
-          "link": 103
-        }
-      ],
-      "outputs": [],
-      "properties": {
-        "Node name for S&R": "PreviewImage",
-        "gg_region_role": "step_preview"
-      },
-      "widgets_values": []
-    },
-    {
-      "id": 73,
-      "type": "LayerMask: MaskGrow",
-      "title": "蒙版修边：膨胀+羽化（防残影）",
-      "pos": [
-        -990,
-        1380
-      ],
-      "size": [
-        380,
-        180
-      ],
-      "flags": {},
-      "order": 55,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "mask",
-          "type": "MASK",
-          "link": 104
-        }
-      ],
-      "outputs": [
-        {
-          "name": "mask",
-          "type": "MASK",
-          "links": [
-            106
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "LayerMask: MaskGrow",
-        "gg_region_role": "mask_grow"
-      },
-      "widgets_values": [
-        false,
-        35,
-        0
-      ],
-      "widgets_values_named": {
-        "invert_mask": false,
-        "grow": 35,
-        "blur": 0
-      }
-    },
-    {
-      "id": 74,
-      "type": "LayerMask: MaskGrow",
-      "title": "蒙版收缩回边界",
-      "pos": [
-        -570,
-        1380
-      ],
-      "size": [
-        380,
-        150
       ],
       "flags": {},
       "order": 56,
       "mode": 0,
       "inputs": [
         {
-          "name": "mask",
-          "type": "MASK",
-          "link": 106
+          "localized_name": "图像",
+          "name": "images",
+          "type": "IMAGE",
+          "link": 103
         }
       ],
       "outputs": [
         {
-          "name": "mask",
-          "type": "MASK",
-          "links": [
-            107
-          ],
-          "slot_index": 0
+          "localized_name": "images",
+          "name": "images",
+          "type": "IMAGE",
+          "links": null
         }
       ],
+      "title": "④ 最终结果",
+      "properties": {
+        "Node name for S&R": "PreviewImage",
+        "gg_region_role": "step_preview",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
+    },
+    {
+      "id": 73,
+      "type": "LayerMask: MaskGrow",
+      "pos": [
+        -500,
+        800
+      ],
+      "size": [
+        420,
+        180
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "遮罩",
+          "name": "mask",
+          "type": "MASK",
+          "link": 104
+        },
+        {
+          "localized_name": "反转遮罩",
+          "name": "invert_mask",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_mask"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "扩展",
+          "name": "grow",
+          "type": "INT",
+          "widget": {
+            "name": "grow"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "模糊",
+          "name": "blur",
+          "type": "INT",
+          "widget": {
+            "name": "blur"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "mask",
+          "name": "mask",
+          "type": "MASK",
+          "slot_index": 0,
+          "links": [
+            106
+          ]
+        }
+      ],
+      "title": "蒙版修边：膨胀+羽化（防残影）",
       "properties": {
         "Node name for S&R": "LayerMask: MaskGrow",
-        "gg_region_role": "mask_shrink"
+        "gg_region_role": "mask_grow",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         false,
-        -20,
+        2,
         0
       ],
       "widgets_values_named": {
         "invert_mask": false,
-        "grow": -20,
+        "grow": 2,
         "blur": 0
-      }
+      },
+      "color": "rgba(27, 80, 119, 0.7)"
+    },
+    {
+      "id": 74,
+      "type": "LayerMask: MaskGrow",
+      "pos": [
+        -500,
+        1010
+      ],
+      "size": [
+        420,
+        150
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "localized_name": "遮罩",
+          "name": "mask",
+          "type": "MASK",
+          "link": 106
+        },
+        {
+          "localized_name": "反转遮罩",
+          "name": "invert_mask",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "invert_mask"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "扩展",
+          "name": "grow",
+          "type": "INT",
+          "widget": {
+            "name": "grow"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "模糊",
+          "name": "blur",
+          "type": "INT",
+          "widget": {
+            "name": "blur"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "localized_name": "mask",
+          "name": "mask",
+          "type": "MASK",
+          "slot_index": 0,
+          "links": [
+            107
+          ]
+        }
+      ],
+      "title": "蒙版收缩回边界",
+      "properties": {
+        "Node name for S&R": "LayerMask: MaskGrow",
+        "gg_region_role": "mask_shrink",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        false,
+        -2,
+        0
+      ],
+      "widgets_values_named": {
+        "invert_mask": false,
+        "grow": -2,
+        "blur": 0
+      },
+      "color": "rgba(27, 80, 119, 0.7)"
     },
     {
       "id": 75,
       "type": "RandomNoise",
-      "title": "噪声种子",
       "pos": [
-        3170,
-        1950
+        3230,
+        180
       ],
       "size": [
         320,
         90
       ],
       "flags": {},
-      "order": 57,
+      "order": 8,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "噪波随机种",
           "name": "noise_seed",
           "type": "INT",
           "widget": {
@@ -4336,39 +4923,52 @@
       ],
       "outputs": [
         {
+          "localized_name": "噪波",
           "name": "NOISE",
           "type": "NOISE",
+          "slot_index": 0,
           "links": [
             108
-          ],
-          "slot_index": 0
+          ]
         }
       ],
+      "title": "噪声种子",
       "properties": {
-        "Node name for S&R": "RandomNoise"
+        "Node name for S&R": "RandomNoise",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "noise_seed": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
-        12345,
+        788586733294041,
         "randomize"
-      ]
+      ],
+      "widgets_values_named": {
+        "noise_seed": 788586733294041,
+        "control_after_generate": "randomize"
+      }
     },
     {
       "id": 76,
       "type": "KSamplerSelect",
-      "title": "采样器",
       "pos": [
-        3170,
-        2070
+        3230,
+        310
       ],
       "size": [
         320,
         80
       ],
       "flags": {},
-      "order": 58,
+      "order": 9,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "采样器名称",
           "name": "sampler_name",
           "type": "COMBO",
           "widget": {
@@ -4379,38 +4979,50 @@
       ],
       "outputs": [
         {
+          "localized_name": "采样器",
           "name": "SAMPLER",
           "type": "SAMPLER",
+          "slot_index": 0,
           "links": [
             110
-          ],
-          "slot_index": 0
+          ]
         }
       ],
+      "title": "采样器",
       "properties": {
-        "Node name for S&R": "KSamplerSelect"
+        "Node name for S&R": "KSamplerSelect",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "sampler_name": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "euler"
-      ]
+      ],
+      "widgets_values_named": {
+        "sampler_name": "euler"
+      }
     },
     {
       "id": 77,
       "type": "ManualSigmas",
-      "title": "Qwen 手动 sigma 曲线（孤海同款）",
       "pos": [
-        3170,
-        2170
+        3230,
+        430
       ],
       "size": [
-        420,
-        150
+        390,
+        70
       ],
       "flags": {},
-      "order": 59,
+      "order": 10,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "sigmas",
           "name": "sigmas",
           "type": "STRING",
           "widget": {
@@ -4421,16 +5033,25 @@
       ],
       "outputs": [
         {
+          "localized_name": "Sigmas",
           "name": "SIGMAS",
           "type": "SIGMAS",
+          "slot_index": 0,
           "links": [
             111
-          ],
-          "slot_index": 0
+          ]
         }
       ],
+      "title": "Qwen 手动 sigma 曲线（孤海同款）",
       "properties": {
-        "Node name for S&R": "ManualSigmas"
+        "Node name for S&R": "ManualSigmas",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "sigmas": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         "1.0, 0.978453, 0.954180, 0.926626, 0.895080, 0.845148, 0.704534, 0.414568, 0.150000, 0"
@@ -4442,25 +5063,26 @@
     {
       "id": 78,
       "type": "BasicGuider",
-      "title": "引导（turbo 无 CFG）",
       "pos": [
-        3170,
-        2340
+        3230,
+        560
       ],
       "size": [
         320,
         100
       ],
       "flags": {},
-      "order": 60,
+      "order": 30,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "模型",
           "name": "model",
           "type": "MODEL",
           "link": 114
         },
         {
+          "localized_name": "条件",
           "name": "conditioning",
           "type": "CONDITIONING",
           "link": 115
@@ -4468,56 +5090,66 @@
       ],
       "outputs": [
         {
+          "localized_name": "引导器",
           "name": "GUIDER",
           "type": "GUIDER",
+          "slot_index": 0,
           "links": [
             109
-          ],
-          "slot_index": 0
+          ]
         }
       ],
+      "title": "引导（turbo 无 CFG）",
       "properties": {
-        "Node name for S&R": "BasicGuider"
-      },
-      "widgets_values": []
+        "Node name for S&R": "BasicGuider",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
     },
     {
       "id": 79,
       "type": "SamplerCustomAdvanced",
-      "title": "高级采样（手动 sigma）",
       "pos": [
         3690,
-        1430
+        180
       ],
       "size": [
         340,
-        260
+        110
       ],
       "flags": {},
-      "order": 61,
+      "order": 32,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "噪波",
           "name": "noise",
           "type": "NOISE",
           "link": 108
         },
         {
+          "localized_name": "引导器",
           "name": "guider",
           "type": "GUIDER",
           "link": 109
         },
         {
+          "localized_name": "采样器",
           "name": "sampler",
           "type": "SAMPLER",
           "link": 110
         },
         {
+          "localized_name": "西格玛",
           "name": "sigmas",
           "type": "SIGMAS",
           "link": 111
         },
         {
+          "localized_name": "Latent图像",
           "name": "latent_image",
           "type": "LATENT",
           "link": 112
@@ -4525,63 +5157,74 @@
       ],
       "outputs": [
         {
+          "localized_name": "Latent",
           "name": "output",
           "type": "LATENT",
+          "slot_index": 0,
           "links": [
             113
-          ],
-          "slot_index": 0
+          ]
         },
         {
+          "localized_name": "降噪Latent",
           "name": "denoised_output",
           "type": "LATENT",
-          "links": [],
-          "slot_index": 1
+          "slot_index": 1,
+          "links": null
         }
       ],
+      "title": "高级采样（手动 sigma）",
       "properties": {
         "Node name for S&R": "SamplerCustomAdvanced",
-        "gg_region_role": "person_sample"
-      },
-      "widgets_values": []
+        "gg_region_role": "person_sample",
+        "ue_properties": {
+          "widget_ue_connectable": {},
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      }
     },
     {
       "id": 18,
       "type": "KSampler",
-      "title": "⑤ 背景采样",
       "pos": [
-        3170,
-        180
+        3230,
+        1080
       ],
       "size": [
         410,
         450
       ],
       "flags": {},
-      "order": 62,
+      "order": 49,
       "mode": 0,
       "inputs": [
         {
+          "localized_name": "模型",
           "name": "model",
           "type": "MODEL",
           "link": 116
         },
         {
+          "localized_name": "正面条件",
           "name": "positive",
           "type": "CONDITIONING",
           "link": 117
         },
         {
+          "localized_name": "负面条件",
           "name": "negative",
           "type": "CONDITIONING",
           "link": 118
         },
         {
+          "localized_name": "Latent图像",
           "name": "latent_image",
           "type": "LATENT",
           "link": 119
         },
         {
+          "localized_name": "种子",
           "name": "seed",
           "type": "INT",
           "widget": {
@@ -4590,6 +5233,7 @@
           "link": null
         },
         {
+          "localized_name": "步数",
           "name": "steps",
           "type": "INT",
           "widget": {
@@ -4598,6 +5242,7 @@
           "link": null
         },
         {
+          "localized_name": "cfg",
           "name": "cfg",
           "type": "FLOAT",
           "widget": {
@@ -4606,6 +5251,7 @@
           "link": null
         },
         {
+          "localized_name": "采样器名称",
           "name": "sampler_name",
           "type": "COMBO",
           "widget": {
@@ -4614,6 +5260,7 @@
           "link": null
         },
         {
+          "localized_name": "调度器",
           "name": "scheduler",
           "type": "COMBO",
           "widget": {
@@ -4622,6 +5269,7 @@
           "link": null
         },
         {
+          "localized_name": "降噪",
           "name": "denoise",
           "type": "FLOAT",
           "widget": {
@@ -4632,31 +5280,46 @@
       ],
       "outputs": [
         {
+          "localized_name": "Latent",
           "name": "LATENT",
           "type": "LATENT",
+          "slot_index": 0,
           "links": [
             120
-          ],
-          "slot_index": 0
+          ]
         }
       ],
+      "title": "⑤ 背景采样",
       "properties": {
         "Node name for S&R": "KSampler",
-        "gg_region_role": "background_sample"
+        "gg_region_role": "background_sample",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "seed": true,
+            "steps": true,
+            "cfg": true,
+            "sampler_name": true,
+            "scheduler": true,
+            "denoise": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
       },
       "widgets_values": [
         246813579,
         "fixed",
         9,
-        1.0,
+        1,
         "euler",
         "simple",
         0.95
       ],
       "widgets_values_named": {
         "seed": 246813579,
+        "control_after_generate": "fixed",
         "steps": 9,
-        "cfg": 1.0,
+        "cfg": 1,
         "sampler_name": "euler",
         "scheduler": "simple",
         "denoise": 0.95
@@ -4689,62 +5352,6 @@
       "STRING"
     ],
     [
-      5,
-      10,
-      0,
-      11,
-      0,
-      "IMAGE"
-    ],
-    [
-      6,
-      10,
-      1,
-      11,
-      1,
-      "MASK"
-    ],
-    [
-      7,
-      10,
-      2,
-      12,
-      14,
-      "STRING"
-    ],
-    [
-      8,
-      10,
-      0,
-      12,
-      15,
-      "IMAGE"
-    ],
-    [
-      9,
-      3,
-      0,
-      13,
-      0,
-      "BOOLEAN"
-    ],
-    [
-      10,
-      10,
-      2,
-      13,
-      1,
-      "STRING"
-    ],
-    [
-      11,
-      12,
-      0,
-      13,
-      2,
-      "STRING"
-    ],
-    [
       12,
       13,
       0,
@@ -4759,22 +5366,6 @@
       14,
       1,
       "STRING"
-    ],
-    [
-      14,
-      14,
-      0,
-      15,
-      4,
-      "STRING"
-    ],
-    [
-      15,
-      11,
-      1,
-      15,
-      6,
-      "IMAGE"
     ],
     [
       16,
@@ -4833,91 +5424,11 @@
       "IMAGE"
     ],
     [
-      28,
-      42,
-      0,
-      20,
-      6,
-      "IMAGE"
-    ],
-    [
-      32,
-      10,
-      4,
-      22,
-      0,
-      "BOOLEAN"
-    ],
-    [
-      33,
-      10,
-      0,
-      22,
-      1,
-      "IMAGE"
-    ],
-    [
       37,
       2,
       0,
       30,
       4,
-      "STRING"
-    ],
-    [
-      38,
-      30,
-      0,
-      31,
-      0,
-      "IMAGE"
-    ],
-    [
-      39,
-      30,
-      1,
-      31,
-      1,
-      "MASK"
-    ],
-    [
-      40,
-      30,
-      2,
-      32,
-      14,
-      "STRING"
-    ],
-    [
-      41,
-      30,
-      0,
-      32,
-      15,
-      "IMAGE"
-    ],
-    [
-      42,
-      3,
-      0,
-      33,
-      0,
-      "BOOLEAN"
-    ],
-    [
-      43,
-      30,
-      2,
-      33,
-      1,
-      "STRING"
-    ],
-    [
-      44,
-      32,
-      0,
-      33,
-      2,
       "STRING"
     ],
     [
@@ -4935,22 +5446,6 @@
       34,
       1,
       "STRING"
-    ],
-    [
-      47,
-      34,
-      0,
-      35,
-      4,
-      "STRING"
-    ],
-    [
-      48,
-      31,
-      1,
-      35,
-      6,
-      "IMAGE"
     ],
     [
       49,
@@ -4985,30 +5480,6 @@
       "MASK"
     ],
     [
-      54,
-      35,
-      0,
-      38,
-      6,
-      "CONDITIONING"
-    ],
-    [
-      55,
-      35,
-      1,
-      38,
-      7,
-      "CONDITIONING"
-    ],
-    [
-      56,
-      37,
-      0,
-      38,
-      8,
-      "LATENT"
-    ],
-    [
       58,
       5,
       0,
@@ -5029,22 +5500,6 @@
       39,
       0,
       40,
-      1,
-      "IMAGE"
-    ],
-    [
-      65,
-      30,
-      4,
-      42,
-      0,
-      "BOOLEAN"
-    ],
-    [
-      66,
-      30,
-      0,
-      42,
       1,
       "IMAGE"
     ],
@@ -5097,14 +5552,6 @@
       "MASK"
     ],
     [
-      82,
-      1,
-      1,
-      61,
-      1,
-      "MASK"
-    ],
-    [
       83,
       58,
       0,
@@ -5121,59 +5568,11 @@
       "IMAGE"
     ],
     [
-      81,
-      60,
-      0,
-      61,
-      0,
-      "BOOLEAN"
-    ],
-    [
-      86,
-      11,
-      2,
-      20,
-      5,
-      "MASK"
-    ],
-    [
-      87,
-      31,
-      2,
-      40,
-      5,
-      "MASK"
-    ],
-    [
-      88,
-      20,
-      0,
-      22,
-      2,
-      "IMAGE"
-    ],
-    [
-      89,
-      40,
-      0,
-      42,
-      2,
-      "IMAGE"
-    ],
-    [
       90,
       1,
       0,
       30,
       0,
-      "IMAGE"
-    ],
-    [
-      91,
-      1,
-      0,
-      40,
-      6,
       "IMAGE"
     ],
     [
@@ -5193,74 +5592,10 @@
       "IMAGE"
     ],
     [
-      94,
-      30,
-      0,
-      63,
-      0,
-      "IMAGE"
-    ],
-    [
-      95,
-      31,
-      1,
-      64,
-      0,
-      "IMAGE"
-    ],
-    [
-      96,
-      39,
-      0,
-      65,
-      0,
-      "IMAGE"
-    ],
-    [
-      97,
-      40,
-      0,
-      66,
-      0,
-      "IMAGE"
-    ],
-    [
       98,
       42,
       0,
       67,
-      0,
-      "IMAGE"
-    ],
-    [
-      99,
-      10,
-      0,
-      68,
-      0,
-      "IMAGE"
-    ],
-    [
-      100,
-      11,
-      1,
-      69,
-      0,
-      "IMAGE"
-    ],
-    [
-      101,
-      19,
-      0,
-      70,
-      0,
-      "IMAGE"
-    ],
-    [
-      102,
-      20,
-      0,
-      71,
       0,
       "IMAGE"
     ],
@@ -5286,14 +5621,6 @@
       0,
       74,
       0,
-      "MASK"
-    ],
-    [
-      107,
-      74,
-      0,
-      61,
-      2,
       "MASK"
     ],
     [
@@ -5399,65 +5726,337 @@
       19,
       0,
       "LATENT"
+    ],
+    [
+      9,
+      3,
+      0,
+      13,
+      2,
+      "BOOLEAN"
+    ],
+    [
+      10,
+      10,
+      2,
+      13,
+      0,
+      "STRING"
+    ],
+    [
+      11,
+      12,
+      0,
+      13,
+      1,
+      "STRING"
+    ],
+    [
+      86,
+      11,
+      2,
+      20,
+      2,
+      "MASK"
+    ],
+    [
+      28,
+      42,
+      0,
+      20,
+      3,
+      "IMAGE"
+    ],
+    [
+      32,
+      10,
+      4,
+      22,
+      2,
+      "BOOLEAN"
+    ],
+    [
+      33,
+      10,
+      0,
+      22,
+      0,
+      "IMAGE"
+    ],
+    [
+      88,
+      20,
+      0,
+      22,
+      1,
+      "IMAGE"
+    ],
+    [
+      42,
+      3,
+      0,
+      33,
+      2,
+      "BOOLEAN"
+    ],
+    [
+      43,
+      30,
+      2,
+      33,
+      0,
+      "STRING"
+    ],
+    [
+      44,
+      32,
+      0,
+      33,
+      1,
+      "STRING"
+    ],
+    [
+      87,
+      31,
+      2,
+      40,
+      2,
+      "MASK"
+    ],
+    [
+      91,
+      1,
+      0,
+      40,
+      3,
+      "IMAGE"
+    ],
+    [
+      65,
+      30,
+      4,
+      42,
+      2,
+      "BOOLEAN"
+    ],
+    [
+      66,
+      30,
+      0,
+      42,
+      0,
+      "IMAGE"
+    ],
+    [
+      89,
+      40,
+      0,
+      42,
+      1,
+      "IMAGE"
+    ],
+    [
+      81,
+      60,
+      0,
+      61,
+      2,
+      "BOOLEAN"
+    ],
+    [
+      82,
+      1,
+      1,
+      61,
+      0,
+      "MASK"
+    ],
+    [
+      107,
+      74,
+      0,
+      61,
+      1,
+      "MASK"
+    ],
+    [
+      5,
+      10,
+      0,
+      11,
+      0,
+      "IMAGE"
+    ],
+    [
+      6,
+      10,
+      1,
+      11,
+      1,
+      "MASK"
+    ],
+    [
+      8,
+      10,
+      0,
+      12,
+      0,
+      "IMAGE"
+    ],
+    [
+      15,
+      11,
+      1,
+      15,
+      0,
+      "IMAGE"
+    ],
+    [
+      38,
+      30,
+      0,
+      31,
+      0,
+      "IMAGE"
+    ],
+    [
+      39,
+      30,
+      1,
+      31,
+      1,
+      "MASK"
+    ],
+    [
+      41,
+      30,
+      0,
+      32,
+      0,
+      "IMAGE"
+    ],
+    [
+      48,
+      31,
+      1,
+      35,
+      0,
+      "IMAGE"
+    ],
+    [
+      7,
+      10,
+      2,
+      12,
+      16,
+      "STRING"
+    ],
+    [
+      14,
+      14,
+      0,
+      15,
+      6,
+      "STRING"
+    ],
+    [
+      40,
+      30,
+      2,
+      32,
+      16,
+      "STRING"
+    ],
+    [
+      47,
+      34,
+      0,
+      35,
+      6,
+      "STRING"
     ]
   ],
   "groups": [
     {
       "id": 1,
-      "title": "先背景：清空请求即可跳过整条优化／采样",
-      "bounding": [
-        930,
-        130,
-        4400,
-        1080
-      ],
-      "color": "#3f789e",
-      "flags": {}
-    },
-    {
-      "id": 2,
-      "title": "先人像：清空请求即可跳过整条优化／采样",
-      "bounding": [
-        930,
-        1380,
-        4400,
-        1080
-      ],
-      "color": "#815ba6",
-      "flags": {}
-    },
-    {
-      "id": 3,
-      "title": "输入与蒙版：不需要SAM3／孤海节点",
+      "title": "① 输入原图与蒙版（手绘或自动）",
       "bounding": [
         10,
-        30,
-        460,
-        2530
+        40,
+        480,
+        1810
       ],
       "color": "#b58b2a",
       "flags": {}
     },
     {
-      "id": 4,
-      "title": "共享模型与参数",
+      "id": 2,
+      "title": "①b 自动蒙版 SAM3（关掉开关即用手绘）",
       "bounding": [
-        485,
-        30,
-        430,
-        660
+        -520,
+        60,
+        460,
+        1310
+      ],
+      "color": "#7d6a3a",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "② 共享模型与 VAE",
+      "bounding": [
+        495,
+        40,
+        440,
+        430
       ],
       "color": "#346279",
       "flags": {}
     },
     {
-      "id": 5,
-      "title": "最终对比与保存",
+      "id": 4,
+      "title": "③ 蒙版诊断（颜色只落在人物上才算涂对）",
       "bounding": [
-        5390,
-        130,
-        580,
-        1690
+        495,
+        470,
+        500,
+        850
+      ],
+      "color": "#4a7a8c",
+      "flags": {}
+    },
+    {
+      "id": 5,
+      "title": "④ 先人物：需求清空即整条跳过（顶部是 AI 开关）",
+      "bounding": [
+        940,
+        30,
+        4000,
+        950
+      ],
+      "color": "#815ba6",
+      "flags": {}
+    },
+    {
+      "id": 6,
+      "title": "⑤ 后背景：需求清空即整条跳过",
+      "bounding": [
+        970,
+        1020,
+        3970,
+        990
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 7,
+      "title": "⑥ 预览与保存",
+      "bounding": [
+        5030,
+        20,
+        620,
+        1790
       ],
       "color": "#3f789e",
       "flags": {}
@@ -5466,16 +6065,18 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.7,
+      "scale": 0.5,
       "offset": [
-        40,
-        100
+        540,
+        40
       ]
     },
     "gg_region_workflow": {
       "version": 1,
       "description": "手绘人物蒙版，先背景后人物；清空区域需求即跳过；原蒙版再次限域。"
-    }
+    },
+    "ue_links": [],
+    "links_added_by_ue": []
   },
   "version": 0.4
 }

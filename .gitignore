@@ -34,3 +34,8 @@ desktop.ini
 # WorkBuddy assistant local data
 /.workbuddy/
 /.workbuddy-ai/
+
+# 工作流与文件的本地备份
+*.bak
+*.bak-*
+*.tmp

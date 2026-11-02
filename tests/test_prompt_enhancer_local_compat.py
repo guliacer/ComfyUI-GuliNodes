@@ -27,6 +27,8 @@ class FakeHandler:
 class FakeLlama:
     architecture = "qwen35"
     instances = []
+    fail_times = 0
+    fail_message = ""
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self.metadata = {"general.architecture": self.architecture}
@@ -39,6 +41,13 @@ class FakeLlama:
             self.chat_handler.close()
             self.chat_handler = None
         self.closed = True
+    def create_chat_completion(self, **kwargs):
+        if FakeLlama.fail_times > 0:
+            FakeLlama.fail_times -= 1
+            raise RuntimeError(FakeLlama.fail_message)
+        self.completion_kwargs = kwargs
+        return {"choices": [{"message": {"content": '{"rewritten_prompt": "ok"}'}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 2}}
 
 
 def fake_modules():
@@ -54,7 +63,7 @@ def fake_modules():
 class FakeWorkerProxy:
     """只替换进程启动；真正的模型工厂和资源清理仍走 worker helper。"""
     worker = None
-    def __init__(self, model_path, mmproj_path, context_length):
+    def __init__(self, model_path, mmproj_path, context_length, interrupt_check=None):
         self.native = self.worker.load_llm_model(model_path, mmproj_path, context_length)
     def __getattr__(self, name):
         return getattr(self.native, name)
@@ -75,6 +84,8 @@ class LocalLLMCompatibilityTests(unittest.TestCase):
         import comfy.model_management as mm
         FakeLlama.instances = []
         FakeLlama.architecture = "qwen35"
+        FakeLlama.fail_times = 0
+        FakeLlama.fail_message = ""
         self.llama, self.handlers = fake_modules()
         self.patches = [patch.dict(sys.modules, {"llama_cpp": self.llama, "llama_cpp.llama_chat_format": self.handlers}),
                         patch.object(pe, "_resolve_gguf_path", side_effect=lambda name: name),
@@ -129,7 +140,8 @@ class LocalLLMCompatibilityTests(unittest.TestCase):
         second = pe._LocalLLMStorage.load("PE.gguf", "vision.gguf", 4096)
         self.assertIs(first, second)
         self.assertEqual(len(FakeLlama.instances), 1)
-        self.startup.assert_called_once_with("PE.gguf", "vision.gguf", 4096)
+        self.startup.assert_called_once()
+        self.assertEqual(self.startup.call_args.args[:3], ("PE.gguf", "vision.gguf", 4096))
 
     def test_unload_closes_visual_projector_and_model(self):
         llm = pe._LocalLLMStorage.load("PE.gguf", "vision.gguf", 4096)
@@ -152,6 +164,61 @@ class LocalLLMCompatibilityTests(unittest.TestCase):
         self.assertEqual(len(FakeLlama.instances), 1)
         self.assertTrue(FakeLlama.instances[0].closed)
         self.assertIsNone(pe._LocalLLMStorage.llm)
+
+    def _complete(self, max_output_tokens):
+        return pe._request_local_llm(
+            model_name="PE.gguf", mmproj_name="vision.gguf", context_length=8192,
+            system_prompt="规则", user_prompt="改成黄昏海边", max_output_tokens=max_output_tokens,
+            image_base64_list=[])
+
+    def test_output_cap_survives_workflow_saved_with_large_max_tokens(self):
+        # 旧工作流里存着 4096/8192 时不会跟随默认值更新，必须在上限处封顶。
+        self.assertIn("rewritten_prompt", self._complete(8192))
+        self.assertEqual(FakeLlama.instances[0].completion_kwargs["max_tokens"],
+                         pe.LLM_LOCAL_MAX_OUTPUT_CEILING)
+
+    def test_smaller_output_request_is_not_raised_to_cap(self):
+        self.assertIn("rewritten_prompt", self._complete(512))
+        self.assertEqual(FakeLlama.instances[0].completion_kwargs["max_tokens"], 512)
+
+    def test_sampling_keeps_model_from_rambling_to_the_cap(self):
+        self._complete(1024)
+        kwargs = FakeLlama.instances[0].completion_kwargs
+        self.assertEqual(kwargs["temperature"], pe.LLM_TEMPERATURE)
+        self.assertLessEqual(kwargs["temperature"], 0.5)
+        self.assertEqual(kwargs["top_p"], pe.LLM_TOP_P)
+        self.assertEqual(kwargs["repeat_penalty"], pe.LLM_REPEAT_PENALTY)
+
+    def test_context_overflow_retries_with_larger_context(self):
+        FakeLlama.fail_times = 1
+        FakeLlama.fail_message = "本地LLM 上下文不足（n_ctx=8448）：提示词与参考图已占满 KV 缓存"
+        self.assertIn("rewritten_prompt", self._complete(1024))
+        self.assertEqual(self.startup.call_count, 2)
+        first, second = (call.args[2] for call in self.startup.call_args_list)
+        self.assertGreater(second, first)
+
+    def test_non_context_failure_is_not_retried(self):
+        FakeLlama.fail_times = 1
+        FakeLlama.fail_message = "本地LLM 生成失败：模型文件损坏"
+        with self.assertRaises(RuntimeError):
+            self._complete(1024)
+        self.assertEqual(self.startup.call_count, 1)
+
+    def test_context_retry_stops_at_max_context(self):
+        FakeLlama.fail_times = 99
+        FakeLlama.fail_message = "本地LLM 上下文不足（n_ctx=8448）"
+        with self.assertRaises(RuntimeError):
+            self._complete(1024)
+        # 默认就从 16384 起，两次重试内必触顶 32768，不会无限放大。
+        self.assertLessEqual(self.startup.call_count, pe.LLM_CONTEXT_RETRY + 1)
+        contexts = [call.args[2] for call in self.startup.call_args_list]
+        self.assertEqual(contexts, sorted(contexts))
+        self.assertEqual(max(contexts), pe.LLM_MAX_CONTEXT)
+
+    def test_workflow_lower_context_is_lifted_to_default(self):
+        # 旧工作流存着 8192 时不再照用，直接抬到最优默认值。
+        self._complete(1024)
+        self.assertEqual(self.startup.call_args_list[0].args[2], pe.DEFAULT_CONTEXT_LENGTH)
 
 
 class StandaloneGGUFDirectoryTests(unittest.TestCase):

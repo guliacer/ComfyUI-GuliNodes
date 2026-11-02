@@ -10,6 +10,7 @@ FAILED_MODULES = {}
 _NODE_MODULES = (
     "aspect_ratio",
     "image_tools",
+    "super_resolution",
     "mask_tools",
     "mask_check",
     "region_edit",

@@ -5,6 +5,10 @@ import sys
 
 PROTOCOL_PREFIX = "GG_LOCAL_LLM_JSON:"
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
+# n_ubatch 决定 compute buffer 的显存占用（实测 9B Q5：512→501 MiB，1024→1002 MiB），
+# 而图像 token 实测只有几十个，放大 ubatch 纯属白吃显存，固定回 512。
+PROMPT_BATCH = 2048
+PROMPT_UBATCH = 512
 
 
 def close_llm_model(llm):
@@ -31,9 +35,12 @@ def load_llm_model(model_path, mmproj_path, context_length):
             "或改用 API / 本地PE 方式。"
         ) from exc
 
+    n_ctx = max(512, int(context_length))
     llm = Llama(
         model_path=model_path,
-        n_ctx=max(512, int(context_length)),
+        n_ctx=n_ctx,
+        n_batch=min(PROMPT_BATCH, n_ctx),
+        n_ubatch=min(PROMPT_UBATCH, n_ctx),
         n_gpu_layers=-1,
         chat_handler=None,
         verbose=False,
@@ -71,6 +78,22 @@ def _reply(output, response):
     output.flush()
 
 
+def _explain_generate_failure(exc, llm):
+    """把 llama.cpp 的 KV 槽位/上下文报错翻成可行动的中文，其余原样返回。"""
+    text = str(exc)
+    try:
+        n_ctx = int(llm.n_ctx())
+    except Exception:
+        n_ctx = 0
+    if "batch size 1" in text or "memory slot" in text:
+        return (f"本地LLM 上下文不足（n_ctx={n_ctx}）：提示词与参考图已占满 KV 缓存，"
+                "生成阶段拿不到槽位。请加大上下文长度、减少参考图张数，或降低最大生成token。")
+    if "Context Shift is explicitly disabled" in text:
+        return (f"本地LLM 上下文不足（n_ctx={n_ctx}）：参考图 token 超出上下文窗口，"
+                "且该模型的 M-RoPE 不支持上下文平移。请加大上下文长度或减少参考图张数。")
+    return text
+
+
 def serve(source, output):
     """串行处理 load/generate/close；输入为 UTF-8 字节行，输出仅带标记的 JSON。"""
     llm = None
@@ -98,7 +121,10 @@ def serve(source, output):
                 elif op == "generate":
                     if llm is None:
                         raise RuntimeError("本地LLM 尚未加载，请重新执行节点。")
-                    result = llm.create_chat_completion(**request["kwargs"])
+                    try:
+                        result = llm.create_chat_completion(**request["kwargs"])
+                    except RuntimeError as exc:
+                        raise RuntimeError(_explain_generate_failure(exc, llm)) from exc
                 elif op == "close":
                     old, llm = llm, None
                     close_llm_model(old)
@@ -108,7 +134,9 @@ def serve(source, output):
                     raise RuntimeError("本地LLM 请求类型不正确，请重新执行节点。")
                 _reply(output, {"id": request_id, "ok": True, "result": result})
             except Exception as exc:
-                _reply(output, {"id": request_id, "ok": False, "error": f"{type(exc).__name__}: {exc}"[:4096]})
+                # 已经是中文可行动提示的 RuntimeError 不再叠加类型名，避免 "RuntimeError: 本地LLM…"。
+                message = str(exc) if isinstance(exc, RuntimeError) else f"{type(exc).__name__}: {exc}"
+                _reply(output, {"id": request_id, "ok": False, "error": message[:4096]})
                 break
     finally:
         close_llm_model(llm)

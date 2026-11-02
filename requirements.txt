@@ -5,3 +5,10 @@
 # （加载 GGUF 主模型 + mmproj 视觉投影）。不用本地LLM 方式可不装；缺失时该方式
 # 给出中文提示，API / 本地PE 两种方式不受影响。按平台/CUDA 选择合适 wheel 手动安装：
 #   pip install llama-cpp-python
+#
+# 「GG 图片超分（Real-CUGAN）」需要 onnxruntime 做推理。有 N 卡时装 GPU 版能走 CUDA，
+# 纯 CPU 版也能用（约 1.4 秒 / 512 块）。缺失时节点给中文提示，不影响其它节点：
+#   pip install onnxruntime-gpu     # NVIDIA
+#   pip install onnxruntime         # 纯 CPU / 其它显卡
+# 模型统一放 ComfyUI/models/Real-ESRGAN/：内置档位（约 5MB/个）首次使用时自动下载，
+# 你自己下载的 .onnx 也放这里，节点会自动扫描进下拉框，不必走插件下载。

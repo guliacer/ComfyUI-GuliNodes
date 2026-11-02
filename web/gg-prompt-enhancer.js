@@ -1,5 +1,12 @@
 import { app } from "../../scripts/app.js";
 import { growOnlyHeight } from "./gg-port-list-layout.js";
+import {
+  forgetHeight,
+  rememberHeight,
+  resolveHeight,
+  storedHeight,
+  visibleBottom,
+} from "./gg-prompt-enhancer-height.js";
 
 const NODE_TYPE = "GGPromptEnhancer";
 const IMAGE_PREFIX = "图片";
@@ -141,12 +148,24 @@ function computeVisibility(task, method) {
   };
 }
 
+// ---------- 节点高度记忆 ----------
+// growOnlyHeight 只增不减：这节点在加载时 computeSize 会把还没隐藏的控件先算进去，
+// 于是每次打开工作流都会被撑回上一次的高度，用户手动拉矮的高度留不住。
+// 记住用户拖出来的高度（节点 properties + localStorage 双写），刷新时以记住的为准。
+// 纯逻辑在 gg-prompt-enhancer-height.js，便于 Node 侧直接验证。
+
 function refreshSize(node) {
-  if (typeof node.computeSize === "function" && typeof node.setSize === "function") {
-    const [width, height] = node.computeSize();
-    // 只增不减：用户拉高的高度不被模式切换压回去（规则见 gg-port-list-layout.js）
-    node.setSize([Math.max(Number(node.size?.[0]) || 0, width), growOnlyHeight(node.size?.[1], height)]);
-  }
+  if (typeof node.computeSize !== "function" || typeof node.setSize !== "function") return;
+  const [width, height] = node.computeSize();
+  const target = resolveHeight({
+    current: node.size?.[1],
+    computed: height,
+    remembered: storedHeight(node),
+    bottom: visibleBottom(node),
+    growOnly: growOnlyHeight,
+  });
+  node._ggAutoHeight = target;
+  node.setSize([Math.max(Number(node.size?.[0]) || 0, width), target]);
   node.setDirtyCanvas?.(true, true);
   node.graph?.setDirtyCanvas?.(true, true);
   app.graph?.setDirtyCanvas?.(true, true);
@@ -178,11 +197,31 @@ function bindSelectors(node) {
   }
 }
 
+// ---------- 本地LLM 参数按最优值对齐 ----------
+// 后端已经按同一套规则兜底（低于最优值自动抬高），前端把显示值也改过来，
+// 免得界面显示 8192、实际跑 16384，还让人以为要自己调。
+const LOCAL_LLM_CONTEXT = 16384;
+const LOCAL_LLM_OUTPUT = 1536;
+
+function normalizeLimits(node) {
+  const context = widgetByName(node, "上下文长度");
+  if (context && Number.isFinite(Number(context.value)) && Number(context.value) < LOCAL_LLM_CONTEXT) {
+    context.value = LOCAL_LLM_CONTEXT;
+  }
+  const output = widgetByName(node, "最大生成token");
+  if (output && Number.isFinite(Number(output.value)) && Number(output.value) > LOCAL_LLM_OUTPUT) {
+    output.value = LOCAL_LLM_OUTPUT;
+  }
+}
+
 function setupNode(node) {
   if (!isThisNode(node)) return;
   bindSelectors(node);
-  updateVisibility(node);
   if (!hasNativeAutogrow(node)) normalizeImageInputs(node);
+  normalizeLimits(node);
+  updateVisibility(node);
+  // 补槽位等自动布局走完再钉基准高度，免得把自动变化当成用户拖动记下来。
+  node._ggAutoHeight = Number(node.size?.[1]) || Number(node._ggAutoHeight) || 0;
 }
 
 app.registerExtension({
@@ -204,6 +243,36 @@ app.registerExtension({
       const result = originalOnConfigure?.apply(this, args);
       setTimeout(() => setupNode(this), 0);
       return result;
+    };
+
+    const originalOnResize = nodeType.prototype.onResize;
+    nodeType.prototype.onResize = function (...args) {
+      const result = originalOnResize?.apply(this, args);
+      const height = Number(this.size?.[1] ?? args?.[0]?.[1]);
+      const auto = Number(this._ggAutoHeight);
+      // 只记用户手动拖出来的高度：自动布局写入的值与 _ggAutoHeight 相同，直接跳过。
+      if (Number.isFinite(height) && Number.isFinite(auto) && Math.abs(height - auto) > 1) {
+        rememberHeight(this, height);
+      }
+      return result;
+    };
+
+    const originalGetExtraMenuOptions = nodeType.prototype.getExtraMenuOptions;
+    nodeType.prototype.getExtraMenuOptions = function (canvas, options) {
+      const result = originalGetExtraMenuOptions?.apply(this, arguments);
+      const list = Array.isArray(options) ? options : Array.isArray(result) ? result : null;
+      if (list) {
+        list.push(null);
+        list.push({
+          content: "清除记住的节点高度",
+          callback: () => {
+            forgetHeight(this);
+            this._ggAutoHeight = Number(this.size?.[1]) || 0;
+            refreshSize(this);
+          },
+        });
+      }
+      return result ?? list;
     };
   },
 

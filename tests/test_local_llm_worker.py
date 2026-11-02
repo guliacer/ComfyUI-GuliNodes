@@ -7,6 +7,7 @@ import json
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -227,6 +228,42 @@ class LocalLLMTransportTests(unittest.TestCase):
             self.assertLess(time.monotonic() - start, 3)
         self.assert_released(proxy)
 
+    def test_interrupt_releases_child_without_waiting_full_timeout(self):
+        calls = []
+
+        class Interrupted(Exception):
+            pass
+
+        def check():
+            calls.append(1)
+            if len(calls) >= 2:
+                raise Interrupted()
+
+        proxy = self.bridge.LocalLLMProxy("query_hang", "视觉.mmproj.gguf", 4096, interrupt_check=check)
+        self.proxies.append(proxy)
+        started = time.monotonic()
+        with self.assertRaises(Interrupted):
+            self.generate(proxy)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assert_released(proxy)
+
+    def test_close_during_generation_kills_child_immediately(self):
+        proxy = self.bridge.LocalLLMProxy("query_hang", "视觉.mmproj.gguf", 4096)
+        self.proxies.append(proxy)
+
+        def slow_query():
+            try:
+                self.generate(proxy)
+            except Exception:
+                pass
+
+        threading.Thread(target=slow_query, daemon=True).start()
+        time.sleep(0.3)
+        started = time.monotonic()
+        proxy.close()
+        self.assertLess(time.monotonic() - started, 3)
+        self.assert_released(proxy)
+
     def test_close_timeout_forces_cleanup(self):
         proxy = self.start("close_hang")
         start = time.monotonic()
@@ -320,12 +357,12 @@ class WorkerFactoryTests(unittest.TestCase):
             load_source("local_llm_worker")
             self.assertNotIn("llama_cpp", sys.modules)
 
-    def fake_llama(self, import_torch=False):
+    def fake_llama(self, import_torch=False, arch="llama"):
         instances = []
         class Llama:
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
-                self.metadata = {"general.architecture": "llama"}
+                self.metadata = {"general.architecture": arch}
                 self.chat_handler = None
                 self.close_calls = 0
                 instances.append(self)
@@ -345,10 +382,56 @@ class WorkerFactoryTests(unittest.TestCase):
         module, instances = self.fake_llama()
         with patch.dict(sys.modules, {"llama_cpp": module}):
             llm = self.worker.load_llm_model("text.gguf", "", 128)
-        self.assertEqual(llm.kwargs, {"model_path": "text.gguf", "n_ctx": 512, "n_gpu_layers": -1,
-                                     "chat_handler": None, "verbose": False})
+        self.assertEqual(llm.kwargs, {"model_path": "text.gguf", "n_ctx": 512, "n_batch": 512, "n_ubatch": 512,
+                                     "n_gpu_layers": -1, "chat_handler": None, "verbose": False})
         self.worker.close_llm_model(llm)
         self.assertEqual(instances[0].close_calls, 1)
+
+    def test_batch_window_keeps_compute_buffer_small(self):
+        module, instances = self.fake_llama()
+        with patch.dict(sys.modules, {"llama_cpp": module}):
+            llm = self.worker.load_llm_model("text.gguf", "", 8192)
+        self.assertEqual(llm.kwargs["n_batch"], self.worker.PROMPT_BATCH)
+        # n_ubatch 直接决定 compute buffer 显存（512→501 MiB，1024→1002 MiB），不能随手放大。
+        self.assertEqual(llm.kwargs["n_ubatch"], self.worker.PROMPT_UBATCH)
+        self.assertLessEqual(llm.kwargs["n_ubatch"], 512)
+
+    def test_vision_handler_keeps_library_default_image_tokens(self):
+        module, instances = self.fake_llama(arch="qwen35")
+        seen = {}
+
+        class Handler:
+            def __init__(self, **kwargs):
+                seen.update(kwargs)
+
+            def close(self):
+                pass
+
+        fake_format = types.ModuleType("llama_cpp.llama_chat_format")
+        fake_format.Qwen35ChatHandler = Handler
+        sys.modules["llama_cpp.llama_chat_format"] = fake_format
+        try:
+            with patch.dict(sys.modules, {"llama_cpp": module}):
+                self.worker.load_llm_model("text.gguf", "vision.mmproj.gguf", 16384)
+        finally:
+            sys.modules.pop("llama_cpp.llama_chat_format", None)
+        # 不传 image_min/max tokens：实测图像只有几十 token，强行 1024 只会白吃上下文。
+        self.assertEqual(set(seen), {"clip_model_path", "verbose", "enable_thinking"})
+        self.assertFalse(seen["enable_thinking"])
+
+    def test_kv_slot_failure_is_explained_in_chinese(self):
+        module, _ = self.fake_llama()
+        with patch.dict(sys.modules, {"llama_cpp": module}):
+            llm = self.worker.load_llm_model("text.gguf", "", 8192)
+        llm.n_ctx = lambda: 8192
+        for raw in ("Llama.eval(decode): Failed completely even with batch size 1.",
+                    "decode: failed to find a memory slot for batch of size 1"):
+            message = self.worker._explain_generate_failure(RuntimeError(raw), llm)
+            self.assertIn("上下文不足", message)
+            self.assertIn("8192", message)
+            self.assertIn("参考图", message)
+        other = "some unrelated backend failure"
+        self.assertEqual(self.worker._explain_generate_failure(RuntimeError(other), llm), other)
 
     def test_cleanup_detaches_projector_and_closes_each_once(self):
         module, _ = self.fake_llama()
@@ -420,12 +503,15 @@ class StorageTransportIntegrationTests(unittest.TestCase):
         self.script.write_text(FAKE_WORKER, encoding="utf-8")
         self.unload = patch.object(mm, "unload_all_models")
         self.empty = patch.object(mm, "soft_empty_cache")
+        self.free = patch.object(mm, "free_memory")
         self.patches = [patch.object(bridge, "WORKER_SCRIPT", self.script), patch.object(bridge, "LOAD_TIMEOUT", 3),
                         patch.object(bridge, "QUERY_TIMEOUT", 3), patch.object(bridge, "CLOSE_TIMEOUT", 0.2),
-                        patch.object(pe, "_resolve_gguf_path", side_effect=lambda name: name), self.unload, self.empty]
+                        patch.object(pe, "_resolve_gguf_path", side_effect=lambda name: name),
+                        self.unload, self.empty, self.free]
         for item in self.patches:
             item.start()
         self.unload_mock, self.empty_mock = mm.unload_all_models, mm.soft_empty_cache
+        self.free_mock = mm.free_memory
         self.addCleanup(self.cleanup)
 
     def cleanup(self):
@@ -444,15 +530,84 @@ class StorageTransportIntegrationTests(unittest.TestCase):
         second = storage.load("model.gguf", "vision.gguf", 8192)
         self.assertIsNot(first, second)
         self.assertIsNotNone(first._process.poll())
-        self.assertEqual(storage.key, ("model.gguf", "vision.gguf", 8192))
+        self.assertEqual(storage.key, ("model.gguf", "vision.gguf"))
+        self.assertEqual(storage.context_length, 8192)
         self.assertEqual(before, self.pe.folder_paths.folder_names_and_paths)
-        self.assertEqual(self.unload_mock.call_count, 2)
-        self.assertEqual(self.empty_mock.call_count, 2)
+        self.assertEqual(self.free_mock.call_count, 2)
 
-    def test_comfy_vram_is_released_before_worker_startup_not_on_cache_hit(self):
+    def test_larger_context_request_reloads_and_smaller_request_reuses(self):
+        storage = self.pe._LocalLLMStorage
+        first = storage.load("model.gguf", "无", 4096)
+        self.assertIs(first, storage.load("model.gguf", "无", 2048))
+        bigger = storage.load("model.gguf", "无", 16384)
+        self.assertIsNot(bigger, first)
+        self.assertEqual(storage.context_length, 16384)
+        self.assertIsNotNone(first._process.poll())
+        self.assertIs(bigger, storage.load("model.gguf", "无", 8192))
+
+    def test_context_budget_covers_prompt_images_and_output(self):
+        pe = self.pe
+        required = pe._local_llm_context_needed("规则" * 10, "需求", 2, 4096)
+        self.assertGreaterEqual(required, 2 * pe.LLM_IMAGE_TOKEN_BUDGET + 4096)
+        self.assertLess(required, 4096 + pe.LLM_MAX_CONTEXT)
+
+    def test_over_budget_request_is_rejected_before_loading_weights(self):
+        pe = self.pe
+        # 提示词本身撑爆预算时，确认超限报错且不会先去加载权重。
+        with self.assertRaisesRegex(ValueError, "上下文不够"):
+            pe._request_local_llm(model_name="model.gguf", mmproj_name="无", context_length=8192,
+                                  system_prompt="规则", user_prompt="x" * 200_000, max_output_tokens=4096,
+                                  image_base64_list=["x"] * 20)
+        self.assertIsNone(pe._LocalLLMStorage.llm)
+
+    def test_many_reference_images_are_packed_into_one(self):
+        import torch
+        pe = self.pe
+        frames = [torch.rand(1, 64, 48, 3) for _ in range(8)]
+        self.assertEqual(len(pe._llm_reference_images(frames)), 1)
+        self.assertEqual(len(pe._llm_reference_images(frames[: pe.LLM_DIRECT_IMAGE_LIMIT])),
+                         pe.LLM_DIRECT_IMAGE_LIMIT)
+        self.assertEqual(len(pe._llm_reference_images(frames[:1])), 1)
+
+    def test_packed_grid_keeps_aspect_and_limits_edge(self):
+        import torch
+        pe = self.pe
+        frames = [torch.rand(1, 90, 40, 3) for _ in range(9)]
+        packed = pe._pack_image_grid(frames)
+        self.assertEqual(packed.ndim, 4)
+        self.assertLessEqual(max(packed.shape[1], packed.shape[2]), pe.DEFAULT_IMAGE_MAX_EDGE)
+
+    def test_twenty_images_still_fit_default_context(self):
+        pe = self.pe
+        # 超过 LLM_DIRECT_IMAGE_LIMIT 的参考图会先拼成一张网格图，按 1 张算预算。
+        packed = 1
+        required = pe._local_llm_context_needed("规则" * 2000, "需求" * 20, packed, pe.DEFAULT_MAX_OUTPUT_TOKENS)
+        self.assertLessEqual(required, pe.DEFAULT_CONTEXT_LENGTH)
+        # 两张直送的上限情况也要装得下。
+        direct = pe._local_llm_context_needed(
+            "规则" * 2000, "需求" * 20, pe.LLM_DIRECT_IMAGE_LIMIT, pe.DEFAULT_MAX_OUTPUT_TOKENS
+        )
+        self.assertLessEqual(direct, pe.DEFAULT_CONTEXT_LENGTH)
+
+    def test_image_budget_covers_llama_cpp_minimum_image_tokens(self):
+        # llama.cpp 对 Qwen-VL 有 image_min_tokens 下限（1024），预算必须高过它。
+        self.assertGreaterEqual(self.pe.LLM_IMAGE_TOKEN_BUDGET, 1024)
+
+    def test_local_mode_output_guard_matches_language(self):
+        zh = self.pe._local_output_guard("中文")
+        self.assertIn("不要输出任何英文说明", zh)
+        en = self.pe._local_output_guard("英文")
+        self.assertIn("English prompt", en)
+        self.assertNotEqual(zh, en)
+
+    def test_default_context_is_the_tested_optimal_value(self):
+        # 实测 8448 在拼图/多图时抢不到 KV 槽位，16384 稳定通过。
+        self.assertGreaterEqual(self.pe.DEFAULT_CONTEXT_LENGTH, 16384)
+
+    def test_only_required_vram_is_freed_and_reused_on_cache_hit(self):
         events = []
-        self.unload_mock.side_effect = lambda: events.append("unload")
-        self.empty_mock.side_effect = lambda **kwargs: events.append("empty")
+        self.free_mock.side_effect = lambda need, device: events.append("free")
+        self.unload_mock.side_effect = lambda: events.append("unload_all")
         real_factory = self.bridge.LocalLLMProxy
         def start(*args, **kwargs):
             events.append("worker")
@@ -460,7 +615,10 @@ class StorageTransportIntegrationTests(unittest.TestCase):
         with patch.object(self.bridge, "LocalLLMProxy", side_effect=start):
             self.pe._LocalLLMStorage.load("model.gguf", "无", 4096)
             self.pe._LocalLLMStorage.load("model.gguf", "无", 4096)
-        self.assertEqual(events, ["unload", "empty", "worker"])
+        # 只按需腾显存，不再无条件踢掉 ComfyUI 已加载的扩散模型。
+        self.assertEqual(events, ["free", "worker"])
+        need = self.free_mock.call_args[0][0]
+        self.assertGreater(need, self.pe.LLM_VRAM_OVERHEAD)
 
     def test_auto_unload_false_retains_child_and_default_true_exits_it(self):
         pe = self.pe
