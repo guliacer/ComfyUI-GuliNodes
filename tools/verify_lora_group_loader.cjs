@@ -770,7 +770,7 @@ const isOwnModuleError = (text) => OWN_MODULE.test(String(text));
     compacted.size[1] < state.size[1],
     { before: state.size, after: compacted.size });
 
-  // 右键组标签改名：覆盖 canvas.prompt，模拟用户输入后回车。
+  // 双击组标签改名：覆盖 canvas.prompt，模拟用户输入后回车。
   await page.evaluate(() => {
     window.__ggPromptCalls = [];
     window.app.canvas.prompt = (title, value, callback) => {
@@ -782,21 +782,25 @@ const isOwnModuleError = (text) => OWN_MODULE.test(String(text));
   const renameTab = state.geometry.tabs[0];
   const [renameX, renameY] = await toScreen(
     [renameTab.x + renameTab.w / 2, renameTab.y + renameTab.h / 2]);
-  await page.mouse.click(renameX, renameY, { button: 'right' });
-  await sleep(300);
+  await page.mouse.dblclick(renameX, renameY);
+  await sleep(320);
   const renamed = await readState();
   const promptCalls = await page.evaluate(() => window.__ggPromptCalls);
-  check('右键组标签弹出「组名称」并用输入值改写 properties',
+  check('双击组标签弹出「组名称」并用输入值改写 properties',
     promptCalls.length === 1 && promptCalls[0][0] === '组名称'
       && promptCalls[0][1] === 'LoRA组1'
       && renamed.groupNames[0] === '风景组',
     { promptCalls, names: renamed.groupNames });
-  const contextMenuShown = await page.evaluate(() => {
-    const el = document.querySelector('.litecontextmenu');
-    return !!el && el.offsetParent !== null;
-  });
-  check('右键组标签不会同时弹出画布 / 节点的原生右键菜单',
-    contextMenuShown === false, { contextMenuShown });
+
+  // 右键不再抢占改名，仍交给画布 / 节点的原生菜单。
+  const rightCallsBefore = await page.evaluate(() => window.__ggPromptCalls.length);
+  await page.mouse.click(renameX, renameY, { button: 'right' });
+  await sleep(220);
+  const rightCallsAfter = await page.evaluate(() => window.__ggPromptCalls.length);
+  await page.keyboard.press('Escape');
+  await sleep(120);
+  check('右键组标签不再触发改名（菜单留给画布 / 节点）',
+    rightCallsAfter === rightCallsBefore, { rightCallsBefore, rightCallsAfter });
 
   // ---------------------------------------------------------------- I 异常与资源
   check('全程无页面脚本异常（外部扩展启动噪音单独归类）',

@@ -1337,9 +1337,35 @@ function reflow(node) {
     }
     // 布局外控件（DOM 预览）不占行，但绘制宽度要跟着节点走：它走 drawWidgets
     // 的「无列」分支，宽度取 widget.width，不同步的话拉宽后预览还是默认那一条。
-    // y 与 computedHeight 保持官方 _arrangeWidgets 的分配结果，不碰。
+    // y 先沿用官方 _arrangeWidgets 的分配结果，下面再按参数区底部兜底修正。
     for (const widget of outside) {
         widget.width = Math.max(1, Number(node.size?.[0]) || 0);
+    }
+    // 宿主的 `_arrangeWidgets` 给 DOM 预览的 y 可能少算最后一行（实测「清除内存」
+    // 在 166、预览从 170 就开始，压住整行）。这里按参数区实际底部把预览推下去，
+    // 并等量收掉高度，保证预览起点永远在参数之后、底边不越过节点。
+    if (outside.length && laidOut.length) {
+        let paramBottom = startY;
+        for (const widget of laidOut) {
+            paramBottom = Math.max(
+                paramBottom,
+                (Number(widget.y) || 0) + (Number(widget.computedHeight) || height),
+            );
+        }
+        const minY = paramBottom + ROW_GAP;
+        for (const widget of outside) {
+            const currentY = Number(widget.y) || 0;
+            if (currentY >= minY) {
+                continue;
+            }
+            const delta = minY - currentY;
+            widget.y = minY;
+            widget.last_y = minY;
+            const currentHeight = Number(widget.computedHeight);
+            if (Number.isFinite(currentHeight)) {
+                widget.computedHeight = Math.max(0, currentHeight - delta);
+            }
+        }
     }
 
     state.height = Math.max(height + startY, y - ROW_GAP + 6);

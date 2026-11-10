@@ -98,16 +98,22 @@ const TOLERANCE = 40; // 列宽与节点宽的容差：内衬 / 贴紧行留出�
         (w) => w.name !== '$$canvas-image-preview' && !w.hidden,
       );
       const pv = (target.widgets ?? []).find((w) => w.name === '$$canvas-image-preview');
+      const paramBottom = Math.max(0, ...params.map(
+        (w) => (Number(w.y) || 0) + (Number(w.computedHeight) || 0),
+      ));
       return {
         label,
         size: [Math.round(target.size[0]), Math.round(target.size[1])],
         flexible: state?.flexible ?? null,
         rowSizes: (state?.rows ?? []).map((r) => r.length),
         paramColWidths: params.map((w) => (w._ggCol ? Math.round(w._ggCol.w) : null)),
+        paramBottom: Math.round(paramBottom),
         preview: pv ? {
           outside: !!pv._ggRowLayoutOutside,
           colW: pv._ggCol ? Math.round(pv._ggCol.w) : null,
           width: pv.width == null ? null : Math.round(pv.width),
+          y: Math.round(Number(pv.y) || 0),
+          computedHeight: Math.round(Number(pv.computedHeight) || 0),
           hasLayoutSize: typeof pv.computeLayoutSize === 'function',
         } : null,
       };
@@ -306,6 +312,9 @@ const TOLERANCE = 40; // 列宽与节点宽的容差：内衬 / 贴紧行留出�
     check('预览控件不占参数行', !!pd && pd.rowSizes.length === 6 && pd.rowSizes.every((n) => n === 1), JSON.stringify(pd?.rowSizes));
     check('预览出现后高度交回官方', pd?.flexible === true, `flexible=${pd?.flexible}`);
     check('预览宽度同步到节点宽', !!pd?.preview && Math.abs((pd.preview.width ?? 0) - pd.size[0]) <= TOLERANCE, JSON.stringify(pd?.preview));
+    check('预览图起点在参数区下方（不压住最后一行）',
+      !!pd?.preview && pd.preview.y >= pd.paramBottom,
+      { paramBottom: pd?.paramBottom, previewY: pd?.preview?.y });
 
     const pwide = report.previewWide;
     check('带预览拉宽 620 仍 6 行单列', !!pwide && pwide.rowSizes.length === 6 && pwide.rowSizes.every((n) => n === 1), JSON.stringify(pwide?.rowSizes));
@@ -313,6 +322,9 @@ const TOLERANCE = 40; // 列宽与节点宽的容差：内衬 / 贴紧行留出�
     check('带预览拉宽 620 高度仍交回官方', pwide?.flexible === true, `flexible=${pwide?.flexible}`);
     check('带预览预览控件仍不占行', !!pwide?.preview && pwide.preview.colW === null, JSON.stringify(pwide?.preview));
     check('带预览预览宽度跟着节点', !!pwide?.preview && Math.abs((pwide.preview.width ?? 0) - 620) <= TOLERANCE, JSON.stringify(pwide?.preview));
+    check('拉宽后预览图仍不压住参数区',
+      !!pwide?.preview && pwide.preview.y >= pwide.paramBottom,
+      { paramBottom: pwide?.paramBottom, previewY: pwide?.preview?.y });
 
     return checks;
   };

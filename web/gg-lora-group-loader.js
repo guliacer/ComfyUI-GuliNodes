@@ -72,6 +72,9 @@ const FONT = '12px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-se
 const SMALL_FONT = '11px "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif';
 
 const pointerState = { drag: null, press: null, scroll: null };
+// 双击改名：第一次点击切组会触发重排，标签可能上下移动，第二次点击不一定还
+// 命中标签。这里记住第一次点击的组与标签矩形，dblclick 时按记录判定。
+let lastGroupClick = { node: null, index: -1, at: 0, rect: null };
 const widgetState = new Map();
 const groupCache = new WeakMap();
 
@@ -1366,28 +1369,10 @@ function scrollBy(node, delta) {
 }
 
 // ------------------------------------------------------------------
-// 组重命名：右键组标签（或键盘菜单键）弹出改名输入框。
-// 右键同时也要挡住画布 / 节点的原生右键菜单，所以 pointerdown 与
-// contextmenu 都拦，指针按下时置一个短窗口给紧随其后的 contextmenu。
+// 组重命名：双击组标签弹出改名输入框。
+// 右键留给画布 / 节点的原生菜单，不再抢占；双击只认组标签本身，
+// 删除按钮与空白区域都不触发。
 // ------------------------------------------------------------------
-let suppressContextMenuUntil = 0;
-
-function locateGroupTab(event) {
-    const pos = eventToGraph(event);
-    if (!pos) {
-        return null;
-    }
-    for (const node of groupNodes()) {
-        const lx = pos[0] - node.pos[0];
-        const ly = pos[1] - node.pos[1];
-        const hit = hitGroupBar(node, lx, ly);
-        if (hit && (hit.kind === "group-select" || hit.kind === "group-delete")) {
-            return { node, index: hit.index };
-        }
-    }
-    return null;
-}
-
 function renameGroup(node, index, event) {
     if (!node) {
         return;
@@ -1418,32 +1403,31 @@ function renameGroup(node, index, event) {
     }
 }
 
-function onContextMenu(event) {
-    if (Date.now() < suppressContextMenuUntil) {
-        event.stopImmediatePropagation();
-        event.preventDefault();
+function onDoubleClick(event) {
+    const last = lastGroupClick;
+    if (!last.node || !last.rect || Date.now() - last.at > 600) {
         return;
     }
-    const hit = locateGroupTab(event);
-    if (!hit) {
+    const pos = eventToGraph(event);
+    if (!pos) {
         return;
     }
+    const lx = pos[0] - last.node.pos[0];
+    const ly = pos[1] - last.node.pos[1];
+    // 横向严格落在标签内（右侧紧邻删除按钮，不能放宽），纵向给 8px 容错。
+    const inTab = lx >= last.rect.x && lx <= last.rect.x + last.rect.w
+        && ly >= last.rect.y - 8 && ly <= last.rect.y + last.rect.h + 8;
+    if (!inTab) {
+        return;
+    }
+    lastGroupClick = { node: null, index: -1, at: 0, rect: null };
+    // 双击组标签只用来改名：挡住画布双击（搜索 / 缩放）等默认行为。
     event.stopImmediatePropagation();
     event.preventDefault();
-    renameGroup(hit.node, hit.index, event);
+    renameGroup(last.node, last.index, event);
 }
 
 function onPointerDown(event) {
-    if (event.button === 2) {
-        const hit = locateGroupTab(event);
-        if (hit) {
-            event.stopImmediatePropagation();
-            event.preventDefault();
-            suppressContextMenuUntil = Date.now() + 500;
-            renameGroup(hit.node, hit.index, event);
-        }
-        return;
-    }
     if (event.button !== 0) {
         return;
     }
@@ -1547,6 +1531,14 @@ function onPointerUp(event) {
             // 松手时仍在同一个组按钮上才算点击，拖出去不误切组。
             const now = locatePointer(event);
             if (now?.kind === "group-select" && now.node === node && now.index === press.index) {
+                // 先记下这次点击的标签矩形：切组会重排，dblclick 时标签可能已经移动。
+                const tab = tabsGeometry(node)?.tabs.find((item) => item.index === press.index);
+                lastGroupClick = {
+                    node,
+                    index: press.index,
+                    at: Date.now(),
+                    rect: tab ? { x: tab.x, y: tab.y, w: tab.w, h: tab.h } : null,
+                };
                 switchGroup(node, press.index);
             }
             break;
@@ -1622,7 +1614,7 @@ function installPointerHandlers() {
     }
     canvas._ggLoraGroupPointerInstalled = true;
     canvas.addEventListener("pointerdown", onPointerDown, true);
-    canvas.addEventListener("contextmenu", onContextMenu, true);
+    canvas.addEventListener("dblclick", onDoubleClick, true);
     canvas.addEventListener("wheel", onWheel, true);
     window.addEventListener("pointermove", onPointerMove, true);
     window.addEventListener("pointerup", onPointerUp, true);
