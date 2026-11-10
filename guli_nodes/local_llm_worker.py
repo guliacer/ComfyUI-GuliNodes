@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+from pathlib import Path
 
 PROTOCOL_PREFIX = "GG_LOCAL_LLM_JSON:"
 MAX_MESSAGE_BYTES = 64 * 1024 * 1024
@@ -9,6 +10,57 @@ MAX_MESSAGE_BYTES = 64 * 1024 * 1024
 # 而图像 token 实测只有几十个，放大 ubatch 纯属白吃显存，固定回 512。
 PROMPT_BATCH = 2048
 PROMPT_UBATCH = 512
+_DLL_DIRECTORY_HANDLES = {}
+
+
+def _prepare_windows_dll_paths():
+    """只登记现有 CUDA DLL，不导入 torch，也不修改宿主进程的环境。"""
+    if sys.platform != "win32":
+        return
+    import sysconfig
+
+    directories = []
+    for site in dict.fromkeys(sysconfig.get_path(key) for key in ("purelib", "platlib")):
+        if not site:
+            continue
+        root = Path(site)
+        directories.append(root / "torch" / "lib")
+        for package in ("cublas", "cuda_runtime", "cuda_nvrtc"):
+            directories.append(root / "nvidia" / package / "bin")
+    cuda_path = os.environ.get("CUDA_PATH")
+    if cuda_path:
+        directories.extend((Path(cuda_path) / "bin" / "x64", Path(cuda_path) / "bin"))
+
+    path_entries = os.environ.get("PATH", "").split(os.pathsep)
+    known = {entry.casefold() for entry in path_entries}
+    added = []
+    for directory in directories:
+        if not directory.is_dir():
+            continue
+        path = str(directory)
+        if path not in _DLL_DIRECTORY_HANDLES:
+            try:
+                # 句柄必须常驻；临时对象被回收后 AddDllDirectory 会立刻失效。
+                _DLL_DIRECTORY_HANDLES[path] = os.add_dll_directory(path)
+            except OSError as exc:
+                print(f"[GG 本地LLM] DLL 目录登记失败，继续使用 PATH：{path}（{exc}）", flush=True)
+        # ggml 动态后端还会走传统 LoadLibrary，只登记 AddDllDirectory 不够。
+        if path.casefold() not in known:
+            added.append(path)
+            known.add(path.casefold())
+    if added:
+        os.environ["PATH"] = os.pathsep.join(added + path_entries)
+
+
+def _llm_backend_info():
+    """返回真实原生后端信息；RPC offload 能力不代表存在 GPU。"""
+    try:
+        import llama_cpp
+
+        info = llama_cpp.llama_print_system_info()
+        return info.decode("utf-8", errors="replace").strip() if isinstance(info, bytes) else str(info or "").strip()
+    except Exception:
+        return ""
 
 
 def close_llm_model(llm):
@@ -25,8 +77,14 @@ def close_llm_model(llm):
                 pass
 
 
-def load_llm_model(model_path, mmproj_path, context_length):
-    """只在独立进程内构造 Llama；路径由宿主已有 resolver 解析。"""
+def load_llm_model(model_path, mmproj_path, context_length, text_only=False):
+    """只在独立进程内构造 Llama；路径由宿主已有 resolver 解析。
+
+    text_only=True 时也会借用 mmproj 构造 Qwen 聊天模板：模型自带模板会开思考，
+    实测同样输入要多花 1000+ token 写英文分析（38 秒 vs 14 秒），中文语言设置也会被淹没。
+    视觉编码器 text_only 时不上 GPU，只用来提供关闭思考的模板。
+    """
+    _prepare_windows_dll_paths()
     try:
         from llama_cpp import Llama
     except Exception as exc:
@@ -55,15 +113,34 @@ def load_llm_model(model_path, mmproj_path, context_length):
                 "qwen3vl": ("Qwen3VLChatHandler",),
                 "qwen2vl": ("Qwen25VLChatHandler", "Qwen2VLChatHandler"),
             }
-            if architecture not in families:
-                raise RuntimeError(f"本地LLM 图生图不支持此视觉架构：{architecture or '未知'}。请选择匹配的 Qwen VL 模型，或改用 API / 本地PE。")
-            handler_cls = next((getattr(llama_chat_format, name, None) for name in families[architecture] if getattr(llama_chat_format, name, None) is not None), None)
+            handler_cls = next(
+                (getattr(llama_chat_format, name, None) for name in families.get(architecture, ())
+                 if getattr(llama_chat_format, name, None) is not None),
+                None,
+            )
             if handler_cls is None:
-                raise RuntimeError(f"当前 llama-cpp-python 不支持 {families[architecture][0]}，请升级后再用图生图本地LLM。")
+                if not text_only:
+                    if architecture not in families:
+                        raise RuntimeError(f"本地LLM 图生图不支持此视觉架构：{architecture or '未知'}。请选择匹配的 Qwen VL 模型，或改用 API / 本地PE。")
+                    raise RuntimeError(f"当前 llama-cpp-python 不支持 {families[architecture][0]}，请升级后再用图生图本地LLM。")
+                print("[GG 本地LLM] 文本任务未匹配到 Qwen 聊天模板，继续使用模型自带模板", flush=True)
+                return llm
             handler_args = {"clip_model_path": mmproj_path, "verbose": False}
+            if text_only:
+                # 文本任务用不到视觉编码，放在 CPU 上即可，别占文生图的显存。
+                handler_args["use_gpu"] = False
             if architecture == "qwen35":
                 handler_args["enable_thinking"] = False
-            llm.chat_handler = handler_cls(**handler_args)
+            try:
+                llm.chat_handler = handler_cls(**handler_args)
+            except Exception as exc:
+                if not text_only:
+                    raise
+                # 文本任务拿不到模板只是变慢，不该让整条工作流失败。
+                print(f"[GG 本地LLM] 文本聊天模板加载失败，继续使用模型自带模板：{exc}", flush=True)
+            else:
+                if text_only:
+                    print("[GG 本地LLM] 文生图已关闭思考（使用 Qwen 文本聊天模板）", flush=True)
     except Exception:
         close_llm_model(llm)
         raise
@@ -94,6 +171,38 @@ def _explain_generate_failure(exc, llm):
     return text
 
 
+def _accepted_kwargs(llm) -> "set | None":
+    """探测当前 llama.cpp 版本接受哪些生成参数（只认 signature，不试错）。
+
+    遇到 **kwargs 形式的方法就返回 None，表示「全都接受」——按名字过滤会把 messages
+    这种必填参数一起丢掉。
+    """
+    try:
+        import inspect
+
+        params = inspect.signature(type(llm).create_chat_completion).parameters.values()
+    except Exception:
+        return None
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        return None
+    return {p.name for p in params}
+
+
+def _filter_kwargs(llm, kwargs):
+    """丢掉旧版本不认识的参数。
+
+    宿主会固定传 reasoning_budget=0 来关思考；老版本没有这个参数时直接传会 TypeError，
+    与其在宿主里 import llama_cpp 判断（会把原生库拉进 ComfyUI 进程），不如在 worker 里过滤。
+    """
+    accepted = _accepted_kwargs(llm)
+    if not accepted:
+        return dict(kwargs)
+    dropped = [name for name in kwargs if name not in accepted]
+    if dropped:
+        print(f"[GG 本地LLM] 跳过当前版本不支持的参数：{', '.join(dropped)}", flush=True)
+    return {name: value for name, value in kwargs.items() if name in accepted}
+
+
 def serve(source, output):
     """串行处理 load/generate/close；输入为 UTF-8 字节行，输出仅带标记的 JSON。"""
     llm = None
@@ -114,15 +223,21 @@ def serve(source, output):
                         raise RuntimeError("本地LLM 隔离进程意外导入 torch，已拒绝加载；请检查 Python 启动配置或改用 API / 本地PE。")
                     old, llm = llm, None
                     close_llm_model(old)
-                    llm = load_llm_model(request["model_path"], request["mmproj_path"], request["context_length"])
+                    llm = load_llm_model(
+                        request["model_path"],
+                        request["mmproj_path"],
+                        request["context_length"],
+                        bool(request.get("text_only", False)),
+                    )
                     if "torch" in sys.modules:
                         raise RuntimeError("本地LLM 依赖意外导入 torch，已拒绝就绪；请检查 llama-cpp-python 环境或改用 API / 本地PE。")
-                    result = {"ready": True, "metadata": llm.metadata, "torch_loaded": False}
+                    result = {"ready": True, "metadata": llm.metadata, "torch_loaded": False,
+                              "backend_info": _llm_backend_info()}
                 elif op == "generate":
                     if llm is None:
                         raise RuntimeError("本地LLM 尚未加载，请重新执行节点。")
                     try:
-                        result = llm.create_chat_completion(**request["kwargs"])
+                        result = llm.create_chat_completion(**_filter_kwargs(llm, request["kwargs"]))
                     except RuntimeError as exc:
                         raise RuntimeError(_explain_generate_failure(exc, llm)) from exc
                 elif op == "close":

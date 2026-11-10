@@ -2,6 +2,7 @@ import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { ggIcon } from "./gg-ui-icons.js";
 import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
+import { nodeMicroOffsetY } from "./gg-micro-interaction.js";
 
 const PREFIX = "GuliNodes.nodeGlow";
 const SETTINGS = {
@@ -24,6 +25,29 @@ const INTENSITY_SCALES = {
   "沉浸": 2.35,
 };
 
+// 扩展注册表：补充包光效由独立模块注册。
+// 这些效果不进粒子池（避免改动真随机序列与配额节奏），而是在节点本体
+// 绘制完成后追加一层独立叠加。关掉开关后 EFFECTS 里不再有它们，行为回旧版。
+export const EXTRA_GLOW_EFFECTS = [];
+export const EXTRA_GLOW_DRAWERS = new Map();
+// 导出给扩展包卸载时用：把效果从「效果池」下拉和 normalizePool 白名单里摘掉。
+// EFFECTS / EFFECT_LABELS 定义在下方，但这些函数只在运行时（别的模块 import
+// 完成后）才被调用，届时常量已初始化。
+export function unregisterGlowEffect(name) {
+  const i = EFFECTS.indexOf(name);
+  if (i >= 0) EFFECTS.splice(i, 1);
+  delete EFFECT_LABELS[name];
+  EXTRA_GLOW_DRAWERS.delete(name);
+}
+export function registerGlowEffect(name, label, drawer) {
+  if (typeof name !== "string" || typeof drawer !== "function") return false;
+  if (!EXTRA_GLOW_EFFECTS.includes(name)) EXTRA_GLOW_EFFECTS.push(name);
+  if (!EFFECTS.includes(name)) EFFECTS.push(name);
+  EXTRA_GLOW_DRAWERS.set(name, drawer);
+  EFFECT_LABELS[name] = label || name;
+  return true;
+}
+
 const EFFECTS = [
   "stardust",
   "rainbow",
@@ -32,6 +56,8 @@ const EFFECTS = [
   "heart",
 ];
 const DEFAULT_EFFECT_POOL = ["stardust", "cosmicDust", "rainbow"];
+const REMOVED_EFFECT_KEYS = new Set(["fireflies", "spark", "nebula", "sweep", "aurora", "prism", "matrix"]);
+const KNOWN_EFFECT_KEYS = new Set(["stardust", "rainbow", "musicNote", "cosmicDust", "heart", "heartbeat"]);
 const EFFECT_LABELS = {
   stardust: "星尘",
   rainbow: "彩虹",
@@ -161,6 +187,18 @@ function normalizePool(value) {
     ? [...new Set(values.filter((item) => EFFECTS.includes(item)))]
     : [];
   return pool.length > 0 ? pool : [...DEFAULT_EFFECT_POOL];
+}
+
+export async function migrateRemovedEffectPool() {
+  const raw = readSetting(SETTINGS.effectPool, DEFAULT_EFFECT_POOL);
+  let values = raw;
+  if (typeof raw === "string") {
+    try { values = JSON.parse(raw); } catch { values = raw.split(","); }
+  }
+  if (!Array.isArray(values)) values = [];
+  const filtered = [...new Set(values.filter((item) => KNOWN_EFFECT_KEYS.has(item) && !REMOVED_EFFECT_KEYS.has(item)))];
+  const next = filtered.length > 0 ? filtered : [...DEFAULT_EFFECT_POOL];
+  if (JSON.stringify(next) !== JSON.stringify(values)) await writeSetting(SETTINGS.effectPool, next);
 }
 
 function config() {
@@ -454,6 +492,25 @@ function withAlpha(color, alpha) {
   const green = Number.parseInt(match[1].slice(2, 4), 16);
   const blue = Number.parseInt(match[1].slice(4, 6), 16);
   return `rgba(${red}, ${green}, ${blue}, ${normalizedAlpha})`;
+}
+
+function strokeCurrentPathLayers(ctx, color, width, alpha, scale = 1) {
+  for (const [factor, strength] of [[3.1, 0.08], [2.1, 0.14], [1.45, 0.22]]) {
+    ctx.strokeStyle = withAlpha(color, alpha * strength);
+    ctx.lineWidth = Math.max(0.7 / scale, width * factor);
+    ctx.globalAlpha = 1;
+    ctx.stroke();
+  }
+}
+
+function fillSoftCircle(ctx, x, y, radius, color, alpha) {
+  for (const [factor, strength] of [[3, 0.07], [2.1, 0.13], [1.45, 0.22], [1, 1]]) {
+    ctx.fillStyle = withAlpha(color, alpha * strength);
+    ctx.beginPath();
+    ctx.arc(x, y, radius * factor, 0, Math.PI * 2);
+    ctx.globalAlpha = 1;
+    ctx.fill();
+  }
 }
 
 // ComfyUI's built-in light palette fills the canvas with the CSS named color
@@ -918,6 +975,8 @@ function paintHeartBody(ctx, x, y, size, palette, alpha) {
   gradient.addColorStop(1, withAlpha(palette[2], alpha));
   ctx.fillStyle = gradient;
   drawHeartPath(ctx, x, y, size);
+  strokeCurrentPathLayers(ctx, palette[0], Math.max(0.8, size * 0.12), alpha * 0.7);
+  drawHeartPath(ctx, x, y, size);
   ctx.fill();
   // One soft highlight across the left lobe is what stops the heart reading as a
   // flat sticker.
@@ -952,17 +1011,16 @@ function drawParticle(ctx, particle, effect, now, palette, scale) {
   // Drawing segments inside this function leave globalAlpha at a partial value;
   // reset it so the particle is drawn at exactly the alpha its color carries.
   ctx.globalAlpha = 1;
-  ctx.shadowBlur = 10 * px;
-  ctx.shadowColor = withAlpha(palette[0], base);
   ctx.fillStyle = withAlpha(palette[1], base);
   ctx.strokeStyle = withAlpha(palette[1], base);
   ctx.lineWidth = Math.max(0.9 * px, 1);
 
   if (effect === "stardust") {
-    ctx.shadowBlur = 11 * px;
-    ctx.fillStyle = withAlpha(palette[1], base);
-    drawSparkle(ctx, x, y, radius * 1.8);
-    ctx.fill();
+    for (const [factor, strength] of [[3.3, 0.08], [2.25, 0.15], [1.55, 0.28], [1, 1]]) {
+      ctx.fillStyle = withAlpha(palette[1], base * strength);
+      drawSparkle(ctx, x, y, radius * 1.8 * factor);
+      ctx.fill();
+    }
   } else if (effect === "rainbow") {
     rainbowBands().forEach((color, colorIndex) => {
       ctx.strokeStyle = withAlpha(color, base * 0.8);
@@ -974,22 +1032,13 @@ function drawParticle(ctx, particle, effect, now, palette, scale) {
   } else if (effect === "musicNote") {
     drawMusicNote(ctx, x, y, radius, particle.variant, palette);
   } else if (effect === "cosmicDust") {
-    // Twinkle plus a per-particle tint, with the blur radius standing in for the
-    // halo so no gradient object is allocated per mote.
+    // Twinkle plus a per-particle tint; concentric low-alpha fills form the halo.
     const twinkle = 0.5 + 0.5 * Math.sin(particle.phase + progress * Math.PI * 5.2);
     const alpha = base * (0.5 + twinkle * 0.5);
     const tint = particle.tint === 0 ? palette[0] : particle.tint === 1 ? palette[1] : palette[2];
     const tier = particle.tier || 0;
-    ctx.shadowBlur = (tier === 2 ? 20 : tier === 1 ? 14 : 8) * px;
-    ctx.shadowColor = withAlpha(tint, alpha * 0.9);
-    ctx.fillStyle = withAlpha(tint, alpha);
-    ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = withAlpha(palette[1], alpha * 0.9);
-    ctx.beginPath();
-    ctx.arc(x, y, radius * 0.45, 0, Math.PI * 2);
-    ctx.fill();
+    fillSoftCircle(ctx, x, y, radius * (tier === 2 ? 1.5 : 1), tint, alpha);
+    fillSoftCircle(ctx, x, y, radius * 0.45, palette[1], alpha * 0.9);
     if (tier === 2) {
       ctx.strokeStyle = withAlpha(tint, alpha * 0.55);
       ctx.lineWidth = Math.max(0.7 * px, 0.7);
@@ -1015,8 +1064,6 @@ function drawParticle(ctx, particle, effect, now, palette, scale) {
           const eased = approach * approach;
           const arrowX = particle.arrowFromX + (particle.arrowImpactX - particle.arrowFromX) * eased;
           const arrowY = particle.arrowFromY + (particle.arrowImpactY - particle.arrowFromY) * eased;
-          ctx.shadowBlur = 8 * px;
-          ctx.shadowColor = withAlpha(palette[2], base * 0.8);
           ctx.strokeStyle = withAlpha(palette[2], base);
           ctx.fillStyle = withAlpha(palette[2], base);
           drawArrow(ctx, arrowX, arrowY, particle.arrowAngle, size * 0.42);
@@ -1027,12 +1074,14 @@ function drawParticle(ctx, particle, effect, now, palette, scale) {
         const impactY = particle.arrowImpactY;
         const flash = Math.max(0, 1 - after / 0.34);
         if (flash > 0) {
-          ctx.shadowBlur = 12 * px;
-          ctx.shadowColor = withAlpha(palette[1], base * flash);
           ctx.strokeStyle = withAlpha(palette[1], base * flash);
           ctx.lineWidth = Math.max(1.2 * px, 1.2);
           ctx.beginPath();
           ctx.arc(impactX, impactY, size * (0.6 + (1 - flash) * 2.4), 0, Math.PI * 2);
+          strokeCurrentPathLayers(ctx, palette[1], ctx.lineWidth, base * flash, scale);
+          ctx.strokeStyle = withAlpha(palette[1], base * flash);
+          ctx.lineWidth = Math.max(1.2 * px, 1.2);
+          ctx.globalAlpha = 1;
           ctx.stroke();
         }
         // The heart breaks into shards that fly out and fall away.
@@ -1059,8 +1108,6 @@ function drawParticle(ctx, particle, effect, now, palette, scale) {
         // The arrow stays stuck in the burst for a moment.
         const arrowAlpha = Math.max(0, 1 - after / 0.6);
         if (arrowAlpha > 0) {
-          ctx.shadowBlur = 6 * px;
-          ctx.shadowColor = withAlpha(palette[2], base * arrowAlpha * 0.7);
           ctx.strokeStyle = withAlpha(palette[2], base * arrowAlpha);
           ctx.fillStyle = withAlpha(palette[2], base * arrowAlpha);
           drawArrow(ctx, impactX, impactY, particle.arrowAngle, size * 0.42);
@@ -1074,6 +1121,19 @@ function drawParticle(ctx, particle, effect, now, palette, scale) {
 function drawNodeGlow(ctx, node, effect, now, scale, intensityScale) {
   const rect = nodeBounds(node);
   const palette = paletteFor(effect);
+
+  // 扩展效果：在 original.call 之后（即节点本体含标题栏画完）才调用，
+  // 坐标系是节点局部。独立叠加层自带 save/restore，不碰粒子池与动画配额。
+  const extraDrawer = EXTRA_GLOW_DRAWERS.get(effect);
+  if (extraDrawer) {
+    ctx.save();
+    try {
+      extraDrawer({ ctx, node, rect, now, scale, palette, intensityScale, isLight: isLightCanvas() });
+    } finally {
+      ctx.restore();
+    }
+    return;
+  }
 
   // The effect is nothing but light leaving the node: particles are spawned on
   // the node edge and radiate outwards, each with its own soft bloom.
@@ -1113,6 +1173,11 @@ function patchNodeDrawTarget(target) {
     // chain for the same node; the outer call already painted the glow.
     const reentrant = glowDrawingNodes.has(node);
     if (!reentrant) glowDrawingNodes.add(node);
+    const microOffsetY = reentrant ? 0 : nodeMicroOffsetY(node, this);
+    if (microOffsetY) {
+      ctx.save();
+      ctx.translate(0, microOffsetY);
+    }
     try {
       // Draw the node body FIRST, then the glow on top. The title bar is part
       // of what the original drawNode paints and is opaque, so if the glow
@@ -1140,6 +1205,7 @@ function patchNodeDrawTarget(target) {
       }
       return result;
     } finally {
+      if (microOffsetY) ctx.restore();
       if (!reentrant) glowDrawingNodes.delete(node);
     }
   };
@@ -1244,6 +1310,8 @@ function syncTopButton() {
   if (!topControls) return;
   const enabled = config().enabled;
   topControls.toggleButton.classList.toggle("active", enabled);
+  topControls.toggleButton.classList.toggle("gg-state-on", enabled);
+  topControls.toggleButton.classList.toggle("gg-state-off", !enabled);
   topControls.toggleButton.title = enabled ? "关闭节点光效" : "开启节点光效";
   topControls.toggleButton.setAttribute("aria-label", topControls.toggleButton.title);
   topControls.settingsButton?.classList.toggle("active", glowSettingsPanel?.style.display === "block");
@@ -1252,6 +1320,11 @@ function syncTopButton() {
 
 function closeGlowSettingsPanel() {
   if (!glowSettingsPanel) return;
+  // 面板正挂在二级页里：交给顶栏收掉二级页（顺带复位面板到 body 并隐藏）
+  if (glowSettingsPanel.dataset.ggTopDetailPanel === "true") {
+    window.__ggToggleTopDetailSubpage?.("gg-node-glow-buttons");
+    return;
+  }
   glowSettingsPanel.style.display = "none";
   syncTopButton();
 }
@@ -1401,21 +1474,51 @@ function createGlowSettingsPanel() {
 function toggleGlowSettings(event) {
   event?.preventDefault?.();
   event?.stopPropagation?.();
+  // 齿轮位于顶栏菜单内时，二级页侧滑由顶栏统一接管（设计稿 5 ·03 / ·07）。
+  // 本模块已在上方 stopPropagation，事件不会冒泡到顶栏委托处理器，故这里直接委托，
+  // 避免「点了没反应」。确保面板已建好（不依赖顶栏 ensure 注册时序，避免加载竞态）。
+  if (window.__ggTopToolsMenuOpen?.() === true && event?.target?.closest?.("#gg-top-tools-nav")) {
+    if (!glowSettingsPanel) { createGlowSettingsPanel(); applySurface(glowSettingsPanel); }
+    window.__ggToggleTopDetailSubpage?.("gg-node-glow-buttons");
+    return;
+  }
+  const menuOpen = window.__ggTopToolsMenuOpen?.() === true;
+  if (menuOpen) {
+    // 菜单开着但齿轮不在菜单内（宽屏主开关常驻顶栏）：同样走二级页统一处理
+    createGlowSettingsPanel();
+    applySurface(glowSettingsPanel);
+    window.__ggToggleTopDetailSubpage?.("gg-node-glow-buttons");
+    syncTopButton();
+    return;
+  }
+  // 菜单关闭：沿用自浮动 popover
   createGlowSettingsPanel();
   const opening = glowSettingsPanel.style.display !== "block";
   if (opening) {
-    // 宿主可能中途切过主题，每次打开重新取一次皮肤
     applySurface(glowSettingsPanel);
     glowSettingsPanel.style.display = "block";
-    const menuOpen = window.__ggTopToolsMenuOpen?.() === true;
-    const embedded = menuOpen
-      && window.__ggEmbedTopDetailPanel?.("gg-node-glow-buttons") === true;
-    if (!embedded) positionGlowSettingsPanel();
+    positionGlowSettingsPanel();
     syncGlowSettingsPanel();
   } else {
     closeGlowSettingsPanel();
   }
   syncTopButton();
+}
+
+// 登记二级页面板保证器：菜单内打开光效设置前，顶栏会先调用它确保面板已建好
+// （键盘 Enter 打开二级页也走这条；用待注册队列规避与 toolbar 的加载顺序竞态）
+if (window.__ggRegisterTopDetailEnsurer) {
+  window.__ggRegisterTopDetailEnsurer("gg-node-glow-buttons", () => {
+    createGlowSettingsPanel();
+    applySurface(glowSettingsPanel);
+    return true;
+  });
+} else {
+  (window.__ggPendingTopDetailEnsurers ||= []).push(["gg-node-glow-buttons", () => {
+    createGlowSettingsPanel();
+    applySurface(glowSettingsPanel);
+    return true;
+  }]);
 }
 
 function installTopStyles() {
@@ -1499,16 +1602,16 @@ function installTopStyles() {
     }
     #gg-node-glow-settings-panel .gg-node-glow-mode button:hover,
     #gg-node-glow-settings-panel .gg-node-glow-intensity button:hover {
-      border-color: var(--gg-ui-accent, #3b82f6);
-      background: var(--gg-ui-accent-soft, rgba(59,130,246,0.13));
+      border-color: var(--gg-ui-accent, #4C8DFF);
+      background: var(--gg-ui-accent-soft, rgba(76,141,255,0.13));
     }
     #gg-node-glow-settings-panel .gg-node-glow-mode button.active,
     #gg-node-glow-settings-panel .gg-node-glow-intensity button.active {
-      background: var(--gg-ui-accent-soft, rgba(59,130,246,0.13));
-      border-color: var(--gg-ui-accent, #3b82f6);
-      color: var(--gg-ui-accent, #3b82f6);
+      background: var(--gg-ui-accent-soft, rgba(76,141,255,0.13));
+      border-color: var(--gg-ui-accent, #4C8DFF);
+      color: var(--gg-ui-accent, #4C8DFF);
       font-weight: 650;
-      box-shadow: 0 0 0 2px color-mix(in srgb, var(--gg-ui-accent, #3b82f6) 14%, transparent);
+      box-shadow: 0 0 0 2px color-mix(in srgb, var(--gg-ui-accent, #4C8DFF) 14%, transparent);
     }
     #gg-node-glow-settings-panel .gg-node-glow-colors {
       display: grid;
@@ -1531,8 +1634,8 @@ function installTopStyles() {
       transform: translateY(-1px) scale(1.08);
     }
     #gg-node-glow-settings-panel .gg-node-glow-color-chip.active {
-      border-color: var(--gg-ui-accent, #3b82f6);
-      box-shadow: 0 0 0 3px color-mix(in srgb, var(--gg-ui-accent, #3b82f6) 22%, transparent), inset 0 1px 2px rgba(255, 255, 255, 0.55);
+      border-color: var(--gg-ui-accent, #4C8DFF);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--gg-ui-accent, #4C8DFF) 22%, transparent), inset 0 1px 2px rgba(255, 255, 255, 0.55);
     }
     #gg-node-glow-settings-panel .gg-node-glow-effects {
       display: grid;
@@ -1554,7 +1657,7 @@ function installTopStyles() {
       transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
     }
     #gg-node-glow-settings-panel .gg-node-glow-effects label:hover {
-      border-color: var(--gg-ui-accent, #3b82f6);
+      border-color: var(--gg-ui-accent, #4C8DFF);
     }
     #gg-node-glow-settings-panel .gg-node-glow-effects label::before {
       content: "";
@@ -1576,21 +1679,21 @@ function installTopStyles() {
       pointer-events: none;
     }
     #gg-node-glow-settings-panel .gg-node-glow-effects label:has(input:checked) {
-      border-color: var(--gg-ui-accent-border, rgba(59,130,246,0.28));
-      background: var(--gg-ui-accent-soft, rgba(59,130,246,0.13));
-      color: var(--gg-ui-accent, #3b82f6);
+      border-color: var(--gg-ui-accent-border, rgba(76,141,255,0.28));
+      background: var(--gg-ui-accent-soft, rgba(76,141,255,0.13));
+      color: var(--gg-ui-accent, #4C8DFF);
       font-weight: 600;
     }
     #gg-node-glow-settings-panel .gg-node-glow-effects label:has(input:checked)::before {
-      border-color: var(--gg-ui-accent, #3b82f6);
-      background-color: var(--gg-ui-accent, #3b82f6);
+      border-color: var(--gg-ui-accent, #4C8DFF);
+      background-color: var(--gg-ui-accent, #4C8DFF);
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 13 5 5 9-11'/%3E%3C/svg%3E");
       background-size: 9px;
       background-position: center;
       background-repeat: no-repeat;
     }
     #gg-node-glow-settings-panel .gg-node-glow-effects label:has(input:focus-visible) {
-      outline: 2px solid var(--gg-ui-accent, #3b82f6);
+      outline: 2px solid var(--gg-ui-accent, #4C8DFF);
       outline-offset: 2px;
     }
   `;
@@ -1661,11 +1764,13 @@ async function setupTopControls() {
 
   document.addEventListener("pointerdown", (event) => {
     if (!glowSettingsPanel || glowSettingsPanel.style.display !== "block") return;
+    // 二级页模式下面板归顶栏管辖，点击外部不应由模块收掉（避免和二级页返回冲突）
+    if (glowSettingsPanel.dataset.ggTopDetailPanel === "true") return;
     if (glowSettingsPanel.contains(event.target) || glowSettingsButton?.contains(event.target)) return;
     closeGlowSettingsPanel();
   });
   window.addEventListener("resize", () => {
-    if (glowSettingsPanel?.style.display === "block") positionGlowSettingsPanel();
+    if (glowSettingsPanel?.style.display === "block" && glowSettingsPanel.dataset.ggTopDetailPanel !== "true") positionGlowSettingsPanel();
   });
 }
 
@@ -1718,6 +1823,7 @@ app.registerExtension({
   async setup() {
     patchCanvasSoon();
     startExecutionWatcher();
+    await migrateRemovedEffectPool();
     await setupTopControls();
   },
 

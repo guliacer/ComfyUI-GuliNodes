@@ -1,5 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
+import { refitAfterContentChange } from "./gg-node-autofit.js";
 
 function isNodes20Mode(canvas = app.canvas) {
     return !!(
@@ -71,6 +72,29 @@ function setLabelVisible(widget, visible) {
     widget.computeSize = visible ? state.computeSize : () => [0, -4];
 }
 
+let labelMeasureCtx = null;
+
+// 控件是「标签左对齐 + 数值右对齐」的排法，节点宽度得 >= 「标签 + 数值 + 90」
+// 才放得下（官方 drawTruncatingText 的 width-85 口径）。这里量的是节点宽，
+// 比 gg-widget-rows 的「列宽 60」多出的 30 正是控件两侧的内衬。
+// autofit 只按标签估宽会把数值切掉，所以把下限交给它。
+function requiredWidgetsWidth(node) {
+    if (!labelMeasureCtx) {
+        labelMeasureCtx = document.createElement("canvas").getContext("2d");
+        labelMeasureCtx.font = "12px Inter, sans-serif";
+    }
+    let widest = 0;
+    for (const widget of node?.widgets ?? []) {
+        if (!widget || widget.hidden || String(widget.type ?? "").startsWith("ggHidden")) continue;
+        const label = String(widget.displayName ?? widget.label ?? widget.name ?? "");
+        const value = String(widget._displayValue ?? widget.value ?? "");
+        // 数值/文本再长也不按它撑宽，留给控件自己截断
+        const valueWidth = Math.min(labelMeasureCtx.measureText(value).width, 60);
+        widest = Math.max(widest, labelMeasureCtx.measureText(label).width + valueWidth + 90);
+    }
+    return Math.ceil(widest + 24);
+}
+
 function comparerVisibleCount(node) {
     const slots = imageInputs(node);
     let highestConnected = -1;
@@ -131,6 +155,12 @@ function normalizeComparerInputs(node) {
     } catch {
         // Some versions expose arrange only after graph attachment.
     }
+    // 隐藏了多余标签 / 删掉了尾部空端口之后必须把高度收回内容尺寸：
+    // 加载路径的 autofit 是「只增不减」（用户拉过的宽高要留住），
+    // 没人在这里显式收一次，节点就一直留着 widget 全可见时撑出来的空白。
+    // 宽度下限同时量出来，免得 autofit 按标签估宽把数值切掉。
+    node._ggAutoFitMinWidth = requiredWidgetsWidth(node);
+    refitAfterContentChange(node);
     node.setDirtyCanvas?.(true, true);
     node.graph?.setDirtyCanvas?.(true, true);
 }
@@ -250,7 +280,16 @@ class GGImageComparerNode {
             getValue: () => "",
             setValue: () => {},
         });
-        widget.computeSize = (width) => [Math.max(Number(width) || 520, 360), 300];
+        // 预览区高度跟着节点高度走：官方 resize 用 node.computeSize() 当硬下限，
+        // 这里若申报固定 300，内容总高就是死值，用户把节点往下拖多少都会被顶回
+        // （「只能拉大无法调小」）。其余控件约占 210px，预览拿剩余高度、最低 120。
+        widget.computeSize = (width) => {
+            const nodeHeight = Number(this.node?.size?.[1]) || 420;
+            // 宽度下限与节点默认宽同源（COMPARER2_MIN_WIDTH 的一半口径见下方常量）：
+            // 这里若报 360，Nodes 2.0 下 DOM widget 的申报宽会把节点默认宽顶回 360，
+            // 用户看到的默认宽度就收不到 260。用 180 让节点默认宽说了算。
+            return [Math.max(Number(width) || 260, 180), Math.max(120, nodeHeight - 210)];
+        };
         widget.inputEl = host;
         this.domPreview = { host, imageA, imageB, empty, divider, pressed: false };
 
@@ -463,14 +502,77 @@ app.registerExtension({
         // 仅处理 GGImageComparer2 节点的双图滑动预览。
         if (nodeData.name !== "GGImageComparer2") return;
 
+        // ---- 尺寸完全归本节点管（通用 autofit 已排除本类，见 gg-node-autofit.js）----
+        // 预览区需要 260×420 的最低面积（宽度原为 520，用户要求缩一半到 260），
+        // 自动收缩的来源逐个堵死：
+        // ① autofit 按内容收尺寸（排除后已消失）；
+        // ② 前端内部「对齐内容」类写入走 computeSize → 在 computeSize 里返回
+        //    max(内容, 当前, 下限)，谁拿它去 setSize 都只会维持现状或补到下限，
+        //    绝不会把用户拉好的尺寸收回去；
+        // ③ 直接写尺寸的路径（折叠、用户拖拽提交）不拦：collapse() 内部走
+        //    setSize 缩到标题尺寸，这里若硬兜底会把折叠态顶回 260×420（实测
+        //    踩过）；用户自己拖小的同理，尊重写入方。
+        const COMPARER2_MIN_WIDTH = 260;
+        const COMPARER2_MIN_HEIGHT = 420;
+
+        function comparer2Collapsed(node) {
+            return node?.flags?.collapsed === true || node?.collapsed === true;
+        }
+
+        function clampComparer2Size(node) {
+            if (!node || comparer2Collapsed(node)) return false;
+            // size 是 Float64Array 而非数组，不能 Array.isArray 判
+            const size = node.size;
+            if (!size || typeof size.length !== "number" || size.length < 2) return false;
+            const width = Number(size[0]) || 0;
+            const height = Number(size[1]) || 0;
+            if (width >= COMPARER2_MIN_WIDTH && height >= COMPARER2_MIN_HEIGHT) return false;
+            // 统一走 setSize：onResize / 画布刷新都会被带起来，不裸写 size
+            node.setSize?.([Math.max(width, COMPARER2_MIN_WIDTH), Math.max(height, COMPARER2_MIN_HEIGHT)]);
+            return true;
+        }
+
+        const comparer2OriginalComputeSize = nodeType.prototype.computeSize;
+        nodeType.prototype.computeSize = function (...args) {
+            const size = comparer2OriginalComputeSize?.apply(this, args);
+            // 折叠态的宽高是标题条尺寸，交回原生，别用展开态下限去顶
+            if (comparer2Collapsed(this)) return size;
+            // 拖拽进行中：官方 onDrag 拿 computeSize() 当硬下限钳拉力，这里若报
+            // max(内容, 当前, 下限)，往下拖的距离会被实时顶回去。拖拽中只报
+            // 260×420 下限，预览区高度已改成跟节点走，松手后自然收敛。
+            const liveCanvas = app?.canvas || globalThis.LGraphCanvas?.active_canvas;
+            if (liveCanvas?.resizing_node === this) {
+                return [COMPARER2_MIN_WIDTH, COMPARER2_MIN_HEIGHT];
+            }
+            const width = Math.max(
+                Number(size?.[0]) || 0,
+                Number(this.size?.[0]) || 0,
+                COMPARER2_MIN_WIDTH,
+            );
+            const height = Math.max(
+                Number(size?.[1]) || 0,
+                Number(this.size?.[1]) || 0,
+                COMPARER2_MIN_HEIGHT,
+            );
+            return [Math.ceil(width), Math.ceil(height)];
+        };
+
+        // 老工作流里存过被收小的尺寸：configure 对 size 是直接赋值、不走
+        // 任何会读 computeSize 的路径，读档后在这里显式补回下限。
+        const comparer2OriginalOnConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function (...args) {
+            const result = comparer2OriginalOnConfigure?.apply(this, args);
+            clampComparer2Size(this);
+            return result;
+        };
+
         // 重写节点创建方法
         const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             originalOnNodeCreated?.call(this);
             this.ggComparer = new GGImageComparerNode(this);
-            // 设置节点默认尺寸
-            if (this.size[0] < 520) this.size[0] = 520;
-            if (this.size[1] < 420) this.size[1] = 420;
+            // 默认尺寸 260×420，写法与读档/拖拽路径同源
+            clampComparer2Size(this);
         };
 
         // 重写节点执行完成方法

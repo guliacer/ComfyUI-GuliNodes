@@ -9,6 +9,8 @@ FAILED_MODULES = {}
 
 _NODE_MODULES = (
     "aspect_ratio",
+    "color_calibration",
+    "image_loader",
     "image_tools",
     "super_resolution",
     "mask_tools",

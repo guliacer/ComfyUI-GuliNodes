@@ -306,7 +306,7 @@ function createContextMenu(e) {
     // 菜单里就永远是那块黑，深色下像「已选黑色」，浅色下干脆是错的。
     // 空值就显示当前解析出来的面板底色，所见即所得。
     const panelColor = getComputedStyle(document.documentElement)
-        .getPropertyValue("--gg-panel").trim() || "#171B24";
+        .getPropertyValue("--gg-panel").trim() || "#131822";
     colorInput.value = _currentSettings.background || panelColor;
     Object.assign(colorInput.style, {
         width: "36px",
@@ -339,7 +339,7 @@ function createContextMenu(e) {
     followChip.addEventListener("click", () => {
         _currentSettings.background = "";
         colorInput.value = getComputedStyle(document.documentElement)
-            .getPropertyValue("--gg-panel").trim() || "#171B24";
+            .getPropertyValue("--gg-panel").trim() || "#131822";
         saveSettings();
         updateAllToolbars();
         syncFollowChip();

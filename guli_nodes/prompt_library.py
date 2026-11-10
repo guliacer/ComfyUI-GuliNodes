@@ -5,9 +5,16 @@
 `web/gg-prompt-library.js`，两边不重复实现同一套逻辑。
 """
 
+import asyncio
+import base64
+import binascii
+import hashlib
 import json
 import os
+import re
+import shutil
 import threading
+import uuid
 from pathlib import Path
 
 import folder_paths
@@ -31,6 +38,20 @@ PROMPT_NAME = "提示词"
 LIBRARY_ROUTE = "/guli/prompt_library"
 LIBRARY_FILENAME = "gg-prompt-library.json"
 LIBRARY_VERSION = 1
+
+# 预览图：文件存 user/default/gg-prompt-library-previews/<安全目录名>/uuid.ext，
+# 库 JSON 里每条预设只存文件名列表（previews 键）。悬浮轮播用的读取路由也在这组。
+PREVIEW_ROUTE = "/guli/prompt_library_preview"
+MAX_PREVIEWS = 9
+MAX_PREVIEW_BYTES = 5 * 1024 * 1024
+MIME_EXTENSION = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+    "image/gif": "gif",
+}
+PREVIEW_FILE_RE = re.compile(r"[0-9a-f]{8,32}\.(?:png|jpe?g|webp|gif)\Z")
+DATA_URL_RE = re.compile(r"\Adata:(image/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=\s]+)\Z")
 
 # 颜色只用固定几个键，具体色值由前端映射，避免用户填出看不清的颜色。
 COLOR_KEYS = ("rose", "amber", "emerald", "sky", "violet", "slate")
@@ -159,9 +180,64 @@ def _library_path() -> Path:
     return Path(folder_paths.get_user_directory()) / "default" / LIBRARY_FILENAME
 
 
+def _previews_root() -> Path:
+    return Path(folder_paths.get_user_directory()) / "default" / "gg-prompt-library-previews"
+
+
+def _preview_dir_name(preset_id) -> str:
+    """预设 id → 磁盘目录名。id 来自前端生成或旧库数据，可能带任意字符：
+    统一替换成安全字符并追加内容摘要后缀，防目录穿越也防清洗后碰撞。"""
+    text = str(preset_id or "").strip()
+    if not text or len(text) > 64:
+        return ""
+    safe = re.sub(r"[^A-Za-z0-9_-]", "_", text)[:48]
+    digest = hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
+    return f"{safe}-{digest}"
+
+
+def _preview_dir(preset_id) -> Path | None:
+    name = _preview_dir_name(preset_id)
+    return _previews_root() / name if name else None
+
+
+def _prune_orphan_previews(presets: list[dict]) -> None:
+    """整库落盘后清理不再被任何预设引用的预览图目录。只动 previews 根目录内部。"""
+    root = _previews_root()
+    try:
+        entries = [entry for entry in root.iterdir() if entry.is_dir()]
+    except OSError:
+        return
+    referenced = {_preview_dir_name(preset.get("id")) for preset in presets}
+    for entry in entries:
+        if entry.name not in referenced:
+            shutil.rmtree(entry, ignore_errors=True)
+            if entry.exists():
+                for item in entry.iterdir():
+                    try:
+                        item.unlink()
+                    except OSError:
+                        pass
+                try:
+                    entry.rmdir()
+                except OSError:
+                    pass
+
+
 def _clean_text(value, limit: int) -> str:
     text = str(value or "").strip()
     return text[:limit]
+
+
+def _clean_preview_list(raw) -> list[str]:
+    """预览图只收我们自己生成的文件名（uuid hex + 白名单扩展名），其余一律丢弃。"""
+    files: list[str] = []
+    if not isinstance(raw, list):
+        return files
+    for item in raw[:MAX_PREVIEWS]:
+        name = str(item or "").strip().lower()
+        if PREVIEW_FILE_RE.fullmatch(name) and name not in files:
+            files.append(name)
+    return files
 
 
 def _clean_preset(raw, index: int) -> dict | None:
@@ -178,6 +254,7 @@ def _clean_preset(raw, index: int) -> dict | None:
         "group": _clean_text(raw.get("group"), MAX_GROUP_LENGTH) or "未分类",
         "color": color if color in COLOR_KEYS else "slate",
         "text": text,
+        "previews": _clean_preview_list(raw.get("previews")),
     }
 
 
@@ -231,6 +308,8 @@ def _write_library(presets: list[dict]) -> None:
         with open(temp_path, "w", encoding="utf-8") as file:
             json.dump(payload, file, ensure_ascii=False, indent=2)
         os.replace(temp_path, path)
+        # 库落盘后同步清理孤儿预览图目录；没有引用就说明前端已经把对应预设删掉了
+        _prune_orphan_previews(presets)
 
 
 def _register_library_route() -> None:
@@ -268,6 +347,106 @@ def _register_library_route() -> None:
         except Exception as exc:
             return web.json_response({"ok": False, "message": str(exc)}, status=500)
         return web.json_response({"ok": True, "presets": presets})
+
+    @PromptServer.instance.routes.post(f"{PREVIEW_ROUTE}/{{preset_id}}")
+    async def guli_prompt_preview_upload(request):
+        """上传一张预览图（dataURL）。文件名后端生成，前端只拿到文件名存进库。"""
+        preset_id = request.match_info.get("preset_id", "")
+        if not preset_id or len(preset_id) > 64:
+            return web.json_response({"ok": False, "message": "预设标识不合法，无法保存预览图。"}, status=400)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "message": "请求内容不是合法的 JSON。"}, status=400)
+        matched = DATA_URL_RE.fullmatch(str(payload.get("image") or "").strip())
+        if not matched:
+            return web.json_response(
+                {"ok": False, "message": "只支持 PNG / JPEG / WEBP / GIF 格式的图片。"}, status=400
+            )
+        try:
+            raw = base64.b64decode(matched.group(2), validate=True)
+        except (binascii.Error, ValueError):
+            return web.json_response({"ok": False, "message": "图片数据解码失败，请重新选择文件。"}, status=400)
+        if not raw:
+            return web.json_response({"ok": False, "message": "图片内容为空。"}, status=400)
+        if len(raw) > MAX_PREVIEW_BYTES:
+            return web.json_response(
+                {"ok": False, "message": "预览图不能超过 5MB，请压缩后再添加。"}, status=400
+            )
+        directory = _preview_dir(preset_id)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            existing = [entry for entry in directory.iterdir() if entry.is_file()]
+            if len(existing) >= MAX_PREVIEWS:
+                return web.json_response(
+                    {"ok": False, "message": f"每个提示词最多 {MAX_PREVIEWS} 张预览图。"}, status=400
+                )
+            filename = f"{uuid.uuid4().hex}.{MIME_EXTENSION[matched.group(1)]}"
+            temp_path = directory / f"{filename}.tmp"
+            with open(temp_path, "wb") as file:
+                file.write(raw)
+            os.replace(temp_path, directory / filename)
+        except OSError as exc:
+            return web.json_response({"ok": False, "message": f"预览图保存失败：{exc}"}, status=500)
+        return web.json_response({"ok": True, "file": filename})
+
+    @PromptServer.instance.routes.get(f"{PREVIEW_ROUTE}/{{preset_id}}/{{filename}}")
+    async def guli_prompt_preview_get(request):
+        """读取一张预览图。文件名不可变（uuid），可以放心长缓存。"""
+        preset_id = request.match_info.get("preset_id", "")
+        filename = str(request.match_info.get("filename", "")).lower()
+        directory = _preview_dir(preset_id)
+        if directory is None or not PREVIEW_FILE_RE.fullmatch(filename):
+            return web.json_response({"ok": False, "message": "预览图不存在。"}, status=404)
+        path = directory / filename
+        try:
+            # 双保险：即便文件名将来放开了，也确保解析结果不出预览图根目录
+            path.resolve().relative_to(_previews_root().resolve())
+        except (ValueError, OSError):
+            return web.json_response({"ok": False, "message": "预览图不存在。"}, status=404)
+        if not path.is_file():
+            return web.json_response({"ok": False, "message": "预览图不存在。"}, status=404)
+        return web.FileResponse(
+            path, headers={"Cache-Control": "public, max-age=31536000, immutable"}
+        )
+
+    @PromptServer.instance.routes.delete(f"{PREVIEW_ROUTE}/{{preset_id}}")
+    async def guli_prompt_preview_delete(request):
+        """删掉一条预设的预览图目录。只允许删「还没保存进库」的临时目录，
+        已保存预设的预览图随整库管理（保存时后端按引用清理）。"""
+        preset_id = request.match_info.get("preset_id", "")
+        if any(preset.get("id") == preset_id for preset in _read_library()):
+            return web.json_response(
+                {"ok": False, "message": "该提示词已保存，预览图随整库一起管理。"}, status=400
+            )
+        directory = _preview_dir(preset_id)
+        try:
+            if directory is not None and directory.is_dir() and directory.resolve().parent == _previews_root().resolve():
+                # Windows 上刚发完的 GET 响应可能还占着句柄，rmtree 会静默失败：
+                # 带重试删，最后校验目录真的没了才算成功
+                for attempt in range(4):
+                    try:
+                        shutil.rmtree(directory)
+                        break
+                    except OSError:
+                        await asyncio.sleep(0.15)
+                if directory.exists():
+                    for entry in directory.iterdir():
+                        try:
+                            entry.unlink()
+                        except OSError:
+                            pass
+                    try:
+                        directory.rmdir()
+                    except OSError:
+                        pass
+                if directory.exists():
+                    return web.json_response(
+                        {"ok": False, "message": "预览图目录删除失败，文件可能被占用。"}, status=500
+                    )
+        except OSError:
+            pass
+        return web.json_response({"ok": True})
 
     _ROUTE_REGISTERED = True
 

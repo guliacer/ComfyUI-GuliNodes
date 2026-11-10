@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { lockRowLayoutHeight, syncRowLayout } from "./gg-widget-rows.js";
 
 const NODE_NAME = "GGImageCompressSave";
 const FORMAT_WIDGET_NAME = "格式";
@@ -220,11 +221,22 @@ function installFormatVisibility(node) {
 }
 
 function relaxPreviewWidgets(node) {
+  let found = false;
   for (const widget of node?.widgets ?? []) {
-    if (widget?.name !== PREVIEW_WIDGET_NAME || widget._ggCompressSavePreviewRelaxed) continue;
+    if (widget?.name !== PREVIEW_WIDGET_NAME) continue;
+    found = true;
+    // 行布局不接管 DOM 预览：它的位置 / 高度由宿主按 computeLayoutSize 分配，
+    // 引擎只把绘制宽度同步到节点宽。不打这个标记时，「带 computeLayoutSize」
+    // 会被误判成多行文本框，整个节点放弃行布局，拉宽后参数仍占默认 244。
+    widget._ggRowLayoutOutside = true;
+    if (widget._ggCompressSavePreviewRelaxed) continue;
     widget._ggCompressSavePreviewRelaxed = true;
     widget.computeLayoutSize = () => ({ minHeight: 0, maxHeight: 8192, minWidth: 1 });
   }
+  // 预览刚出现时节点尺寸没变、不一定有 onResize；同步一次布局，让节点高度
+  // 立刻交回官方，预览才拿得到参数区下方的剩余空间。每帧都调是安全的：
+  // 引擎按「控件签名 + 节点宽度」比对，没变化就直接返回。
+  if (found) syncRowLayout(node);
 }
 
 function installPreviewGuard(node) {
@@ -361,7 +373,12 @@ function scheduleRestore(node) {
     if ((node._ggCompressSaveEpoch || 0) !== epoch) return;
     if (!node._ggCompressSaveSizeLocked) return;
     relaxPreviewWidgets(node);
-    applySize(node, node._ggCompressSaveSize);
+    const saved = node._ggCompressSaveSize;
+    applySize(node, saved);
+    // 存档高度是用户上次拖出来的，告诉行布局别按内容高度缩回去。
+    // 只在明显高于当前内容高度时才锁：默认贴合高度不该把之后的流式行数变化卡住。
+    const contentHeight = Number(node._ggRowLayout?.height) || 0;
+    if (saved?.[1] > contentHeight + 2) lockRowLayoutHeight(node, saved[1]);
     pinDom(node);
   };
   if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
@@ -436,7 +453,16 @@ function installPrototypeHooks(nodeType) {
   const originalOnConfigure = nodeType.prototype.onConfigure;
   nodeType.prototype.onConfigure = function (...args) {
     this._ggCompressSaveSizeLocked = true;
-    const size = readNodeSize(this);
+    // configure() 期间官方会按「节点定义 + 预览控件」重算一次 size（PNG 态实测
+    // 172，而存档里是 140）。拿这个中间态当存档尺寸去恢复，会把已经隐藏的两行
+    // 又锁进节点高度，读档后底部永久多出 32px 空白。只认序列化数据里的 size。
+    const stored = args[0]?.size;
+    const storedSize = Array.isArray(stored)
+      ? [Number(stored[0]), Number(stored[1])]
+      : null;
+    const size = storedSize && storedSize.every((v) => Number.isFinite(v) && v > 0)
+      ? storedSize
+      : readNodeSize(this);
     if (size) this._ggCompressSaveSize = size;
     this._ggCompressSaveEpoch = (this._ggCompressSaveEpoch || 0) + 1;
     installPreviewGuard(this);

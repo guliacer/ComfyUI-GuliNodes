@@ -1,6 +1,9 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { ggIcon } from "./gg-ui-icons.js";
+import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
+import { nodeMicroOffsetY } from "./gg-micro-interaction.js";
+import { applyLaneOffset, assignOutputLanes, findPolylineIntersections } from "./gg-link-geometry.js";
 
 const PREFIX = "GuliNodes.linkStyle";
 const TOP_BUTTONS_SETTING = "GuliNodes.enableLinkStyleButtons";
@@ -56,10 +59,7 @@ const DASH_SOLID = "实线";
 const DASH_FLOW = "流动虚线";
 const DASH_FLOW_SOLID = "流动实线";
 const DASH_PULSE = "脉冲";
-const DASH_LIGHTNING = "闪电";
-const DASH_METEOR = "流星";
 const DASH_ENERGY_WAVE = "能量波";
-const DASH_LASER = "激光";
 const DASH_PARTICLE = "粒子流";
 const DASH_GRADIENT = "渐变流动";
 const DASH_AURORA = "极光";
@@ -67,23 +67,44 @@ const DASH_HELIX = "双螺旋";
 const DASH_WAVE = "波涛";
 const DASH_GALAXY = "星河";
 const DASH_TEXTURE = "自定义贴图";
-const DASH_VOID = "虚空";
-const VOID_LINK_COLOR = "#2b3138";
-const VOID_STUB_LENGTH_PX = 10;
+const REMOVED_DASH_STYLES = new Set(["闪电", "流星", "激光", "虚空", "声波", "电弧链", "光纤束", "液态光", "神经脉冲", "磁力线", "丝带"]);
+const DATA_PULSE_DURATION_MS = 760;
+const LANE_MERGE_LENGTH_PX = 40;
+const LANE_SPACING_PX = 6;
+const CROSSING_CACHE_TTL_MS = 140;
+const MAX_CROSSING_SPOTS = 72;
 
-const ALL_DASH_STYLES = [
+// 扩展注册表：新增连线样式由独立模块注册，核心分发链不认识的一律走这里。
+// 设计稿 25:1 / 26:1 的「效果补充包」用这个口子增量接入，关闭后零行为变化。
+// ALL_DASH_STYLES / ANIMATED_STYLES 定义在下面，注册发生在别的模块 import
+// 之后（那时已初始化），所以这里直接 push 主数组即可让下拉框与动画循环同步生效。
+export const EXTRA_DASH_STYLES = [];
+export const EXTRA_DASH_DRAWERS = new Map();
+export const EXTRA_ANIMATED_STYLES = new Set();
+export function registerDashStyle(name, drawer, options = {}) {
+  if (typeof name !== "string" || typeof drawer !== "function") return false;
+  if (!EXTRA_DASH_STYLES.includes(name)) EXTRA_DASH_STYLES.push(name);
+  if (!ALL_DASH_STYLES.includes(name)) ALL_DASH_STYLES.push(name);
+  EXTRA_DASH_DRAWERS.set(name, drawer);
+  if (options.animated !== false) {
+    EXTRA_ANIMATED_STYLES.add(name);
+    if (!ANIMATED_STYLES.includes(name)) ANIMATED_STYLES.push(name);
+  }
+  return true;
+}
+
+export const ALL_DASH_STYLES = [
   DASH_SOLID, DASH_FLOW, DASH_FLOW_SOLID,
-  DASH_PULSE, DASH_LIGHTNING, DASH_METEOR,
-  DASH_ENERGY_WAVE, DASH_LASER,
+  DASH_PULSE, DASH_ENERGY_WAVE,
   DASH_PARTICLE, DASH_GRADIENT,
   DASH_AURORA, DASH_HELIX, DASH_WAVE, DASH_GALAXY,
-  DASH_TEXTURE, DASH_VOID,
+  DASH_TEXTURE,
 ];
 
 // 动画类样式清单：drawOverlay 与 ensureAnimation 共用一份，避免两处列表失步。
-const ANIMATED_STYLES = [
-  DASH_FLOW, DASH_FLOW_SOLID, DASH_PULSE, DASH_LIGHTNING, DASH_METEOR,
-  DASH_ENERGY_WAVE, DASH_LASER, DASH_PARTICLE, DASH_GRADIENT,
+export const ANIMATED_STYLES = [
+  DASH_FLOW, DASH_FLOW_SOLID, DASH_PULSE,
+  DASH_ENERGY_WAVE, DASH_PARTICLE, DASH_GRADIENT,
   DASH_AURORA, DASH_HELIX, DASH_WAVE, DASH_GALAXY,
 ];
 
@@ -93,6 +114,9 @@ let topControls = null;
 let quickPanel = null;
 let quickPanelCleanup = null;
 let cachedTextureImage = null;
+let activeLaneOffset = 0;
+const dataPulseUntil = new Map();
+let crossingCache = { signature: "", expiresAt: 0, points: [] };
 
 function loadTextureImage(dataUrl) {
   if (!dataUrl) { cachedTextureImage = null; return; }
@@ -107,6 +131,15 @@ function setting(id, fallback) {
   const uiValue = app.ui?.settings?.getSettingValue?.(id, undefined);
   if (uiValue !== undefined) return uiValue;
   return fallback;
+}
+
+function normalizeDashStyle(value) {
+  return ALL_DASH_STYLES.includes(value) ? value : DASH_SOLID;
+}
+
+export async function migrateRemovedDashStyle() {
+  const raw = setting(SETTINGS.dashStyle, DASH_SOLID);
+  if (REMOVED_DASH_STYLES.has(raw)) await setSettingValue(SETTINGS.dashStyle, DASH_SOLID);
 }
 
 async function setSettingValue(id, value) {
@@ -147,7 +180,7 @@ function config() {
     opacity: numberSetting(SETTINGS.opacity, 0.75, 0.05, 1),
     colorMode: setting(SETTINGS.colorMode, COLOR_TYPE),
     customColor: normalizeColor(setting(SETTINGS.customColor, "#72d6ff")),
-    dashStyle: setting(SETTINGS.dashStyle, DASH_SOLID),
+    dashStyle: normalizeDashStyle(setting(SETTINGS.dashStyle, DASH_SOLID)),
     textureDataUrl: setting(SETTINGS.textureDataUrl, ""),
     glow: Boolean(setting(SETTINGS.glow, false)),
     speed: numberSetting(SETTINGS.speed, 1.5, 0.2, 6),
@@ -491,7 +524,9 @@ function startExecutionWatcher() {
   });
 
   api.addEventListener("executed", ({ detail }) => {
-    rememberExecutionNode(detail?.node ?? detail?.node_id, RECENT_EXECUTION_TTL);
+    const nodeId = detail?.node ?? detail?.node_id;
+    rememberExecutionNode(nodeId, RECENT_EXECUTION_TTL);
+    rememberDataPulse(nodeId);
   });
 
   api.addEventListener("execution_cached", ({ detail }) => {
@@ -517,26 +552,28 @@ function shouldDraw(canvas, link, cfg) {
   return selected.has(originId) || selected.has(targetId);
 }
 
-function connectionPos(node, isInput, slot) {
+function connectionPos(node, isInput, slot, canvas) {
   const out = [0, 0];
+  let position = null;
   if (isSubgraphBoundaryNode(node)) {
-    const pos = boundarySlotPos(node, slot);
-    if (pos) return pos;
+    position = boundarySlotPos(node, slot);
   }
-  if (globalThis.LiteGraph?.vueNodesMode && node?.getSlotPosition) {
+  if (!position && globalThis.LiteGraph?.vueNodesMode && node?.getSlotPosition) {
     const vuePosition = node.getSlotPosition(slot, isInput);
-    if (Array.isArray(vuePosition) && vuePosition.length >= 2) return vuePosition;
+    if (Array.isArray(vuePosition) && vuePosition.length >= 2) position = vuePosition;
   }
-  if (node?.getConnectionPos) return node.getConnectionPos(isInput, slot, out) || out;
-  const x = node?.pos?.[0] ?? 0;
-  const y = node?.pos?.[1] ?? 0;
-  const width = node?.size?.[0] ?? 180;
-  const row = 36 + Number(slot || 0) * 20;
-  return [x + (isInput ? 0 : width), y + row];
+  if (!position && node?.getConnectionPos) position = node.getConnectionPos(isInput, slot, out) || out;
+  if (!position) {
+    const x = node?.pos?.[0] ?? 0;
+    const y = node?.pos?.[1] ?? 0;
+    const width = node?.size?.[0] ?? 180;
+    const row = 36 + Number(slot || 0) * 20;
+    position = [x + (isInput ? 0 : width), y + row];
+  }
+  return [Number(position[0]), Number(position[1]) + nodeMicroOffsetY(node, canvas)];
 }
 
 function linkColor(canvas, link, originNode, cfg) {
-  if (cfg.dashStyle === DASH_VOID && cfg.colorMode !== COLOR_CUSTOM) return VOID_LINK_COLOR;
   if (cfg.colorMode === COLOR_CUSTOM) return cfg.customColor;
   const originSlot = linkField(link, "origin_slot", 2) ?? 0;
   // 普通节点从 outputs 取端口；子图输入边界节点没有 outputs，改从 slots 取。
@@ -549,29 +586,72 @@ function linkColor(canvas, link, originNode, cfg) {
 }
 
 function drawPath(ctx, from, to, style) {
-  ctx.beginPath();
-  ctx.moveTo(from[0], from[1]);
-
-  if (style === PATH_DIRECT) {
-    ctx.lineTo(to[0], to[1]);
-  } else if (style === PATH_ORTHOGONAL) {
-    const midX = (from[0] + to[0]) / 2;
-    ctx.lineTo(midX, from[1]);
-    ctx.lineTo(midX, to[1]);
-    ctx.lineTo(to[0], to[1]);
-  } else if (style === PATH_CIRCUIT) {
-    const direction = to[0] >= from[0] ? 1 : -1;
-    const offset = Math.max(48, Math.min(180, Math.abs(to[0] - from[0]) * 0.45));
-    const turnX = from[0] + direction * offset;
-    ctx.lineTo(turnX, from[1]);
-    ctx.lineTo(turnX, to[1]);
-    ctx.lineTo(to[0], to[1]);
-  } else {
-    const distance = Math.abs(to[0] - from[0]);
-    const offset = Math.max(60, Math.min(220, distance * 0.5));
-    ctx.bezierCurveTo(from[0] + offset, from[1], to[0] - offset, to[1], to[0], to[1]);
+  if (activeLaneOffset === 0) {
+    ctx.beginPath();
+    ctx.moveTo(from[0], from[1]);
+    if (style === PATH_DIRECT) {
+      ctx.lineTo(to[0], to[1]);
+    } else if (style === PATH_ORTHOGONAL) {
+      const midX = (from[0] + to[0]) / 2;
+      ctx.lineTo(midX, from[1]);
+      ctx.lineTo(midX, to[1]);
+      ctx.lineTo(to[0], to[1]);
+    } else if (style === PATH_CIRCUIT) {
+      const direction = to[0] >= from[0] ? 1 : -1;
+      const offset = Math.max(48, Math.min(180, Math.abs(to[0] - from[0]) * 0.45));
+      const turnX = from[0] + direction * offset;
+      ctx.lineTo(turnX, from[1]);
+      ctx.lineTo(turnX, to[1]);
+      ctx.lineTo(to[0], to[1]);
+    } else {
+      const distance = Math.abs(to[0] - from[0]);
+      const offset = Math.max(60, Math.min(220, distance * 0.5));
+      ctx.bezierCurveTo(from[0] + offset, from[1], to[0] - offset, to[1], to[0], to[1]);
+    }
+    ctx.stroke();
+    return;
   }
+  const points = samplePathPoints(from, to, style);
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index][0], points[index][1]);
+  ctx.stroke();
+}
 
+function strokeCurrentPathLayers(ctx, color, width, alpha, stroke = () => ctx.stroke()) {
+  const widthScale = Math.max(0.5, width / 2.5);
+  ctx.save();
+  try {
+    ctx.globalCompositeOperation = "lighter";
+    for (const [layerWidth, opacity] of [[12, 0.1], [8, 0.16], [5, 0.26], [3, 0.55]]) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = layerWidth * widthScale;
+      ctx.globalAlpha = alpha * opacity;
+      stroke();
+    }
+  } finally {
+    ctx.restore();
+  }
+}
+
+function strokeSoftPath(ctx, from, to, color, width, alpha, pathStyle) {
+  strokeCurrentPathLayers(ctx, color, width, alpha, () => drawPath(ctx, from, to, pathStyle));
+}
+
+function fillSoftCircle(ctx, x, y, radius, color, alpha) {
+  for (const [factor, opacity] of [[3.2, 0.08], [2.2, 0.14], [1.5, 0.22], [1, 1]]) {
+    ctx.beginPath();
+    ctx.arc(x, y, radius * factor, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = alpha * opacity;
+    ctx.fill();
+  }
+}
+
+function strokePolyline(ctx, points) {
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index][0], points[index][1]);
   ctx.stroke();
 }
 
@@ -597,51 +677,32 @@ function applyDash(ctx, cfg) {
   }
 }
 
-function drawVoidLink(ctx, from, to, color, cfg, canvas) {
-  const dx = to[0] - from[0];
-  const dy = to[1] - from[1];
-  const distance = Math.hypot(dx, dy);
-  if (!Number.isFinite(distance) || distance < 0.1) return;
-
-  const scale = Number(canvas?.ds?.scale) || 1;
-  const stubLength = Math.min(VOID_STUB_LENGTH_PX / scale, distance / 2);
-  const horizontal = Math.abs(dx) >= Math.abs(dy) * 0.35;
-  const direction = horizontal
-    ? [Math.sign(dx) || 1, 0]
-    : [0, Math.sign(dy) || 1];
-
-  ctx.setLineDash([]);
-  ctx.lineDashOffset = 0;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = cfg.lineWidth;
-  ctx.beginPath();
-  ctx.moveTo(from[0], from[1]);
-  ctx.lineTo(from[0] + direction[0] * stubLength, from[1] + direction[1] * stubLength);
-  ctx.moveTo(to[0], to[1]);
-  ctx.lineTo(to[0] - direction[0] * stubLength, to[1] - direction[1] * stubLength);
-  ctx.stroke();
-}
-
-function drawStyledLink(ctx, from, to, color, cfg, canvas) {
+function drawStyledLink(ctx, from, to, color, cfg, canvas, laneOffset = 0) {
   ctx.save();
   ctx.globalAlpha = cfg.opacity;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-
+  const previousLaneOffset = activeLaneOffset;
+  activeLaneOffset = laneOffset;
+  try {
   const style = cfg.dashStyle;
 
-  if (style === DASH_VOID) {
-    drawVoidLink(ctx, from, to, color, cfg, canvas);
-  } else if (style === DASH_PULSE) {
+  // 扩展样式优先：独立模块注册的绘制器自己管 dash / alpha / 发光，
+  // 返回 true 就表示已画完，不再走下面任何原生分支。
+  const extraDrawer = EXTRA_DASH_DRAWERS.get(style);
+  if (extraDrawer) {
+    ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
+    // 屏幕像素常量要除以画布缩放，把 scale 一并交给扩展绘制器。
+    const extraCfg = { ...cfg, scale: Number(canvas?.ds?.scale) || 1 };
+    extraDrawer(ctx, from, to, color, extraCfg, canvas);
+    return;
+  }
+
+  if (style === DASH_PULSE) {
     drawPulseLink(ctx, from, to, color, cfg);
-  } else if (style === DASH_LIGHTNING) {
-    drawLightningLink(ctx, from, to, color, cfg);
-  } else if (style === DASH_METEOR) {
-    drawMeteorLink(ctx, from, to, color, cfg);
   } else if (style === DASH_ENERGY_WAVE) {
     drawEnergyWaveLink(ctx, from, to, color, cfg);
-  } else if (style === DASH_LASER) {
-    drawLaserLink(ctx, from, to, color, cfg);
   } else if (style === DASH_PARTICLE) {
     drawParticleLink(ctx, from, to, color, cfg);
   } else if (style === DASH_GRADIENT) {
@@ -666,22 +727,24 @@ function drawStyledLink(ctx, from, to, color, cfg, canvas) {
 
     // 走到这里只剩实线/流动虚线/流动实线/无贴图回退，都是简单描边，可直接发光。
     if (cfg.glow) {
-      ctx.strokeStyle = color;
-      ctx.lineWidth = cfg.lineWidth + 4;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 12;
-      drawPath(ctx, from, to, cfg.pathStyle);
-      ctx.shadowBlur = 0;
+      strokeSoftPath(ctx, from, to, color, cfg.lineWidth, cfg.opacity, cfg.pathStyle);
     }
 
     ctx.strokeStyle = color;
     ctx.lineWidth = cfg.lineWidth;
     drawPath(ctx, from, to, cfg.pathStyle);
   }
-  ctx.restore();
+  } finally {
+    activeLaneOffset = previousLaneOffset;
+    ctx.restore();
+  }
 }
 
-function buildPathPoints(from, to, pathStyle) {
+// 导出给扩展样式复用：新连线要沿当前 pathStyle（曲线/直角/电路）画才不会
+// 与官方端点错位。扩展不改这些函数，只读取采样点。
+export { buildPathPoints, pathLength, pointOnPath };
+
+function buildPathPoints(from, to, pathStyle, laneOffset = activeLaneOffset) {
   const points = [from];
   if (pathStyle === PATH_DIRECT) {
     points.push(to);
@@ -697,7 +760,8 @@ function buildPathPoints(from, to, pathStyle) {
     points.push([from[0] + Math.max(60, Math.min(220, Math.abs(to[0] - from[0]) * 0.5)), from[1]],
       [to[0] - Math.max(60, Math.min(220, Math.abs(to[0] - from[0]) * 0.5)), to[1]], to);
   }
-  return points;
+  const scale = Math.max(0.05, Number(app.canvas?.ds?.scale) || 1);
+  return applyLaneOffset(points, laneOffset, LANE_MERGE_LENGTH_PX / scale);
 }
 
 function pathLength(points) {
@@ -737,14 +801,10 @@ function drawNeonLink(ctx, from, to, color, cfg) {
     ctx.globalAlpha = cfg.opacity * glowAlpha;
     ctx.strokeStyle = color;
     ctx.lineWidth = glowWidth;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = (4 - layer) * 8 + Math.sin(time * 2 + layer) * 3;
     ctx.lineDashOffset = 0;
     setLineDashEmpty(ctx);
     drawPath(ctx, from, to, cfg.pathStyle);
   }
-  ctx.shadowBlur = 0;
-
   ctx.globalAlpha = cfg.opacity;
   ctx.strokeStyle = "#ffffff";
   ctx.lineWidth = baseWidth * 0.6;
@@ -775,14 +835,7 @@ function drawParticleLink(ctx, from, to, color, cfg) {
     const size = cfg.lineWidth * (1.2 + 0.8 * Math.sin(t * Math.PI));
     const alpha = 0.5 + 0.5 * Math.sin((t + i * 0.15) * Math.PI * 2);
 
-    ctx.beginPath();
-    ctx.arc(pos[0], pos[1], size, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.globalAlpha = cfg.opacity * alpha;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = size * 2;
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    fillSoftCircle(ctx, pos[0], pos[1], size, color, cfg.opacity * alpha);
   }
 }
 
@@ -817,99 +870,6 @@ function drawPulseLink(ctx, from, to, color, cfg) {
         ctx.fill();
       }
     }
-  }
-}
-
-function drawLightningLink(ctx, from, to, color, cfg) {
-  setLineDashEmpty(ctx);
-  const points = buildPathPoints(from, to, cfg.pathStyle);
-  const c = parseColor(color);
-  const time = performance.now() / (80 / cfg.speed);
-
-  for (let bolt = 0; bolt < 2; bolt++) {
-    const basePhase = ((time * 0.6) + bolt * 0.5) % 1;
-
-    ctx.beginPath();
-    let started = false;
-    for (let i = 0; i <= Math.min(points.length - 1, 60); i += Math.max(1, Math.floor((points.length - 1) / 40))) {
-      const idx = Math.min(i, points.length - 1);
-      const pt = points[idx];
-      const tAlong = idx / Math.max(1, points.length - 1);
-
-      const phaseDist = Math.abs(tAlong - basePhase);
-      if (phaseDist > 0.35 && phaseDist < 0.65) continue;
-
-      const jagX = pt[0] + (Math.random() - 0.5) * cfg.lineWidth * 2.5;
-      const jagY = pt[1] + (Math.random() - 0.5) * cfg.lineWidth * 2.5;
-
-      if (!started) { ctx.moveTo(jagX, jagY); started = true; }
-      else { ctx.lineTo(jagX, jagY); }
-    }
-
-    const flicker = 0.6 + 0.4 * Math.sin(time * 15 + bolt * 3);
-    ctx.strokeStyle = `rgba(255,255,255,${cfg.opacity * flicker})`;
-    ctx.lineWidth = cfg.lineWidth * 0.7;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = cfg.lineWidth * 3;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-  }
-
-  setLineDashEmpty(ctx);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = cfg.lineWidth * 0.25;
-  ctx.globalAlpha = cfg.opacity * 0.2;
-  drawPath(ctx, from, to, cfg.pathStyle);
-}
-
-function drawMeteorLink(ctx, from, to, color, cfg) {
-  setLineDashEmpty(ctx);
-  const points = buildPathPoints(from, to, cfg.pathStyle);
-  const time = performance.now() / (900 / cfg.speed);
-  const meteorCount = 3;
-
-  setLineDashEmpty(ctx);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = cfg.lineWidth * 0.3;
-  ctx.globalAlpha = cfg.opacity * 0.15;
-  drawPath(ctx, from, to, cfg.pathStyle);
-
-  for (let m = 0; m < meteorCount; m++) {
-    const baseT = ((time * 0.35) + m / meteorCount) % 1;
-    const headPos = pointOnPath(points, baseT);
-    const headSize = cfg.lineWidth * (2.2 + 0.6 * Math.sin(baseT * Math.PI));
-    const tailLen = cfg.lineWidth * 10;
-
-    for (let seg = 0; seg < 20; seg++) {
-      const segT = baseT - seg * 0.012;
-      if (segT < 0 || segT > 1) continue;
-      const pos = pointOnPath(points, segT);
-      const ratio = seg / 20;
-      const size = headSize * (1 - ratio * 0.85);
-      const alpha = (1 - ratio * ratio) * 0.85;
-
-      if (size > 0.4) {
-        ctx.beginPath();
-        ctx.arc(pos[0], pos[1], size, 0, Math.PI * 2);
-        const r = ratio < 0.3 ? 255 : c.r;
-        const g = ratio < 0.3 ? 255 : c.g;
-        const b = ratio < 0.3 ? 255 : c.b;
-        ctx.fillStyle = `rgba(${r},${g},${b},${cfg.opacity * alpha})`;
-        ctx.shadowColor = color;
-        ctx.shadowBlur = size * 1.5;
-        ctx.fill();
-        ctx.shadowBlur = 0;
-      }
-    }
-
-    ctx.beginPath();
-    ctx.arc(headPos[0], headPos[1], headSize * 1.3, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
-    ctx.globalAlpha = cfg.opacity * 0.95;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = headSize * 2.5;
-    ctx.fill();
-    ctx.shadowBlur = 0;
   }
 }
 
@@ -948,70 +908,8 @@ function drawEnergyWaveLink(ctx, from, to, color, cfg) {
     }
 
     const coreR = cfg.lineWidth * 0.8;
-    ctx.beginPath();
-    ctx.arc(centerPos[0], centerPos[1], coreR, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
-    ctx.globalAlpha = cfg.opacity * 0.95;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = coreR * 3;
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    fillSoftCircle(ctx, centerPos[0], centerPos[1], coreR, "#ffffff", cfg.opacity * 0.95);
   }
-}
-
-function drawLaserLink(ctx, from, to, color, cfg) {
-  setLineDashEmpty(ctx);
-  const points = buildPathPoints(from, to, cfg.pathStyle);
-  const time = performance.now() / (400 / cfg.speed);
-
-  for (let layer = 4; layer >= 0; layer--) {
-    const layerW = cfg.lineWidth + (4 - layer) * 5;
-    const layerAlpha = 0.04 + layer * 0.05;
-    ctx.beginPath();
-
-    for (let i = 0; i < points.length; i++) {
-      const perp = perpVector(points, i);
-      const wobble = Math.sin(time * 6 + i * 0.4 + layer) * (layer * 0.4);
-      const px = points[i][0] + perp[0] * (wobble + layer * 0.3);
-      const py = points[i][1] + perp[1] * (wobble + layer * 0.3);
-      if (i === 0) ctx.moveTo(px, py);
-      else ctx.lineTo(px, py);
-    }
-
-    ctx.strokeStyle = color;
-    ctx.lineWidth = layerW;
-    ctx.globalAlpha = cfg.opacity * layerAlpha;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.shadowColor = color;
-    ctx.shadowBlur = (4 - layer) * 6 + Math.sin(time * 4) * 2;
-    ctx.stroke();
-    ctx.shadowBlur = 0;
-  }
-
-  ctx.beginPath();
-  for (let i = 0; i < points.length; i++) {
-    if (i === 0) ctx.moveTo(points[i][0], points[i][1]);
-    else ctx.lineTo(points[i][0], points[i][1]);
-  }
-  ctx.strokeStyle = "#ffffff";
-  ctx.lineWidth = cfg.lineWidth * 0.5;
-  ctx.globalAlpha = cfg.opacity * 0.95;
-  ctx.shadowColor = "#ffffff";
-  ctx.shadowBlur = cfg.lineWidth * 2;
-  ctx.stroke();
-  ctx.shadowBlur = 0;
-
-  const scanPos = pointOnPath(points, (time * 0.15) % 1);
-  const scanR = cfg.lineWidth * 2.5;
-  ctx.beginPath();
-  ctx.arc(scanPos[0], scanPos[1], scanR, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.globalAlpha = cfg.opacity * (0.7 + 0.3 * Math.sin(time * 10));
-  ctx.shadowColor = "#ffffff";
-  ctx.shadowBlur = scanR * 3;
-  ctx.fill();
-  ctx.shadowBlur = 0;
 }
 
 function perpVector(points, idx) {
@@ -1055,10 +953,7 @@ function drawAuroraLink(ctx, from, to, color, cfg) {
     ctx.globalAlpha = cfg.opacity * (0.1 - (layer - 1) * 0.02 + (0.07 - (layer - 1) * 0.01) * breathe);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 6 + layer * 2.5;
     ctx.stroke();
-    ctx.shadowBlur = 0;
   }
 
   ctx.beginPath();
@@ -1072,10 +967,11 @@ function drawAuroraLink(ctx, from, to, color, cfg) {
   ctx.strokeStyle = `rgba(${Math.min(255, c.r + 90)},${Math.min(255, c.g + 90)},${Math.min(255, c.b + 90)},1)`;
   ctx.lineWidth = Math.max(0.8, cfg.lineWidth * 0.5);
   ctx.globalAlpha = cfg.opacity * (0.65 + 0.3 * Math.sin(time * 1.7));
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 6;
+  strokeCurrentPathLayers(ctx, color, ctx.lineWidth, ctx.globalAlpha * 0.7);
+  ctx.strokeStyle = `rgba(${Math.min(255, c.r + 90)},${Math.min(255, c.g + 90)},${Math.min(255, c.b + 90)},1)`;
+  ctx.lineWidth = Math.max(0.8, cfg.lineWidth * 0.5);
+  ctx.globalAlpha = cfg.opacity * (0.65 + 0.3 * Math.sin(time * 1.7));
   ctx.stroke();
-  ctx.shadowBlur = 0;
 }
 
 // 双螺旋：两条相位相反的正弦链沿路径缠绕流动，张开处用横档相连，中间留一条淡主线。
@@ -1111,18 +1007,15 @@ function drawHelixLink(ctx, from, to, color, cfg) {
     ctx.stroke();
   }
 
-  ctx.shadowColor = color;
-  ctx.shadowBlur = cfg.glow ? 8 : 0;
   for (const strand of [strandA, strandB]) {
-    ctx.beginPath();
-    ctx.moveTo(strand[0][0], strand[0][1]);
-    for (let i = 1; i < strand.length; i++) ctx.lineTo(strand[i][0], strand[i][1]);
+    if (cfg.glow) {
+      strokeCurrentPathLayers(ctx, color, cfg.lineWidth, cfg.opacity * 0.7, () => strokePolyline(ctx, strand));
+    }
     ctx.strokeStyle = color;
     ctx.lineWidth = cfg.lineWidth;
     ctx.globalAlpha = cfg.opacity;
-    ctx.stroke();
+    strokePolyline(ctx, strand);
   }
-  ctx.shadowBlur = 0;
 
   // 中间淡主线，让横档留白处不至于断开
   ctx.strokeStyle = color;
@@ -1159,10 +1052,7 @@ function drawWaveLink(ctx, from, to, color, cfg) {
     ctx.strokeStyle = color;
     ctx.lineWidth = cfg.lineWidth + 4;
     ctx.globalAlpha = cfg.opacity * 0.35;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
     ctx.stroke();
-    ctx.shadowBlur = 0;
   }
 
   ctx.beginPath();
@@ -1222,14 +1112,7 @@ function drawGalaxyLink(ctx, from, to, color, cfg) {
     const twinkle = 0.5 + 0.5 * Math.sin(time * 2.6 + hash(i + 1000.7) * Math.PI * 2);
     const radius = cfg.lineWidth * (0.45 + 0.75 * hash(i + 77.7)) * (0.55 + 0.45 * twinkle);
 
-    ctx.beginPath();
-    ctx.arc(pos[0], pos[1], radius, 0, Math.PI * 2);
-    ctx.fillStyle = color;
-    ctx.globalAlpha = cfg.opacity * (0.25 + 0.7 * twinkle);
-    ctx.shadowColor = color;
-    ctx.shadowBlur = radius * 3;
-    ctx.fill();
-    ctx.shadowBlur = 0;
+    fillSoftCircle(ctx, pos[0], pos[1], radius, color, cfg.opacity * (0.25 + 0.7 * twinkle));
 
     if (twinkle > 0.82) {
       const spike = radius * 2.6;
@@ -1266,13 +1149,7 @@ function drawGradientLink(ctx, from, to, color, cfg) {
   drawPath(ctx, from, to, cfg.pathStyle);
 
   if (cfg.glow) {
-    ctx.strokeStyle = grad;
-    ctx.lineWidth = cfg.lineWidth + 4;
-    ctx.globalAlpha = cfg.opacity * 0.4;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
-    drawPath(ctx, from, to, cfg.pathStyle);
-    ctx.shadowBlur = 0;
+    strokeSoftPath(ctx, from, to, grad, cfg.lineWidth, cfg.opacity, cfg.pathStyle);
   }
 }
 
@@ -1354,7 +1231,7 @@ function drawTextureLink(ctx, from, to, color, cfg) {
   ctx.restore();
 }
 
-function samplePathPoints(from, to, pathStyle) {
+function samplePathPoints(from, to, pathStyle, laneOffset = activeLaneOffset) {
   const pts = [];
   if (pathStyle === PATH_DIRECT) {
     pts.push(from, to);
@@ -1379,25 +1256,35 @@ function samplePathPoints(from, to, pathStyle) {
       pts.push([x, y]);
     }
   }
-  return pts;
+  const scale = Math.max(0.05, Number(app.canvas?.ds?.scale) || 1);
+  return applyLaneOffset(pts, laneOffset, LANE_MERGE_LENGTH_PX / scale);
 }
 
 function clipToPath(ctx, from, to, pathStyle) {
-  ctx.beginPath();
-  ctx.moveTo(from[0], from[1]);
-  if (pathStyle === PATH_DIRECT) {
-    ctx.lineTo(to[0], to[1]);
-  } else if (pathStyle === PATH_ORTHOGONAL) {
-    const midX = (from[0] + to[0]) / 2;
-    ctx.lineTo(midX, from[1]); ctx.lineTo(midX, to[1]); ctx.lineTo(to[0], to[1]);
-  } else if (pathStyle === PATH_CIRCUIT) {
-    const dir = to[0] >= from[0] ? 1 : -1;
-    const off = Math.max(48, Math.min(180, Math.abs(to[0] - from[0]) * 0.45));
-    ctx.lineTo(from[0] + dir * off, from[1]); ctx.lineTo(from[0] + dir * off, to[1]); ctx.lineTo(to[0], to[1]);
-  } else {
-    const d = Math.max(60, Math.min(220, Math.abs(to[0] - from[0]) * 0.5));
-    ctx.bezierCurveTo(from[0] + d, from[1], to[0] - d, to[1], to[0], to[1]);
+  if (activeLaneOffset === 0) {
+    ctx.beginPath();
+    ctx.moveTo(from[0], from[1]);
+    if (pathStyle === PATH_DIRECT) {
+      ctx.lineTo(to[0], to[1]);
+    } else if (pathStyle === PATH_ORTHOGONAL) {
+      const midX = (from[0] + to[0]) / 2;
+      ctx.lineTo(midX, from[1]); ctx.lineTo(midX, to[1]); ctx.lineTo(to[0], to[1]);
+    } else if (pathStyle === PATH_CIRCUIT) {
+      const dir = to[0] >= from[0] ? 1 : -1;
+      const off = Math.max(48, Math.min(180, Math.abs(to[0] - from[0]) * 0.45));
+      ctx.lineTo(from[0] + dir * off, from[1]); ctx.lineTo(from[0] + dir * off, to[1]); ctx.lineTo(to[0], to[1]);
+    } else {
+      const d = Math.max(60, Math.min(220, Math.abs(to[0] - from[0]) * 0.5));
+      ctx.bezierCurveTo(from[0] + d, from[1], to[0] - d, to[1], to[0], to[1]);
+    }
+    ctx.closePath();
+    ctx.clip();
+    return;
   }
+  const points = samplePathPoints(from, to, pathStyle);
+  ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
+  for (let index = 1; index < points.length; index += 1) ctx.lineTo(points[index][0], points[index][1]);
   ctx.closePath();
   ctx.clip();
 }
@@ -1420,6 +1307,88 @@ function parseColor(value) {
     g: parseInt(hex.slice(2, 4), 16) || 0,
     b: parseInt(hex.slice(4, 6), 16) || 0,
   };
+}
+
+function rgbaColor(value, alpha) {
+  const color = parseColor(value);
+  return `rgba(${color.r},${color.g},${color.b},${Math.max(0, Math.min(1, alpha))})`;
+}
+
+function rememberDataPulse(value) {
+  const id = normalizeNodeId(value);
+  if (!id) return;
+  dataPulseUntil.set(id, performance.now() + DATA_PULSE_DURATION_MS);
+  markDirty();
+  ensureAnimation();
+}
+
+function hasActiveDataPulses(now = performance.now()) {
+  for (const [id, expiresAt] of dataPulseUntil) {
+    if (expiresAt > now) return true;
+    dataPulseUntil.delete(id);
+  }
+  return false;
+}
+
+function drawPortDataPulses(ctx, links, now, scale) {
+  const seen = new Set();
+  for (const item of links) {
+    for (const [node, point, color, side, slot] of [
+      [item.originNode, item.from, item.color, "out", item.originSlot],
+      [item.targetNode, item.to, item.color, "in", item.targetSlot],
+    ]) {
+      const id = String(node?.id ?? "");
+      const expiresAt = dataPulseUntil.get(id) || 0;
+      if (!id || expiresAt <= now) continue;
+      const key = `${id}:${side}:${slot}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const progress = 1 - (expiresAt - now) / DATA_PULSE_DURATION_MS;
+      const radius = (3 + progress * 9) / scale;
+      const alpha = Math.max(0, Math.sin(progress * Math.PI)) * 0.82;
+      ctx.save();
+      for (const [width, strength] of [[5, 0.18], [2.6, 0.4], [1.1, 0.9]]) {
+        ctx.beginPath();
+        ctx.arc(point[0], point[1], radius, 0, Math.PI * 2);
+        ctx.strokeStyle = rgbaColor(color, alpha * strength);
+        ctx.lineWidth = width / scale;
+        ctx.globalAlpha = 1;
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+}
+
+function crossingPointsFor(links, pathStyle, now) {
+  const signature = `${pathStyle}|${links.map((item) => [
+    item.from[0], item.from[1], item.to[0], item.to[1], item.laneOffset,
+  ].map((value) => Math.round(value * 2) / 2).join(",")).join(";")}`;
+  if (signature === crossingCache.signature && now < crossingCache.expiresAt) return crossingCache.points;
+  const paths = links.map((item) => ({
+    points: samplePathPoints(item.from, item.to, pathStyle, item.laneOffset),
+  }));
+  const points = findPolylineIntersections(paths, MAX_CROSSING_SPOTS);
+  crossingCache = { signature, expiresAt: now + CROSSING_CACHE_TTL_MS, points };
+  return points;
+}
+
+function drawCrossingSpots(ctx, points, now, scale) {
+  const phase = now / 520;
+  for (let index = 0; index < points.length; index += 1) {
+    const [x, y] = points[index];
+    const pulse = 0.5 + 0.5 * Math.sin(phase + index * 1.71);
+    const radius = (1.5 + pulse * 1.6) / scale;
+    ctx.save();
+    for (const [factor, alpha] of [[3.2, 0.12], [2, 0.22], [1, 0.92]]) {
+      ctx.beginPath();
+      ctx.arc(x, y, radius * factor, 0, Math.PI * 2);
+      ctx.fillStyle = factor === 1 ? "#4C8DFF" : `rgba(150,205,255,${alpha * pulse})`;
+      ctx.globalAlpha = factor === 1 ? 0.55 + pulse * 0.45 : 1;
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 }
 
 function setLineDashEmpty(ctx) { ctx.setLineDash([]); }
@@ -1445,9 +1414,12 @@ function drawOverlay(canvas, ctx, cfg = config(), graphOverride = null) {
     return false;
   }
 
+  const scale = Math.max(0.05, Number(canvas?.ds?.scale) || 1);
   for (const item of resolvedLinks) {
-    item.from = connectionPos(item.originNode, false, linkField(item.link, "origin_slot", 2) ?? 0);
-    item.to = connectionPos(item.targetNode, true, linkField(item.link, "target_slot", 4) ?? 0);
+    item.originSlot = linkField(item.link, "origin_slot", 2) ?? 0;
+    item.targetSlot = linkField(item.link, "target_slot", 4) ?? 0;
+    item.from = connectionPos(item.originNode, false, item.originSlot, canvas);
+    item.to = connectionPos(item.targetNode, true, item.targetSlot, canvas);
   }
   if (resolvedLinks.some(({ from, to }) => (
     !Array.isArray(from) || !Array.isArray(to)
@@ -1457,19 +1429,26 @@ function drawOverlay(canvas, ctx, cfg = config(), graphOverride = null) {
     return false;
   }
 
+  assignOutputLanes(resolvedLinks, scale, LANE_SPACING_PX);
+
   let hasAnimatedLink = false;
 
-  for (const { link, originNode, from, to } of resolvedLinks) {
+  for (const item of resolvedLinks) {
     hasAnimatedLink = true;
-
-    drawStyledLink(ctx, from, to, linkColor(canvas, link, originNode, cfg), cfg, canvas);
+    item.color = linkColor(canvas, item.link, item.originNode, cfg);
+    drawStyledLink(ctx, item.from, item.to, item.color, cfg, canvas, item.laneOffset);
   }
+
+  const now = performance.now();
+  drawPortDataPulses(ctx, resolvedLinks, now, scale);
+  const crossings = crossingPointsFor(resolvedLinks, cfg.pathStyle, now);
+  drawCrossingSpots(ctx, crossings, now, scale);
 
   const isAnimatedStyle = ANIMATED_STYLES.includes(cfg.dashStyle);
   const isTextureAnimated = cfg.dashStyle === DASH_TEXTURE && cachedTextureImage;
   const isAlwaysAnimate = cfg.displayMode !== DISPLAY_ALL && hasAnimatedLink;
 
-  if ((isAnimatedStyle || isTextureAnimated || isAlwaysAnimate) && hasAnimatedLink) {
+  if ((isAnimatedStyle || isTextureAnimated || isAlwaysAnimate || crossings.length || hasActiveDataPulses(now)) && hasAnimatedLink) {
     ensureAnimation();
   }
   return true;
@@ -1535,8 +1514,9 @@ function ensureAnimation() {
     const isAnimatedStyle = ANIMATED_STYLES.includes(cfg.dashStyle);
     const isTextureAnimated = cfg.dashStyle === DASH_TEXTURE && cachedTextureImage;
     const isNonAllMode = cfg.displayMode !== DISPLAY_ALL;
+    const isFeedbackAnimated = crossingCache.points.length > 0 || hasActiveDataPulses();
 
-    if ((isAnimatedStyle || isTextureAnimated || isNonAllMode)
+    if ((isAnimatedStyle || isTextureAnimated || isNonAllMode || isFeedbackAnimated)
         && !isCanvasInteracting()
         && hasRenderableLink(app.canvas, cfg)) {
       markDirty();
@@ -1872,6 +1852,9 @@ function createPanelBackgroundOpacityRow() {
 }
 
 function buildQuickPanel() {
+  const existing = document.getElementById("gg-link-style-panel");
+  if (existing) { quickPanel = existing; return existing; }
+  ensureGGDesign();
   const panel = document.createElement("div");
   panel.id = "gg-link-style-panel";
 
@@ -1888,7 +1871,7 @@ function buildQuickPanel() {
   close.title = "关闭";
   close.setAttribute("aria-label", "关闭");
   close.innerHTML = ggIcon("close", 16);
-  close.addEventListener("click", hideQuickPanel);
+  close.addEventListener("click", closeLinkQuickPanel);
 
   head.append(title, close);
 
@@ -1920,7 +1903,28 @@ function buildQuickPanel() {
 
   applyQuickPanelBackground(panel);
 
+  // 常驻式：建一次挂在 body 隐藏，后续只切 display（不再每次重建/移除），
+  // 这样它才能被顶栏二级页整体挂入/复位而不丢失内部状态（设计稿 5 ·03 / ·07）。
+  document.body.appendChild(panel);
+  panel.style.display = "none";
+  quickPanel = panel;
   return panel;
+}
+
+// 登记二级页面板保证器：菜单内打开连接线设置前，顶栏会先调用它确保面板已建好
+// （键盘 Enter 打开二级页也走这条；用待注册队列规避与 toolbar 的加载顺序竞态）
+if (window.__ggRegisterTopDetailEnsurer) {
+  window.__ggRegisterTopDetailEnsurer("gg-link-style-buttons", () => {
+    buildQuickPanel();
+    applySurface(quickPanel);
+    return true;
+  });
+} else {
+  (window.__ggPendingTopDetailEnsurers ||= []).push(["gg-link-style-buttons", () => {
+    buildQuickPanel();
+    applySurface(quickPanel);
+    return true;
+  }]);
 }
 
 function createTextureRow() {
@@ -1991,6 +1995,8 @@ function createTextureRow() {
 
 function positionQuickPanel() {
   if (!quickPanel || !topControls?.settingsButton) return;
+  // 挂进二级页时不再用视口坐标，交给二级页排版
+  if (quickPanel.dataset.ggTopDetailPanel === "true") return;
   const rect = topControls.settingsButton.getBoundingClientRect();
   const top = rect.bottom + 8;
   const left = Math.min(
@@ -2001,12 +2007,16 @@ function positionQuickPanel() {
   quickPanel.style.left = `${left}px`;
 }
 
-function showQuickPanel() {
+// 统一关闭：面板在二级页里时收掉二级页；否则隐藏浮动面板
+function closeLinkQuickPanel() {
+  if (quickPanel?.dataset.ggTopDetailPanel === "true") {
+    window.__ggToggleTopDetailSubpage?.("gg-link-style-buttons");
+    return;
+  }
   hideQuickPanel();
-  quickPanel = buildQuickPanel();
-  document.body.appendChild(quickPanel);
-  positionQuickPanel();
+}
 
+function attachQuickPanelFloatingGuards() {
   const onPointerDown = (event) => {
     if (quickPanel?.contains(event.target) || topControls?.groupEl?.contains(event.target)) return;
     hideQuickPanel();
@@ -2015,14 +2025,13 @@ function showQuickPanel() {
     if (event.key === "Escape") hideQuickPanel();
   };
   const onResize = () => positionQuickPanel();
-
   requestAnimationFrame(() => {
-    if (!quickPanel) return;
+    // 二级页模式下由顶栏接管 Esc / 外部点击，模块不再挂浮动守卫
+    if (!quickPanel || quickPanel.dataset.ggTopDetailPanel === "true") return;
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     window.addEventListener("resize", onResize);
   });
-
   quickPanelCleanup = () => {
     document.removeEventListener("pointerdown", onPointerDown);
     document.removeEventListener("keydown", onKeyDown);
@@ -2030,15 +2039,55 @@ function showQuickPanel() {
   };
 }
 
+function showQuickPanel() {
+  const menuOpen = window.__ggTopToolsMenuOpen?.() === true;
+  // 菜单开着：交给顶栏二级页侧滑统一接管（设计稿 5 ·03 / ·07）
+  if (menuOpen) {
+    buildQuickPanel();
+    applySurface(quickPanel);
+    window.__ggToggleTopDetailSubpage?.("gg-link-style-buttons");
+    return;
+  }
+  // 浮动模式：每次重建以读取最新设置（与历史行为一致），并清掉上一轮可能残留的二级页标记
+  quickPanelCleanup?.();
+  quickPanelCleanup = null;
+  const existing = document.getElementById("gg-link-style-panel");
+  if (existing) existing.remove();
+  quickPanel = null;
+  buildQuickPanel();
+  applySurface(quickPanel);
+  quickPanel.style.display = "block";
+  positionQuickPanel();
+  attachQuickPanelFloatingGuards();
+}
+
 function hideQuickPanel() {
   quickPanelCleanup?.();
   quickPanelCleanup = null;
-  quickPanel?.remove();
-  quickPanel = null;
+  if (!quickPanel) return;
+  // 面板在二级页里：收掉二级页（顺带复位面板到 body 并隐藏）
+  if (quickPanel.dataset.ggTopDetailPanel === "true") {
+    window.__ggToggleTopDetailSubpage?.("gg-link-style-buttons");
+    return;
+  }
+  quickPanel.style.display = "none";
 }
 
-function toggleQuickPanel() {
-  if (quickPanel) hideQuickPanel();
+function toggleQuickPanel(event) {
+  // 齿轮位于顶栏菜单内时，二级页侧滑由顶栏统一接管（设计稿 5 ·03 / ·07），模块不重复处理
+  if (window.__ggTopToolsMenuOpen?.() === true && event?.target?.closest?.("#gg-top-tools-nav")) {
+    // 先确保面板已建好（不依赖顶栏 ensure 注册时序，避免加载竞态），再交给顶栏委托处理器打开二级页
+    if (!quickPanel) buildQuickPanel();
+    return;
+  }
+  const menuOpen = window.__ggTopToolsMenuOpen?.() === true;
+  if (menuOpen) {
+    buildQuickPanel();
+    applySurface(quickPanel);
+    window.__ggToggleTopDetailSubpage?.("gg-link-style-buttons");
+    return;
+  }
+  if (quickPanel && quickPanel.style.display !== "none" && quickPanel.dataset.ggTopDetailPanel !== "true") hideQuickPanel();
   else showQuickPanel();
 }
 
@@ -2046,6 +2095,8 @@ function syncTopControls() {
   if (!topControls) return;
   const enabled = config().enabled;
   topControls.toggleButton.classList.toggle("active", enabled);
+  topControls.toggleButton.classList.toggle("gg-state-on", enabled);
+  topControls.toggleButton.classList.toggle("gg-state-off", !enabled);
   topControls.toggleButton.title = enabled ? "关闭连接线自定义" : "开启连接线自定义";
   topControls.toggleButton.setAttribute("aria-label", topControls.toggleButton.title);
 }
@@ -2124,6 +2175,21 @@ function installLinkStyleTopControlsStyles() {
       backdrop-filter: blur(12px);
       font: 13px/1.4 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       box-sizing: border-box;
+    }
+    /* 挂进顶栏二级页时：去掉浮动外壳与自带头部（二级页头部已提供 ‹ 返回） */
+    #gg-link-style-panel[data-gg-top-detail-panel="true"] {
+      position: static !important;
+      width: 100% !important;
+      max-width: none !important;
+      border: 0 !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
+      background: transparent !important;
+      backdrop-filter: none !important;
+      padding: 0 !important;
+    }
+    #gg-link-style-panel[data-gg-top-detail-panel="true"] .gg-link-style-panel-head {
+      display: none !important;
     }
     #gg-link-style-panel .gg-link-style-panel-head,
     #gg-link-style-panel .gg-link-style-row {
@@ -2406,6 +2472,7 @@ app.registerExtension({
 
   async setup() {
     patchCanvasSoon();
+    await migrateRemovedDashStyle();
     await setupTopControls();
     startNodeStateWatcher();
     startExecutionWatcher();

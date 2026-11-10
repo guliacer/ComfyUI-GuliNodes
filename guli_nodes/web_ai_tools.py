@@ -40,11 +40,15 @@ NO_TXT_FILE = "无"
 TXT_EXTENSIONS = {".txt", ".md", ".text"}
 
 
-def _clamp_panel_height(节点高度=820) -> int:
+# 默认面板高度 500：必须与下面 GGWebAIReverseImage.INPUT_TYPES 里
+# 「节点高度」的 default 保持一致，否则新建节点拿到的是后端默认值、
+# 而参数缺失时兜底成另一个数，前后对不上。前端
+# web/gg-web-ai-reverse.js 的 DEFAULT_PANEL_HEIGHT 同源。
+def _clamp_panel_height(节点高度=500) -> int:
     try:
         panel_height = int(节点高度)
     except (TypeError, ValueError):
-        panel_height = 820
+        panel_height = 500
     return max(360, min(1500, panel_height))
 
 
@@ -476,7 +480,7 @@ def _call_openai_compatible_chat(API地址: str, API密钥: str, 模型名称: s
     return summary, raw_text
 
 
-def _build_web_ai_ui(平台="豆包", 自定义网址="", 节点高度=820) -> dict:
+def _build_web_ai_ui(平台="豆包", 自定义网址="", 节点高度=500) -> dict:
     payload = {
         "platform": str(平台 or "豆包"),
         "custom_url": str(自定义网址 or ""),
@@ -494,7 +498,7 @@ class GGWebAIReverseImage:
             },
             "optional": {
                 "自定义网址": ("STRING", {"default": "", "multiline": False, "dynamicPrompts": False}),
-                "节点高度": ("INT", {"default": 1100, "min": 360, "max": 1500, "step": 20}),
+                "节点高度": ("INT", {"default": 500, "min": 360, "max": 1500, "step": 20}),
             },
         }
 
@@ -509,10 +513,10 @@ class GGWebAIReverseImage:
         m = hashlib.sha256()
         m.update(str(kwargs.get("平台", "豆包")).encode("utf-8"))
         m.update(str(kwargs.get("自定义网址", "")).encode("utf-8"))
-        m.update(str(kwargs.get("节点高度", 820)).encode("utf-8"))
+        m.update(str(kwargs.get("节点高度", 500)).encode("utf-8"))
         return m.hexdigest()
 
-    def open_web(self, 平台="豆包", 自定义网址="", 节点高度=820):
+    def open_web(self, 平台="豆包", 自定义网址="", 节点高度=500):
         return _build_web_ai_ui(平台, 自定义网址, 节点高度)
 
 

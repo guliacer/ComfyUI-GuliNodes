@@ -5029,6 +5029,8 @@ function syncTopButton(button) {
     const enabled = isEnabled();
     const title = enabled ? "关闭分组样式" : "开启分组样式";
     button.classList.toggle("active", enabled);
+    button.classList.toggle("gg-state-on", enabled);
+    button.classList.toggle("gg-state-off", !enabled);
     button.title = title;
     button.setAttribute("aria-label", title);
 }

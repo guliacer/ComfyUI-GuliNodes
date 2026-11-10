@@ -4,6 +4,7 @@ const SAVE_NODES = new Set(["GGVideoSave"]);
 const COMPRESS_NODES = new Set(["GGVideoCompress"]);
 const PATH_LOAD_NODES = new Set(["GGVideoLoadByPath"]);
 const VIDEO_PATH_WIDGET_NAME = "\u89c6\u9891\u8def\u5f84";
+const PICKER_BUTTON_NAME = "\u9009\u62e9\u89c6\u9891\u6587\u4ef6";
 const SELECT_ROUTE = "/guli/video/select";
 const PREVIEW_WIDGET_NAME = "gg_video_preview";
 const MIN_NODE_WIDTH = 360;
@@ -47,31 +48,40 @@ async function selectVideoPath() {
 }
 
 function installPathPicker(node) {
-    if (node.ggVideoPathPickerInstalled) return;
+    // 判据看按钮是否已在，而不是「装过没」：先置位再创建时，
+    // addWidget 一抛错节点就被永久标成已装，选择按钮再也不会出现。
+    if (getWidget(node, PICKER_BUTTON_NAME)) return;
+
+    let button;
+    try {
+        button = node.addWidget("button", PICKER_BUTTON_NAME, "\u9009\u62e9", async () => {
+            const pathWidget = getWidget(node, VIDEO_PATH_WIDGET_NAME);
+            if (!pathWidget) return;
+
+            button.disabled = true;
+            const previousLabel = button.value;
+            button.value = "\u9009\u62e9\u4e2d...";
+            try {
+                const result = await selectVideoPath();
+                const selectedPath = String(result?.path || "");
+                if (!selectedPath) return;
+                setWidgetValue(pathWidget, selectedPath);
+                node.setDirtyCanvas?.(true, true);
+                app.graph.setDirtyCanvas(true, true);
+            } catch (error) {
+                console.error("[GGVideoLoadByPath] Select failed:", error);
+                alert(error?.message || "\u89c6\u9891\u6587\u4ef6\u9009\u62e9\u5931\u8d25\u3002");
+            } finally {
+                button.value = previousLabel;
+                button.disabled = false;
+            }
+        });
+    } catch (error) {
+        console.error("[GGVideoLoadByPath] 文件选择按钮挂载失败，将在下次生命周期重试", error);
+        return;
+    }
+    if (!button) return;
     node.ggVideoPathPickerInstalled = true;
-
-    const button = node.addWidget("button", "\u9009\u62e9\u89c6\u9891\u6587\u4ef6", "\u9009\u62e9", async () => {
-        const pathWidget = getWidget(node, VIDEO_PATH_WIDGET_NAME);
-        if (!pathWidget) return;
-
-        button.disabled = true;
-        const previousLabel = button.value;
-        button.value = "\u9009\u62e9\u4e2d...";
-        try {
-            const result = await selectVideoPath();
-            const selectedPath = String(result?.path || "");
-            if (!selectedPath) return;
-            setWidgetValue(pathWidget, selectedPath);
-            node.setDirtyCanvas?.(true, true);
-            app.graph.setDirtyCanvas(true, true);
-        } catch (error) {
-            console.error("[GGVideoLoadByPath] Select failed:", error);
-            alert(error?.message || "\u89c6\u9891\u6587\u4ef6\u9009\u62e9\u5931\u8d25\u3002");
-        } finally {
-            button.value = previousLabel;
-            button.disabled = false;
-        }
-    });
     node.setDirtyCanvas?.(true, true);
     app.graph.setDirtyCanvas(true, true);
 }

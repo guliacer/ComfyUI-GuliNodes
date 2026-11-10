@@ -1354,6 +1354,8 @@ function syncTopControls() {
     const enabled = isTranslateEnabled();
     const title = enabled ? "关闭 ComfyUI 中文翻译" : "开启 ComfyUI 中文翻译";
     topControls.toggleButton.classList.toggle("active", enabled);
+    topControls.toggleButton.classList.toggle("gg-state-on", enabled);
+    topControls.toggleButton.classList.toggle("gg-state-off", !enabled);
     topControls.toggleButton.title = title;
     topControls.toggleButton.setAttribute("aria-label", title);
 }

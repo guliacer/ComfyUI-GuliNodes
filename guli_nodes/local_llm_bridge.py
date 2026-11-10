@@ -19,7 +19,7 @@ _EOF = object()
 
 
 class LocalLLMProxy:
-    def __init__(self, model_path, mmproj_path, context_length, interrupt_check=None):
+    def __init__(self, model_path, mmproj_path, context_length, interrupt_check=None, text_only=False):
         self._lock = threading.RLock()
         self._stderr_lock = threading.Lock()
         self._stderr_tail = bytearray()
@@ -42,12 +42,17 @@ class LocalLLMProxy:
             self._stdout_thread.start()
             self._stderr_thread.start()
             ready = self._request("load", LOAD_TIMEOUT, model_path=str(model_path),
-                                  mmproj_path=str(mmproj_path), context_length=int(context_length))
+                                  mmproj_path=str(mmproj_path), context_length=int(context_length),
+                                  text_only=bool(text_only))
             if not isinstance(ready, dict) or ready.get("ready") is not True or ready.get("torch_loaded") is not False:
                 raise RuntimeError("worker 未确认 torch 未加载，已拒绝隔离就绪")
             if not isinstance(ready.get("metadata"), dict):
                 raise RuntimeError("worker 返回的模型 metadata 不正确")
             self.metadata = ready["metadata"]
+            self.backend_info = str(ready.get("backend_info") or "")
+            if self.backend_info:
+                # 原生 system_info 报告已加载能力，不把未知加速后端误判为 CPU。
+                print(f"[GG 本地LLM] 推理后端：{self.backend_info}", flush=True)
             atexit.register(self.close)
         except Exception as exc:
             if self._closed:
@@ -141,15 +146,29 @@ class LocalLLMProxy:
                     raise RuntimeError(self._reader_error)
                 if response is _EOF:
                     raise RuntimeError("worker 意外退出或输出管道 EOF")
-                if not isinstance(response, dict) or response.get("id") != self._request_id:
-                    raise RuntimeError("worker JSON 协议响应序号不匹配")
+                # 上一次被中断或超时的请求可能在管道里留下一条旧响应（序号更小）。
+                # 丢掉它继续等本次的，不能因为一条过期响应就把整次执行判失败；
+                # 序号更大的只可能是协议错乱，仍然按失败处理。
+                while True:
+                    if not isinstance(response, dict):
+                        raise RuntimeError("worker JSON 协议响应结构不正确")
+                    if response.get("id") == self._request_id:
+                        break
+                    stale = response.get("id")
+                    if not isinstance(stale, int) or stale > self._request_id:
+                        raise RuntimeError("worker JSON 协议响应序号不匹配")
+                    response = self._wait_response(op, timeout)
                 if response.get("ok") is not True:
                     raise RuntimeError(str(response.get("error") or "worker 返回失败")[:4096])
                 return response.get("result")
-            except Exception as exc:
-                if self._interrupted:
-                    # 用户主动取消：释放子进程后原样抛出，让 ComfyUI 记成「已中断」而不是报错。
-                    self._dispose()
+            except BaseException as exc:
+                # ComfyUI 的 InterruptProcessingException 继承 BaseException 而不是 Exception。
+                # 只捕 Exception 会漏掉「杀掉子进程」这一步：worker 会继续把这一轮生成跑完，
+                # 响应写回管道后留在队列里，下次执行读到它就成了「响应序号不匹配」；
+                # 缓存里还会留下一个已经跑飞的代理，把之后的执行一起带崩。
+                self._dispose()
+                if self._interrupted or not isinstance(exc, Exception):
+                    # 用户取消：释放子进程后原样抛出，让 ComfyUI 记成「已中断」而不是报错。
                     raise
                 raise self._failure(str(exc)) from exc
             finally:
@@ -205,6 +224,11 @@ class LocalLLMProxy:
     def create_chat_completion(self, **kwargs):
         return self._request("generate", QUERY_TIMEOUT, kwargs=kwargs)
 
+    @property
+    def closed(self):
+        """子进程已释放（正常关闭，或中断/失败后回收）。缓存方不得再复用它。"""
+        return self._closed
+
     def close(self):
         # 生成请求可能持锁好几分钟；关闭不能排在它后面，否则用户点取消/退出会一直卡住。
         if not self._lock.acquire(blocking=False):
@@ -215,7 +239,8 @@ class LocalLLMProxy:
                 return
             try:
                 self._request("close", CLOSE_TIMEOUT)
-            except RuntimeError:
+            except BaseException:
+                # 关闭是纯清理路径：这里再抛中断会让 unload() 把原始异常盖掉。
                 pass
             finally:
                 self._dispose(wait_first=True)

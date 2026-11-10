@@ -84,7 +84,7 @@
 - 工作流每区各有一个 `GG 提示词增强qwen2.1`，输出的是需求文本。
 - `GG 提示词优化qwen2.1` 则是 Qwen 图像 / 文本条件编码节点，名称相近，但它不负责 LLM 改写。
 - AI 开关关闭时，原生懒求值开关直接用区域请求，不会调用本地 LLM 或任何 API；开关开启时才调用增强节点。
-- 本机预选本地LLM路径，使用已存在的 PE-I2I GGUF 与 mmproj；这些是 GGUF 模型，不要误选为“本地PE”的 safetensors。
+- 本机预选本地LLM路径，文生图与图生图分别用 PE-T2I / PE-I2I GGUF，图生图另配 I2I 的 mmproj；这些是 GGUF 模型，不要误选为“本地PE”的 safetensors。
 - 本地LLM仍依赖已有可选包 `llama-cpp-python`，主插件没有新增强制依赖。其它计算机需配置自己的兼容模型或保持开关关闭。
 - 本地LLM通过独立子进程运行，避开 PyTorch 与视觉库的 OpenMP 冲突；不要设置 `KMP_DUPLICATE_LIB_OK` 来强行忽略冲突。默认“生成后自动卸载模型”开启，释放其显存后才继续扩散。关闭卸载会保留 LLM 进程和显存，16GB 显卡跑本工作流不建议这样设置。
 - 不随工作流嵌入 API Key。不使用本地模型时，可以手动选择支持图像的 API 并自行配置密钥；未配置就不要开启该通路。
@@ -99,8 +99,9 @@
 | text_encoders | Qwen3VL 8B int8 convrot，类型 `qwen_image` |
 | vae | Qwen Image 2.1 VAE bf16 |
 | loras | Qwen2.1 一致性无偏移 GH V1.0，默认强度 1；可设 0 关闭 |
-| 本地LLM主模型 | Qwen Image 2.1 PE-I2I Q5_K_S GGUF |
-| 本地LLM视觉投影 | 对应 PE-I2I mmproj bf16 GGUF |
+| 本地LLM 文生图模型 | Qwen Image 2.1 PE-T2I Q5_K_S GGUF |
+| 本地LLM 图生图模型 | Qwen Image 2.1 PE-I2I Q5_K_S GGUF |
+| 本地LLM视觉投影 | 对应 PE-I2I mmproj bf16 GGUF（仅图生图 / 反推加载） |
 
 不会自动下载模型，也不会自动启用被禁用的 SAM3 插件。
 

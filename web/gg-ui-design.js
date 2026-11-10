@@ -30,44 +30,57 @@ if (!globalThis.__GG_DESIGN_LOGGED__) {
 
 // 深色是基准皮肤，浅色整套覆盖。两套都是显式取值，不靠 color-mix 从宿主色派生——
 // 派生出来的中间色在浅色下常常糊在一起，读不出「这是按钮还是输入框」。
+//
+// 2026-11-08 按画布设计稿《GuliNodes 界面系统重设计》01/02/07 分节定稿落地：
+// 五级表面（由深到浅）画布底 #0B0E13 → 控件底 #0F131B → 面板 #131822
+// → 卡片 #1A2130 → 分隔线 #262F3D；强调色 #4C8DFF（浅色压深 #2563EB）。
+// 放弃 AI 紫、不用纯黑。btn / btnHover / pickedBg 设计稿未单列，按与卡片
+// 相同的相对亮度差推导，保证换肤后控件与面板仍是同一套冷灰蓝。
 export const PALETTES = {
   dark: {
-    panel: "#171B24",
-    card: "#1D2431",
-    btn: "#283244",
-    btnHover: "#344158",
-    ink: "#F0F3F8",
-    muted: "#A5B0C0",
-    faint: "#7F8A9C",
-    accent: "#3B82F6",
-    pickedBg: "#173B70",
-    pickedBorder: "#3B82F6",
-    divider: "#303949",
-    ok: "#34D399",
-    danger: "#F87171",
-    field: "#11151C",
-    warning: "#F59E0B",
+    canvas: "#0B0E13",
+    panel: "#131822",
+    card: "#1A2130",
+    btn: "#222C3E",
+    btnHover: "#2C384C",
+    ink: "#EEF2F8",
+    muted: "#97A3B6",
+    faint: "#6B7688",
+    accent: "#4C8DFF",
+    pickedBg: "#1B3466",
+    pickedBorder: "#4C8DFF",
+    divider: "#262F3D",
+    ok: "#3DD68C",
+    danger: "#FF6B6B",
+    field: "#0F131B",
+    warning: "#F5A524",
+    pressBg: "#1A2130",
+    idle: "#9BA8BC",
   },
   light: {
+    canvas: "#F1F5FB",
     panel: "#F4F7FB",
     card: "#FFFFFF",
     btn: "#EEF2F8",
     btnHover: "#E1E8F4",
-    ink: "#1E2733",
-    muted: "#55617A",
-    faint: "#7B879B",
+    ink: "#16202E",
+    muted: "#4A5A72",
+    faint: "#6B7A90",
     accent: "#2563EB",
     pickedBg: "#DCE9FD",
     pickedBorder: "#2563EB",
-    divider: "#DBE2EC",
+    divider: "#DDE5F0",
     ok: "#059669",
-    danger: "#DC2626",
+    danger: "#B91C1C",
     field: "#FFFFFF",
     warning: "#B45309",
+    pressBg: "#DCE5F1",
+    idle: "#5B6A82",
   },
 };
 
 const VAR_NAMES = {
+  canvas: "--gg-canvas",
   panel: "--gg-panel",
   card: "--gg-card",
   btn: "--gg-btn",
@@ -83,6 +96,8 @@ const VAR_NAMES = {
   danger: "--gg-danger",
   field: "--gg-field",
   warning: "--gg-warning",
+  pressBg: "--gg-ui-press-bg",
+  idle: "--gg-idle",
 };
 
 // `pickedBg` → `picked-bg`：旧面板里写的是 `--ggl-picked-bg`，
@@ -92,7 +107,7 @@ const kebab = (key) => key.replace(/[A-Z]/g, (char) => `-${char.toLowerCase()}`)
 /**
  * 生成调色板 CSS 变量。
  * @param {"dark"|"light"} mode
- * @returns {Record<string,string>} 形如 `{"--gg-panel": "#171B24", ...}`，可直接 Object.assign 到 style
+ * @returns {Record<string,string>} 形如 `{"--gg-panel": "#131822", ...}`，可直接 Object.assign 到 style
  */
 export function paletteVars(mode) {
   const palette = PALETTES[mode === "light" ? "light" : "dark"];
@@ -154,15 +169,23 @@ export function detectHostTheme() {
   if (now - hostThemeCache.at < 1000) return hostThemeCache.value;
 
   let resolved = null;
-  const palette = globalThis.Comfy?.ColorPalette;
-  if (palette === "dark" || palette === "light") resolved = palette;
+  // 先看实际页面背景。部分新版 ComfyUI 的 ColorPalette 只表示默认调色板，
+  // 用户切换主题后它仍可能保留旧值；独立弹窗必须跟随当前页面的真实明暗。
+  if (typeof getComputedStyle === "function" && globalThis.document?.body) {
+    const bodyColor = parseCssColor(getComputedStyle(document.body).backgroundColor);
+    if (bodyColor && relativeLuminance(bodyColor) > 0.005) {
+      resolved = relativeLuminance(bodyColor) < 0.5 ? "dark" : "light";
+    }
+  }
+  if (!resolved) {
+    const palette = globalThis.Comfy?.ColorPalette;
+    if (palette === "dark" || palette === "light") resolved = palette;
+  }
+  // 独立弹窗和节点面板跟随页面主题；某些 ComfyUI 版本的画布默认清屏色
+  // 固定为 lightgray，只有前两个来源无效时才把它作为最后回退。
   if (!resolved) {
     const canvasColor = parseCssColor(globalThis.LGraphCanvas?.clear_background_color);
     if (canvasColor) resolved = relativeLuminance(canvasColor) < 0.5 ? "dark" : "light";
-  }
-  if (!resolved && typeof getComputedStyle === "function" && globalThis.document?.body) {
-    const bodyColor = parseCssColor(getComputedStyle(document.body).backgroundColor);
-    if (bodyColor) resolved = relativeLuminance(bodyColor) < 0.5 ? "dark" : "light";
   }
 
   hostThemeCache = { at: now, value: resolved || "dark" };
@@ -306,8 +329,19 @@ export function ensureGGDesign() {
   border-color: var(--gg-picked-border);
   color: var(--gg-ink);
 }
-.gg-btn.is-primary { border-color: var(--gg-picked-border); color: var(--gg-accent); }
-.gg-btn.is-primary:hover { background: var(--gg-picked-bg); }
+/* 主操作 = 实心强调色；次操作（.gg-btn 默认态）= 描边幽灵键。
+   设计稿 08「落地口径」②：底栏原来纯图标无层级，主次必须一眼分得开。 */
+.gg-btn.is-primary {
+  background: var(--gg-accent);
+  border-color: var(--gg-accent);
+  color: #FFFFFF;
+  font-weight: 600;
+}
+.gg-btn.is-primary:hover {
+  background: color-mix(in srgb, var(--gg-accent) 86%, #FFFFFF);
+  border-color: color-mix(in srgb, var(--gg-accent) 86%, #FFFFFF);
+}
+.gg-btn.is-primary:focus-visible { outline: 2px solid var(--gg-accent); outline-offset: 2px; }
 .gg-btn.is-danger { color: var(--gg-danger); border-color: color-mix(in srgb, var(--gg-danger) 45%, transparent); }
 .gg-btn.is-danger:hover { background: color-mix(in srgb, var(--gg-danger) 14%, transparent); }
 .gg-btn:disabled,
@@ -350,11 +384,15 @@ export function ensureGGDesign() {
 .gg-seg > button[aria-pressed="true"] { background: var(--gg-picked-bg); color: var(--gg-ink); }
 .gg-seg > button:focus-visible { outline: 2px solid var(--gg-accent); outline-offset: 1px; }
 
-/* ===== 4. 输入控件 ===== */
+/* ===== 4. 输入控件 =====
+   设计稿 08「落地口径」①：控件行统一 32 高 / 圆角 9，留白更紧。
+   只落 DOM 层——canvas 自绘胶囊被 LiteGraph.NODE_WIDGET_HEIGHT 钳在 24，
+   硬改 32 会连锁破坏行布局、命中区与 widgets_values 高度核算（仓库红线）。 */
 .gg-field {
   width: 100%;
+  min-height: 32px;
   border: 1px solid var(--gg-divider);
-  border-radius: 6px;
+  border-radius: 9px;
   padding: 5px 7px;
   background: var(--gg-field);
   color: var(--gg-ink);
@@ -419,9 +457,9 @@ export function ensureGGDesign() {
 }
 .gg-row {
   display: flex; align-items: center; gap: 6px;
-  min-width: 0; padding: 0 8px;
+  min-width: 0; min-height: 32px; padding: 0 8px;
   border: 1px solid var(--gg-divider);
-  border-radius: 6px;
+  border-radius: 9px;
   background: var(--gg-field);
   color: var(--gg-ink);
   cursor: pointer;
@@ -507,25 +545,49 @@ export function ensureGGDesign() {
 .gg-chip:disabled:hover { background: transparent; border-color: var(--gg-divider); color: var(--gg-muted); }
 
 /* ===== 7. 滚动条：跟随皮肤，不用系统白条 ===== */
-.gg-surface ::-webkit-scrollbar { width: 8px; height: 8px; }
+.gg-surface ::-webkit-scrollbar { width: 6px; height: 6px; }
 .gg-surface ::-webkit-scrollbar-thumb { background: var(--gg-btn-hover); border-radius: 999px; }
 .gg-surface ::-webkit-scrollbar-thumb:hover { background: var(--gg-accent); }
 .gg-surface ::-webkit-scrollbar-track { background: transparent; }
+/* 上下两端 12px 渐隐：滚动区域边缘不硬切 */
+.gg-surface ::-webkit-scrollbar-button:single-button { height: 12px; background: transparent; }
 
-/* ===== 8. 弹层（悬浮框 / 菜单 / 弹窗共用外壳） ===== */
+/* ===== 8. 弹层（悬浮框 / 菜单 / 弹窗共用外壳） =====
+   设计稿 18:2124 规格表：面板圆角 13 / 行高 34 / 行圆角 8。
+   宽度 320 只适用于菜单类面板（裁切弹窗等宽内容仍走各自覆盖），见批次 2。 */
 .gg-popover {
   position: fixed;
   z-index: 100006;
   width: min(360px, calc(100vw - 16px));
-  max-height: min(82vh, 700px);
+  max-height: min(calc(100vh - 120px), 700px);
   overflow: auto;
   padding: 8px;
   border: 1px solid var(--gg-divider);
-  border-radius: 10px;
+  border-radius: 13px;
   background: var(--gg-panel);
   color: var(--gg-ink);
-  box-shadow: 0 18px 44px rgba(15, 23, 42, .28);
+  box-shadow: 0 20px 48px -12px rgba(0, 0, 0, .62);
   font-size: 12px;
+  animation: gg-popover-in .12s ease-out;
+}
+@keyframes gg-popover-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gg-popover { animation: none; }
+}
+/* 设计稿 18:2124 规格表：菜单类面板统一 320 宽，光效面板例外 300。
+   只按 ID 定向覆盖，不压内容型弹层（裁切 / 颜色编辑 / 图片预览仍用 360 外壳）。 */
+#gg-top-tools-menu.gg-popover,
+#gg-toolbar-settings.gg-popover,
+#gg-link-style-panel.gg-popover,
+#gg-node-collapse-settings-panel.gg-popover,
+#gg-node-glow-settings-panel.gg-popover {
+  width: min(320px, calc(100vw - 16px));
+}
+#gg-node-glow-settings-panel.gg-popover {
+  width: min(300px, calc(100vw - 16px));
 }
 .gg-popover-title {
   display: block;
@@ -535,11 +597,11 @@ export function ensureGGDesign() {
   letter-spacing: .2px;
 }
 .gg-popover-row {
-  width: 100%; min-height: 38px;
+  width: 100%; min-height: 34px;
   display: grid; grid-template-columns: minmax(0, 1fr) auto;
   align-items: center; gap: 10px;
   padding: 4px 6px;
-  border: 1px solid transparent; border-radius: 7px;
+  border: 1px solid transparent; border-radius: 8px;
   background: transparent; color: var(--gg-ink);
   font: inherit; text-align: left;
   transition: background-color .14s ease, border-color .14s ease;
@@ -549,26 +611,44 @@ export function ensureGGDesign() {
 .gg-popover-label { min-width: 0; font-size: 12.5px; font-weight: 600; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .gg-popover-controls { display: inline-flex; align-items: center; gap: 4px; }
 
-/* ===== 9. 开关按钮（顶栏用）：关 = 灰、开 = 主题色 ===== */
+/* ===== 9. 开关按钮（顶栏用）：关 = 灰、开 = 主题色 =====
+   设计稿 13:26 状态矩阵定稿 32×32 / r8；旧版 30×30 r7。 */
 .gg-switch {
-  width: 30px; min-width: 30px; height: 30px; min-height: 30px; padding: 0;
+  width: 32px; min-width: 32px; height: 32px; min-height: 32px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  border: 1px solid var(--gg-divider); border-radius: 7px;
-  background: transparent; color: var(--gg-muted);
+  position: relative;
+  border: 1px solid var(--gg-divider); border-radius: 8px;
+  background: transparent; color: var(--gg-idle, var(--gg-muted));
   cursor: pointer;
   transition: color .14s ease, background-color .14s ease, border-color .14s ease;
 }
 /* 悬停只加深底色、不改颜色：否则「没开」的按钮一悬停就像「开了」 */
 .gg-switch:hover { color: var(--gg-ink); background: var(--gg-btn-hover); }
-.gg-switch:focus-visible { outline: 2px solid var(--gg-accent); outline-offset: 1px; }
+.gg-switch:focus-visible { outline: 2px solid var(--gg-accent); outline-offset: 2px; }
 /* 三态别名兼容：老代码分别写过 is-on / gg-state-on / active，这里一次收齐 */
 .gg-switch.is-on,
 .gg-switch.gg-state-on,
 .gg-switch.active,
-.gg-switch[aria-pressed="true"] {
+.gg-switch[aria-pressed="true"],
+.gg-switch[data-on="true"] {
   color: var(--gg-accent);
   background: color-mix(in srgb, var(--gg-accent) 16%, transparent);
   border-color: color-mix(in srgb, var(--gg-accent) 55%, transparent);
+}
+/* 开启的第三个信号：右上角 5px 状态点。只靠底色时深浅两套都不够一眼 */
+.gg-switch.is-on::after,
+.gg-switch.gg-state-on::after,
+.gg-switch.active::after,
+.gg-switch[aria-pressed="true"]::after,
+.gg-switch[data-on="true"]::after {
+  content: "";
+  position: absolute;
+  top: 3px; right: 3px;
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--gg-accent);
+  box-shadow: 0 0 0 1.5px var(--gg-panel);
+  pointer-events: none;
 }
 .gg-switch.is-on:hover,
 .gg-switch.gg-state-on:hover,
@@ -576,10 +656,13 @@ export function ensureGGDesign() {
 .gg-switch[aria-pressed="true"]:hover {
   background: color-mix(in srgb, var(--gg-accent) 24%, transparent);
 }
-.gg-switch.gg-state-off { color: var(--gg-muted); background: transparent; border-color: var(--gg-divider); }
+.gg-switch.gg-state-off { color: var(--gg-idle, var(--gg-muted)); background: transparent; border-color: var(--gg-divider); }
 .gg-switch.gg-state-off:hover { color: var(--gg-ink); background: var(--gg-btn-hover); }
-.gg-switch:disabled { opacity: .42; cursor: default; }
-.gg-switch:disabled:hover { color: var(--gg-muted); background: transparent; }
+.gg-switch:disabled { opacity: .34; cursor: default; }
+.gg-switch:disabled:hover { color: var(--gg-idle, var(--gg-muted)); background: transparent; }
+.gg-switch:disabled::after { display: none; }
+/* 键盘焦点：与「开启」共用 accent，但只描环不换底（设计稿第 2 页 ·06） */
+.gg-switch:focus-visible { outline: 2px solid var(--gg-accent); outline-offset: 2px; }
 
 /* ===== 10. 状态条 ===== */
 .gg-status { font-size: 10.5px; line-height: 14px; color: var(--gg-muted); white-space: normal; word-break: break-word; }

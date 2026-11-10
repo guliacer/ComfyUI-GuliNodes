@@ -39,3 +39,6 @@ desktop.ini
 *.bak
 *.bak-*
 *.tmp
+
+# 验证脚本产出的截图
+tools/out/

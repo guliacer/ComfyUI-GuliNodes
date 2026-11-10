@@ -155,7 +155,7 @@ class _SafeMathEvaluator:
                 return self.变量[节点.id]
             if 节点.id in _MATH_CONSTANTS:
                 return _MATH_CONSTANTS[节点.id]
-            raise ValueError(f"未知变量：{节点.id}。可用变量为 a、b、c、d。")
+            raise ValueError(f"未知变量：{节点.id}。可用变量为 a~z（按接线顺序出现）。")
 
         if isinstance(节点, ast.BinOp):
             操作 = _BINARY_OPERATORS.get(type(节点.op))
@@ -253,76 +253,87 @@ def _to_index(值):
     return int(值)
 
 
-def _evaluate_math_pair(表达式: str, 变量: dict[str, Any]):
+def _evaluate_math_value(表达式: str, 变量: dict[str, Any]) -> GGNumber:
+    """一条表达式只产出一个数值；整数/浮点下游都从同一个值取。"""
     浮点 = _SafeMathEvaluator(变量).evaluate(表达式)
-    return int(round(浮点)), GGNumber(round(浮点, 10))
+    return GGNumber(round(浮点, 10))
+
+
+# 前端按「接线才长下一个」逐格显示，后端必须把所有可能出现的名字一次声明完，
+# 否则前端 addInput 长出来的端口会在 validate_inputs 里被判成未知输入。
+GG_MATH_INPUT_NAMES = tuple(chr(ord("a") + index) for index in range(26))
+GG_MATH_MAX_EXPRESSIONS = 10
+GG_MATH_MAX_OUTPUTS = GG_MATH_MAX_EXPRESSIONS
+# 新节点每条表达式默认就是对应的那个变量；老工作流里存着的 a*c/d、b*c/d
+# 由 widgets_values 原样带回来，不在这里改。
+GG_MATH_DEFAULT_EXPRESSIONS = tuple(
+    GG_MATH_INPUT_NAMES[index] for index in range(GG_MATH_MAX_EXPRESSIONS)
+)
 
 
 class GGSimpleMath:
     @classmethod
     def INPUT_TYPES(cls):
-        return {
-            "optional": {
-                "a": (GG_ANY_TYPE, {"forceInput": True}),
-                "b": (GG_ANY_TYPE, {"forceInput": True}),
-                "c": (GG_ANY_TYPE, {"forceInput": True}),
-                "d": (GG_ANY_TYPE, {"forceInput": True}),
-            },
-            "required": {
-                "表达式_1": (
-                    "STRING",
-                    {
-                        "default": "a*c/d",
-                        "multiline": False,
-                        "tooltip": "第一组计算表达式，可使用 a、b、c、d 和 + - * / // % ** 等简单运算。",
-                    },
-                ),
-                "表达式_2": (
-                    "STRING",
-                    {
-                        "default": "b*c/d",
-                        "multiline": False,
-                        "tooltip": "第二组计算表达式。示例：round(a/8)*8、max(a,b)、a[1]。",
-                    },
-                ),
-            },
+        可选输入 = {
+            名称: (GG_ANY_TYPE, {"forceInput": True})
+            for 名称 in GG_MATH_INPUT_NAMES
         }
+        必填表达式 = {}
+        for 序号 in range(1, GG_MATH_MAX_EXPRESSIONS + 1):
+            必填表达式[f"表达式_{序号}"] = (
+                "STRING",
+                {
+                    "default": GG_MATH_DEFAULT_EXPRESSIONS[序号 - 1],
+                    "multiline": False,
+                    "tooltip": (
+                        f"第 {序号} 组计算表达式，对应第 {序号} 个结果输出；"
+                        "可使用 a~z 和 + - * / // % ** 等运算，示例 round(a/8)*8、max(a,b)、a[1]。"
+                    ),
+                },
+            )
+        return {"optional": 可选输入, "required": 必填表达式}
 
-    RETURN_TYPES = ("INT", "FLOAT", "INT", "FLOAT")
-    RETURN_NAMES = ("整数_1", "浮点_1", "整数_2", "浮点_2")
+    # 每个输出都是同一个「整数/浮点通用」数值：下游要 INT 就取整，要 FLOAT 就保留小数。
+    # 旧的 FLOAT 输出端口已删除，旧连线由 web/gg-simple-math.js 迁移到对应结果槽。
+    RETURN_TYPES = (GG_ANY_TYPE,) * GG_MATH_MAX_OUTPUTS
+    RETURN_NAMES = tuple(f"结果_{序号}" for 序号 in range(1, GG_MATH_MAX_OUTPUTS + 1))
     FUNCTION = "execute"
     CATEGORY = "GuliNodes/输入"
     DESCRIPTION = (
-        "使用 a、b、c、d 四个输入进行简单数学计算，分别输出两条表达式的整数和浮点结果。"
+        "输入源与结果输出都随接线自动增长；每条表达式对应一个结果输出，"
+        "结果同时可用于整数和浮点下游。"
     )
 
-    def execute(
-        self,
-        表达式_1: str = "a*c/d",
-        表达式_2: str = "b*c/d",
-        a: Any = 0.0,
-        b: Any = 0.0,
-        c: Any = 0.0,
-        d: Any = 1.0,
-    ):
-        变量 = {
-            "a": _normalize_math_input("a", a),
-            "b": _normalize_math_input("b", b),
-            "c": _normalize_math_input("c", c),
-            "d": _normalize_math_input("d", d),
-        }
-        整数_1, 浮点_1 = _evaluate_math_pair(表达式_1, 变量)
-        整数_2, 浮点_2 = _evaluate_math_pair(表达式_2, 变量)
-        return (整数_1, 浮点_1, 整数_2, 浮点_2)
+    def execute(self, **kwargs):
+        变量 = {}
+        for 名称 in GG_MATH_INPUT_NAMES:
+            # d 保持老默认 1：老工作流里 a*c/d 这类表达式没接 d 时不会除零。
+            默认值 = 1.0 if 名称 == "d" else 0.0
+            变量[名称] = _normalize_math_input(名称, kwargs.get(名称, 默认值))
+
+        结果 = []
+        for 序号 in range(1, GG_MATH_MAX_EXPRESSIONS + 1):
+            键 = f"表达式_{序号}"
+            表达式 = kwargs.get(键, GG_MATH_DEFAULT_EXPRESSIONS[序号 - 1])
+            try:
+                结果.append(_evaluate_math_value(表达式, 变量))
+            except ValueError as exc:
+                raise ValueError(f"{键} 计算失败：{exc}") from exc
+        # 前端只显示前 N 个输出，多返回的值没有连线、不会被下游取到。
+        return tuple(结果)
 
     @classmethod
-    def IS_CHANGED(cls, 表达式_1: str = "a*c/d", 表达式_2: str = "b*c/d", **kwargs):
-        变量 = tuple(
-            (名称, repr(_normalize_math_input(名称, 值)))
-            for 名称, 值 in sorted(kwargs.items())
-            if 名称 in {"a", "b", "c", "d"}
+    def IS_CHANGED(cls, **kwargs):
+        表达式 = tuple(
+            str(kwargs.get(f"表达式_{序号}", GG_MATH_DEFAULT_EXPRESSIONS[序号 - 1]))
+            for 序号 in range(1, GG_MATH_MAX_EXPRESSIONS + 1)
         )
-        return (表达式_1, 表达式_2, 变量)
+        变量 = tuple(
+            (名称, repr(_normalize_math_input(名称, kwargs[名称])))
+            for 名称 in GG_MATH_INPUT_NAMES
+            if 名称 in kwargs
+        )
+        return (表达式, 变量)
 
 
 class GGInteger:

@@ -1525,11 +1525,20 @@
           "link": null
         },
         {
-          "localized_name": "主模型",
-          "name": "主模型",
+          "localized_name": "文生图LLM模型",
+          "name": "文生图LLM模型",
           "type": "COMBO",
           "widget": {
-            "name": "主模型"
+            "name": "文生图LLM模型"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "图生图LLM模型",
+          "name": "图生图LLM模型",
+          "type": "COMBO",
+          "widget": {
+            "name": "图生图LLM模型"
           },
           "link": null
         },
@@ -1586,6 +1595,24 @@
             "name": "输入提示词"
           },
           "link": 7
+        },
+        {
+          "localized_name": "透明背景",
+          "name": "透明背景",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "透明背景"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "增强方向",
+          "name": "增强方向",
+          "type": "COMBO",
+          "widget": {
+            "name": "增强方向"
+          },
+          "link": null
         }
       ],
       "outputs": [
@@ -1613,13 +1640,17 @@
             "model": true,
             "文生图PE模型": true,
             "图生图PE模型": true,
-            "主模型": true,
+            "文生图LLM模型": true,
+            "图生图LLM模型": true,
             "mmproj": true,
             "上下文长度": true,
             "最大生成token": true,
             "seed": true,
             "生成后自动卸载模型": true,
-            "输入提示词": true
+            "输入提示词": true,
+            "卸载策略": true,
+            "透明背景": true,
+            "增强方向": true
           },
           "version": "7.8",
           "input_ue_unconnectable": {}
@@ -1634,14 +1665,17 @@
         "deepseek-flash",
         "clip_l.safetensors",
         "clip_l.safetensors",
+        "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
         16384,
         1536,
         12345,
-        true,
+        "fixed",
+        "自动",
         "",
-        ""
+        false,
+        "默认"
       ],
       "widgets_values_named": {
         "任务模式": "图生图",
@@ -1652,14 +1686,17 @@
         "model": "deepseek-flash",
         "文生图PE模型": "clip_l.safetensors",
         "图生图PE模型": "clip_l.safetensors",
-        "主模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
+        "文生图LLM模型": "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
+        "图生图LLM模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
         "上下文长度": 16384,
         "最大生成token": 1536,
         "seed": 12345,
-        "control_after_generate": true,
-        "生成后自动卸载模型": "",
-        "输入提示词": ""
+        "control_after_generate": "fixed",
+        "卸载策略": "自动",
+        "输入提示词": "",
+        "透明背景": false,
+        "增强方向": "默认"
       }
     },
     {
@@ -2869,11 +2906,20 @@
           "link": null
         },
         {
-          "localized_name": "主模型",
-          "name": "主模型",
+          "localized_name": "文生图LLM模型",
+          "name": "文生图LLM模型",
           "type": "COMBO",
           "widget": {
-            "name": "主模型"
+            "name": "文生图LLM模型"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "图生图LLM模型",
+          "name": "图生图LLM模型",
+          "type": "COMBO",
+          "widget": {
+            "name": "图生图LLM模型"
           },
           "link": null
         },
@@ -2930,6 +2976,24 @@
             "name": "输入提示词"
           },
           "link": 40
+        },
+        {
+          "localized_name": "透明背景",
+          "name": "透明背景",
+          "type": "BOOLEAN",
+          "widget": {
+            "name": "透明背景"
+          },
+          "link": null
+        },
+        {
+          "localized_name": "增强方向",
+          "name": "增强方向",
+          "type": "COMBO",
+          "widget": {
+            "name": "增强方向"
+          },
+          "link": null
         }
       ],
       "outputs": [
@@ -2957,13 +3021,17 @@
             "model": true,
             "文生图PE模型": true,
             "图生图PE模型": true,
-            "主模型": true,
+            "文生图LLM模型": true,
+            "图生图LLM模型": true,
             "mmproj": true,
             "上下文长度": true,
             "最大生成token": true,
             "seed": true,
             "生成后自动卸载模型": true,
-            "输入提示词": true
+            "输入提示词": true,
+            "卸载策略": true,
+            "透明背景": true,
+            "增强方向": true
           },
           "version": "7.8",
           "input_ue_unconnectable": {}
@@ -2978,14 +3046,17 @@
         "deepseek-flash",
         "clip_l.safetensors",
         "clip_l.safetensors",
+        "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
         16384,
         1536,
         12345,
-        true,
+        "fixed",
+        "自动",
         "",
-        ""
+        false,
+        "默认"
       ],
       "widgets_values_named": {
         "任务模式": "图生图",
@@ -2996,14 +3067,17 @@
         "model": "deepseek-flash",
         "文生图PE模型": "clip_l.safetensors",
         "图生图PE模型": "clip_l.safetensors",
-        "主模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
+        "文生图LLM模型": "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
+        "图生图LLM模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
         "上下文长度": 16384,
         "最大生成token": 1536,
         "seed": 12345,
-        "control_after_generate": true,
-        "生成后自动卸载模型": "",
-        "输入提示词": ""
+        "control_after_generate": "fixed",
+        "卸载策略": "自动",
+        "输入提示词": "",
+        "透明背景": false,
+        "增强方向": "默认"
       }
     },
     {
@@ -5948,7 +6022,7 @@
       10,
       2,
       12,
-      16,
+      17,
       "STRING"
     ],
     [
@@ -5964,7 +6038,7 @@
       30,
       2,
       32,
-      16,
+      17,
       "STRING"
     ],
     [

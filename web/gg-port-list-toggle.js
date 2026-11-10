@@ -1,6 +1,6 @@
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
-import { applySurface, ensureGGDesign } from "./gg-ui-design.js";
+import { applySurface, ensureGGDesign, detectHostTheme, PALETTES } from "./gg-ui-design.js";
 import {
     DEFAULT_MULTILINE_WIDGET_HEIGHT,
     MIN_MULTILINE_WIDGET_HEIGHT,
@@ -25,12 +25,22 @@ const TOP_BUTTON_ID = "gg-port-list-toggle-button";
 const COLLAPSE_TOP_BUTTON_ID = "gg-node-collapse-button";
 const PIN_TOP_BUTTON_ID = "gg-node-pin-button";
 const COLLAPSE_SETTINGS_PANEL_ID = "gg-node-collapse-settings-panel";
-const BUTTON_SIZE = 22;
+const COLLAPSE_SETTINGS_PANEL_WIDTH = 320;
+// 设计稿 9:259 共存示意定稿：20×20 / r6 / 图标 13 / 间距 3 / 距右边缘 6。
+// 命中区由 getButtonRect() 单一派生，改这里绘制与点击会同步变化。
+const BUTTON_SIZE = 20;
+const BUTTON_RADIUS = 6;
 const BUTTON_RIGHT = 6;
 const BUTTON_GAP = 3;
 const BUTTON_HIT_PADDING = 3;
 // 与节点原生标题按钮（如子图查看按钮）之间的横向间距。
 const NATIVE_BUTTON_GAP = 6;
+// 设计稿 4:259 标题栏按钮三档降级阈值（展开态节点宽度）。
+const TITLE_BUTTON_FULL_WIDTH = 300;          // ≥300 三枚全显
+const TITLE_BUTTON_NO_PIN_WIDTH = 240;        // 240–299 撤置顶（低频），留折叠+端口
+const TITLE_BUTTON_COLLAPSE_ONLY_WIDTH = 180; // 180–239 只留折叠（唯一有状态回报）
+// <180 一枚都不画，功能全部收进右键菜单
+const TITLE_BUTTON_SHRINK_SIZE = 16;          // 180–239 档按钮缩小尺寸
 const NODE_DRAW_PATCHED = Symbol.for("GuliNodes.portListToggle.nodeDrawPatched");
 const CANVAS_DRAW_NODE_PATCHED = Symbol.for("GuliNodes.portListToggle.canvasDrawNodePatched");
 const NODE_RESIZE_PATCHED = Symbol.for("GuliNodes.portListToggle.nodeResizePatched");
@@ -310,9 +320,15 @@ function setNodePinned(node, pinned) {
 // 返回当前设置值，并吞掉 LiteGraph 每帧「按标题重算」的写入；这样无需改动 node.size，
 // 展开尺寸与 autofit 都不受影响，命中区、选择框、我们的按钮定位也都由 _collapsed_width
 // 派生，自然跟着统一。展开时撤掉 getter，交回原生行为。
-const COLLAPSE_WIDTH_DEFAULT = 150;
-const COLLAPSE_WIDTH_MIN = 60;
-const COLLAPSE_WIDTH_MAX = 400;
+const COLLAPSE_WIDTH_DEFAULT = 158;
+const COLLAPSE_WIDTH_MIN = 96;
+const COLLAPSE_WIDTH_MAX = 260;
+// 三档预设（设计稿第 5 页 ·06）：覆盖 90% 用法，滑杆只处理中间值。
+const COLLAPSE_WIDTH_PRESETS = [
+    { value: 120, label: "紧凑" },
+    { value: 158, label: "标准" },
+    { value: 200, label: "宽松" },
+];
 const COLLAPSE_WIDTH_FORCED_FLAG = "_ggCollapseWidthForced";
 let collapseFixedWidth = COLLAPSE_WIDTH_DEFAULT;
 
@@ -463,21 +479,97 @@ function nativeTitleButtonsLeftEdge(node) {
     return Number.isFinite(minLeft) ? minLeft : null;
 }
 
-function getButtonRect(node) {
-    const width = getNodeTitleWidth(node);
+// 官方（LiteGraph 原生）固定是否被启用：节点自带 pin 时我们不再画自己的置顶按钮，
+// 避免两个固定入口冲突（设计稿 4:259「官方有 pin 时我们不画置顶」）。
+function hostHasOfficialPin(node) {
+    if (!node) return false;
+    if (node.pinned === true) return true;
+    const buttons = node.title_buttons;
+    if (Array.isArray(buttons)) {
+        for (const button of buttons) {
+            if (!button || button.visible === false) continue;
+            const id = String(
+                button.name ?? button.icon ?? button.type ?? button.action ?? button.id ?? ""
+            ).toLowerCase();
+            if (id.includes("pin")) return true;
+        }
+    }
+    return false;
+}
+
+// 标题栏按钮的单一真相源（设计稿 4:259 三档降级 + 官方 pin 抑制）：
+// 按节点当前宽度 / 折叠态 / 官方 pin 决定三枚按钮的可见性与尺寸，
+// 绘制与点击命中必须全部经由本函数，避免「画在这、点在那」。
+function computeTitleButtons(node) {
+    const collapsed = isNodeCollapsed(node);
     const titleHeight = getTitleHeight(node);
-    const size = Math.min(BUTTON_SIZE, Math.max(18, titleHeight - 6));
+    const baseSize = Math.min(BUTTON_SIZE, Math.max(18, titleHeight - 6));
+
+    // 折叠态：只保留「恢复」一枚（设计稿 1:259），其余收起。
+    if (collapsed) {
+        return {
+            port: null,
+            collapse: anchoredButtonRect(rightAnchorForNode(node, titleHeight), titleHeight, baseSize),
+            pin: null,
+        };
+    }
+
+    const width = getNodeTitleWidth(node);
+    const hasPorts = nodeHasPorts(node);
+    const officialPin = hostHasOfficialPin(node);
+
+    // 三档降级（宽松 → 严格）。
+    const fullTier = width >= TITLE_BUTTON_FULL_WIDTH;            // ≥300 三枚全显
+    const midTier = width >= TITLE_BUTTON_NO_PIN_WIDTH;           // 240–299 撤置顶
+    const smallTier = width >= TITLE_BUTTON_COLLAPSE_ONLY_WIDTH;  // 180–239 只留折叠
+
+    const showPin = fullTier && !officialPin && pinFeatureEnabled;
+    // 端口按钮常显（无端口时由 drawPortListButton 画 34% 禁用态）
+    const showPort = featureEnabled && midTier;
+    const showCollapse = collapseFeatureEnabled && smallTier;     // 180+ 保留折叠
+
+    if (!showPin && !showPort && !showCollapse) {
+        // <180 一枚都不画，功能收进右键菜单（见 installNode 的 getExtraMenuOptions）。
+        return { port: null, collapse: null, pin: null };
+    }
+
+    // 180–239 档：唯一有状态回报的折叠按钮缩到 16px。
+    const size = smallTier && !midTier ? Math.min(TITLE_BUTTON_SHRINK_SIZE, baseSize) : baseSize;
+    const right = rightAnchorForNode(node, titleHeight);
+
+    // 自右向左依次排布：端口 → 折叠 → 置顶。
+    const present = [];
+    if (showPort) present.push("port");
+    if (showCollapse) present.push("collapse");
+    if (showPin) present.push("pin");
+    const rects = { port: null, collapse: null, pin: null };
+    let cursor = right;
+    for (const key of present) {
+        const rect = anchoredButtonRect(cursor, titleHeight, size);
+        rects[key] = rect;
+        cursor = rect.x - BUTTON_GAP;
+    }
+    return rects;
+}
+
+// 标题栏按钮右侧锚点：默认贴右边缘，展开态若节点自带标题按钮（如子图查看）则让位。
+function rightAnchorForNode(node, titleHeight) {
+    const width = getNodeTitleWidth(node);
     let rightAnchor = width - BUTTON_RIGHT;
-    // 展开状态下若节点自带标题按钮，则把我们的按钮整体左移到它们旁边；
-    // 折叠时原生标题按钮不绘制，保持默认最右侧。
     if (!isNodeCollapsed(node)) {
         const nativeLeft = nativeTitleButtonsLeftEdge(node);
         if (nativeLeft != null) {
-            rightAnchor = Math.min(rightAnchor, nativeLeft - NATIVE_BUTTON_GAP);
+            // 设计稿第 1 页 ·04：我们的组与官方按钮之间 = 6 间距 + 1px 分隔线 + 12。
+            rightAnchor = Math.min(rightAnchor, nativeLeft - NATIVE_BUTTON_GAP - 1 - 12);
         }
     }
+    return rightAnchor;
+}
+
+// 以右侧游标为基准生成一枚按钮的矩形（节点局部坐标，与绘制 / 命中同一套）。
+function anchoredButtonRect(rightCursor, titleHeight, size) {
     return {
-        x: Math.max(2, rightAnchor - size),
+        x: Math.max(2, rightCursor - size),
         // LiteGraph's node-local draw origin is the top of the body; the
         // title bar occupies the negative Y range above it.
         y: -titleHeight + Math.max(2, (titleHeight - size) / 2),
@@ -486,41 +578,20 @@ function getButtonRect(node) {
     };
 }
 
+function getButtonRect(node) {
+    return computeTitleButtons(node).port;
+}
+
 function getCollapseButtonRect(node) {
-    const portRect = getButtonRect(node);
-    // When the port button is intentionally absent on a collapsed node, keep
-    // the restore button at the same right edge instead of leaving a gap.
-    if (isNodeCollapsed(node)) return portRect;
-    return {
-        x: portRect.x - BUTTON_GAP - portRect.width,
-        y: portRect.y,
-        width: portRect.width,
-        height: portRect.height,
-    };
+    return computeTitleButtons(node).collapse;
 }
 
 function getPinButtonRect(node) {
-    // 固定按钮固定排在折叠按钮左侧（折叠按钮旁边）。
-    const collapseRect = getCollapseButtonRect(node);
-    return {
-        x: collapseRect.x - BUTTON_GAP - collapseRect.width,
-        y: collapseRect.y,
-        width: collapseRect.width,
-        height: collapseRect.height,
-    };
+    return computeTitleButtons(node).pin;
 }
 
 function getNodeButtonRects(node) {
-    const collapsed = isNodeCollapsed(node);
-    const portVisible = !collapsed && nodeHasPorts(node);
-    const portRect = getButtonRect(node);
-    const collapseRect = getCollapseButtonRect(node);
-    const pinRect = getPinButtonRect(node);
-    return {
-        port: portVisible ? portRect : null,
-        collapse: collapseRect,
-        pin: pinRect,
-    };
+    return computeTitleButtons(node);
 }
 
 function getLocalPosition(position, event) {
@@ -1192,6 +1263,41 @@ function getCanvasHoveredNode() {
     return canvas?.node_over || canvas?.nodeOver || canvas?.hovered_node || null;
 }
 
+// 标题栏三枚按钮的配色：跟随宿主明暗。detectHostTheme 自带 1 秒缓存，
+// 不会在 drawNode 里每帧触发 getComputedStyle。
+let titleButtonThemeCache = { at: 0, mode: "dark" };
+function titleButtonPalette() {
+    const now = Date.now();
+    if (now - titleButtonThemeCache.at > 1000) {
+        titleButtonThemeCache = { at: now, mode: detectHostTheme() };
+    }
+    return PALETTES[titleButtonThemeCache.mode === "light" ? "light" : "dark"];
+}
+
+function hexToRgba(hex, alpha) {
+    const text = String(hex || "").replace("#", "");
+    const full = text.length === 3 ? [...text].map((ch) => ch + ch).join("") : text;
+    const value = Number.parseInt(full, 16);
+    if (!Number.isFinite(value)) return `rgba(76, 141, 255, ${alpha})`;
+    return `rgba(${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}, ${alpha})`;
+}
+
+// 一枚标题栏按钮的四态底色（设计稿第 1 页 ·02 / 第 2 页 ·02）：
+// 默认只有图标；悬停出 btn 底 + ink 图标；激活 accent 软底 + accent 图标。
+function titleButtonSkin(palette, { hovered, active, pressed, mode }) {
+    if (pressed) return { fill: palette.pressBg, stroke: palette.divider, icon: palette.ink, iconFill: null };
+    if (active) {
+        return {
+            fill: hexToRgba(palette.accent, mode === "light" ? 0.10 : 0.30),
+            stroke: hexToRgba(palette.accent, 0.55),
+            icon: palette.accent,
+            iconFill: palette.accent,
+        };
+    }
+    if (hovered) return { fill: palette.btnHover, stroke: palette.divider, icon: palette.ink, iconFill: null };
+    return { fill: null, stroke: null, icon: palette.muted, iconFill: null };
+}
+
 function isNodeHovered(node) {
     return node?._ggPortListNodeHovered === true || getCanvasHoveredNode() === node;
 }
@@ -1208,13 +1314,16 @@ function isInsideNode(node, position, event) {
 }
 
 function shouldShowPortListButton(node) {
-    return node?.selected === true || isNodeHovered(node) || node?._ggPortListButtonHovered === true;
+    // 设计稿第 1 页 ·02：三枚按钮常显。没有端口的节点画 34% 禁用态，
+    // 而不是“点它也没反应”的隐形按钮。
+    return featureEnabled && !isNodeCollapsed(node);
 }
 
 function isInsideButton(node, position, event) {
     const local = getLocalPosition(position, event);
     if (!local) return false;
     const rect = getButtonRect(node);
+    if (!rect) return false;
     const padding = BUTTON_HIT_PADDING;
     return local[0] >= rect.x - padding
         && local[0] <= rect.x + rect.width + padding
@@ -1310,24 +1419,50 @@ function drawEyeIcon(ctx, centerX, centerY, hidden) {
     ctx.stroke();
 }
 
-function drawPortListButton(node, ctx) {
-    if (!ctx || isNodeCollapsed(node) || !nodeHasPorts(node) || !shouldShowPortListButton(node)) return;
-    const rect = getButtonRect(node);
-    const hidden = readHiddenState(node);
-    const hovered = node._ggPortListButtonHovered === true;
-
+// 标题栏按钮的公共画法：底色 / 描边 / 图标色全部走主题皮肤（设计稿 1·02 / 2·02）。
+// 拿到画布后显式设 globalAlpha，避免上一段绘制遗留的透明度漏进图标。
+function paintTitleButton(ctx, rect, skin, alpha) {
     ctx.save();
-    roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, 5);
-    ctx.fillStyle = hovered ? "rgba(80, 160, 255, 0.34)" : "rgba(20, 20, 20, 0.24)";
-    ctx.fill();
-    ctx.strokeStyle = hovered ? "rgba(160, 220, 255, 0.92)" : "rgba(255, 255, 255, 0.62)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-
-    ctx.strokeStyle = hidden ? "#d9f4ff" : "#ffffff";
-    ctx.lineWidth = 1.35;
+    ctx.globalAlpha = alpha == null ? 1 : alpha;
+    if (skin.fill) {
+        roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, BUTTON_RADIUS);
+        ctx.fillStyle = skin.fill;
+        ctx.fill();
+        ctx.strokeStyle = skin.stroke || skin.fill;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+    ctx.strokeStyle = skin.icon;
+    ctx.fillStyle = skin.iconFill || skin.icon;
+    ctx.lineWidth = 1.25;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+}
+
+function titleButtonState(node, key, active) {
+    const palette = titleButtonPalette();
+    const hovered = key === "port"
+        ? node._ggPortListButtonHovered === true
+        : key === "collapse"
+            ? node._ggPortListCollapseButtonHovered === true
+            : node._ggPortListPinButtonHovered === true;
+    const pressed = key === "port"
+        ? node._ggPortListButtonPressed === true
+        : key === "collapse"
+            ? node._ggPortListCollapseButtonPressed === true
+            : node._ggPortListPinButtonPressed === true;
+    return { palette, skin: titleButtonSkin(palette, { hovered, active, pressed, mode: titleButtonThemeCache.mode }) };
+}
+
+function drawPortListButton(node, ctx) {
+    if (!ctx || !shouldShowPortListButton(node)) return;
+    const rect = getButtonRect(node);
+    if (!rect) return;
+    const hidden = readHiddenState(node);
+    const enabled = nodeHasPorts(node);
+    // 无端口：34% 透明禁用态，不画 hover 底、不响应点击（设计稿 1·02）。
+    const { skin } = titleButtonState(node, "port", hidden);
+    paintTitleButton(ctx, rect, enabled ? skin : { ...skin, fill: null, stroke: null, icon: titleButtonPalette().muted }, enabled ? 1 : 0.34);
     drawEyeIcon(ctx, rect.x + rect.width / 2, rect.y + rect.height / 2, hidden);
     ctx.restore();
 }
@@ -1355,20 +1490,12 @@ function drawCollapseIcon(ctx, centerX, centerY, expanded) {
 }
 
 function drawCollapseButton(node, ctx) {
-    if (!ctx || !collapseFeatureEnabled || !node?._ggPortListNodeHovered && node?.selected !== true) return;
+    if (!ctx || !collapseFeatureEnabled) return;
     const rect = getCollapseButtonRect(node);
-    const hovered = node._ggPortListCollapseButtonHovered === true;
-    ctx.save();
-    roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, 5);
-    ctx.fillStyle = hovered ? "rgba(80, 160, 255, 0.34)" : "rgba(20, 20, 20, 0.24)";
-    ctx.fill();
-    ctx.strokeStyle = hovered ? "rgba(160, 220, 255, 0.92)" : "rgba(255, 255, 255, 0.62)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 1.25;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    if (!rect) return;
+    // 激活态 = 已折叠（设计稿 1·02），图标同时翻转成「展开」。
+    const { skin } = titleButtonState(node, "collapse", isNodeCollapsed(node));
+    paintTitleButton(ctx, rect, skin);
     drawCollapseIcon(ctx, rect.x + rect.width / 2, rect.y + rect.height / 2, !isNodeCollapsed(node));
     ctx.restore();
 }
@@ -1398,23 +1525,35 @@ function drawPinIcon(ctx, centerX, centerY, pinned) {
 }
 
 function drawPinButton(node, ctx) {
-    if (!ctx || !pinFeatureEnabled || !node?._ggPortListNodeHovered && node?.selected !== true) return;
+    if (!ctx || !pinFeatureEnabled) return;
     const rect = getPinButtonRect(node);
+    if (!rect) return;
     const pinned = isNodePinned(node);
-    const hovered = node._ggPortListPinButtonHovered === true;
-    ctx.save();
-    roundedRect(ctx, rect.x, rect.y, rect.width, rect.height, 5);
-    ctx.fillStyle = hovered ? "rgba(80, 160, 255, 0.34)" : (pinned ? "rgba(59, 130, 246, 0.30)" : "rgba(20, 20, 20, 0.24)");
-    ctx.fill();
-    ctx.strokeStyle = hovered ? "rgba(160, 220, 255, 0.92)" : "rgba(255, 255, 255, 0.62)";
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.strokeStyle = "#ffffff";
-    ctx.fillStyle = "#ffffff";
-    ctx.lineWidth = 1.25;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
+    const { skin } = titleButtonState(node, "pin", pinned);
+    paintTitleButton(ctx, rect, skin);
     drawPinIcon(ctx, rect.x + rect.width / 2, rect.y + rect.height / 2, pinned);
+    ctx.restore();
+}
+
+function drawNativeButtonDivider(node, ctx) {
+    if (!ctx || isNodeCollapsed(node)) return;
+    const nativeLeft = nativeTitleButtonsLeftEdge(node);
+    if (nativeLeft == null) return;
+    const buttons = computeTitleButtons(node);
+    if (!buttons || !Object.values(buttons).some(Boolean)) return;
+
+    const titleHeight = getTitleHeight(node);
+    const dividerHeight = Math.min(16, Math.max(12, titleHeight - 12));
+    const centerY = -titleHeight / 2;
+    const x = nativeLeft - NATIVE_BUTTON_GAP - 0.5;
+    ctx.save();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = titleButtonPalette().divider;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x, centerY - dividerHeight / 2);
+    ctx.lineTo(x, centerY + dividerHeight / 2);
+    ctx.stroke();
     ctx.restore();
 }
 
@@ -1506,9 +1645,10 @@ function drawNodeWithPortButton(node, ctx, draw) {
     node._ggPortListDrawingInProgress = true;
     try {
         const result = drawNodeWithPortToggle(node, draw);
-        if (featureEnabled && nodeHasPorts(node)) drawPortListButton(node, ctx);
+        if (featureEnabled && !isNodeCollapsed(node)) drawPortListButton(node, ctx);
         drawCollapseButton(node, ctx);
         drawPinButton(node, ctx);
+        drawNativeButtonDivider(node, ctx);
         return result;
     } finally {
         node._ggPortListDrawingInProgress = false;
@@ -1768,6 +1908,66 @@ function installNode(node) {
         }
         return originalMouseLeave?.apply(this, args);
     };
+
+    // 设计稿 4:259：标题栏按钮被降级收起时，对应功能收进右键菜单，
+    // 保证 <180px 等窄节点仍能触达（只补「被收起」的那几枚，避免与标题栏重复）。
+    const originalGetExtraMenuOptions = node.getExtraMenuOptions;
+    node.getExtraMenuOptions = function (event, options) {
+        // 原生 getExtraMenuOptions 在某些节点类型（如广播节点）内部会再调用
+        // getExtraMenuOptions 自身作为「链式 super」，这会导致我们包好的函数被
+        // 重入并重复追加菜单项。用一次性重入标志打断这条回环：内层调用直接把
+        // options 原样交回，由外层那次统一补菜单项，既防死循环也防重复。
+        if (this._ggExtraMenuReentrant) return options;
+        this._ggExtraMenuReentrant = true;
+        try {
+            let opts = options;
+            if (typeof originalGetExtraMenuOptions === "function") {
+                try {
+                    const result = originalGetExtraMenuOptions.call(this, event, opts);
+                    if (Array.isArray(result)) opts = result;
+                } catch (menuError) {
+                    console.warn("[GGPortListToggle] native getExtraMenuOptions failed:", menuError);
+                }
+            }
+            if (!Array.isArray(opts)) opts = [];
+            const has = (content) => opts.some((o) => o && o.content === content);
+            const rects = computeTitleButtons(this);
+            const hasPorts = featureEnabled && !isNodeCollapsed(this) && nodeHasPorts(this);
+            const collapseLabel = isNodeCollapsed(this) ? "恢复节点" : "折叠节点";
+            const portLabel = readHiddenState(this) ? "显示输入输出列表" : "隐藏输入输出列表";
+            const pinLabel = isNodePinned(this) ? "取消固定节点" : "固定节点";
+            if (collapseFeatureEnabled && !rects.collapse && !has(collapseLabel)) {
+                opts.push({
+                    content: collapseLabel,
+                    callback: () => {
+                        setNodeCollapsed(this, !isNodeCollapsed(this));
+                        this.setDirtyCanvas?.(true, true);
+                    },
+                });
+            }
+            if (hasPorts && !rects.port && !has(portLabel)) {
+                opts.push({
+                    content: portLabel,
+                    callback: () => {
+                        setHiddenState(this, !readHiddenState(this));
+                        this.setDirtyCanvas?.(true, true);
+                    },
+                });
+            }
+            if (pinFeatureEnabled && !rects.pin && !has(pinLabel)) {
+                opts.push({
+                    content: pinLabel,
+                    callback: () => {
+                        setNodePinned(this, !isNodePinned(this));
+                        this.setDirtyCanvas?.(true, true);
+                    },
+                });
+            }
+            return opts;
+        } finally {
+            this._ggExtraMenuReentrant = false;
+        }
+    };
 }
 
 function getGraphNodes() {
@@ -1947,24 +2147,43 @@ function installCollapseSettingsStyles() {
     style.textContent = `
         #${COLLAPSE_SETTINGS_PANEL_ID} {
             display: none;
-            width: 260px;
-            padding: 14px;
+            width: ${COLLAPSE_SETTINGS_PANEL_WIDTH}px;
+            padding: 10px;
             box-sizing: border-box;
         }
         #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-title {
-            padding-bottom: 9px; margin-bottom: 10px;
+            padding-bottom: 8px; margin-bottom: 10px;
             border-bottom: 1px solid var(--gg-divider);
             font-size: 13px; font-weight: 700;
         }
-        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-row {
-            display: flex; align-items: center; gap: 10px; font-size: 12px;
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-width-label,
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-label {
+            margin: 10px 0 6px; color: var(--gg-muted); font-size: 11px; font-weight: 650;
         }
-        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-row label { color: var(--gg-muted); flex: 0 0 auto; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-width-presets {
+            display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
+        }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-width-preset {
+            width: 100%; height: 42px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+            padding: 3px 4px; border-radius: 8px; font-size: 11px; font-weight: 600;
+        }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-width-preset small { color: var(--gg-muted); font-size: 10px; font-weight: 500; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-width-preset[aria-pressed="true"] small { color: var(--gg-accent); }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-width-row { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-width-row label { flex: 0 0 auto; color: var(--gg-ink); font-size: 12px; font-weight: 600; }
         #${COLLAPSE_SETTINGS_PANEL_ID} input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--gg-accent); }
-        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-value {
-            flex: 0 0 auto; min-width: 34px; text-align: right; font-weight: 650; font-variant-numeric: tabular-nums;
-        }
-        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-hint { margin-top: 9px; font-size: 11px; color: var(--gg-muted); line-height: 1.4; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-value { flex: 0 0 auto; min-width: 36px; text-align: right; color: var(--gg-ink); font-size: 12px; font-weight: 650; font-variant-numeric: tabular-nums; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-width-ends { display: flex; justify-content: space-between; margin: 2px 43px 0 76px; color: var(--gg-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 10px 0 6px; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-head .gg-collapse-preview-label { margin: 0; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-size { color: var(--gg-muted); font-size: 10.5px; font-variant-numeric: tabular-nums; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-stage { display: flex; align-items: center; min-height: 44px; padding: 5px; border: 1px solid var(--gg-divider); border-radius: 8px; background: var(--gg-field); box-sizing: border-box; overflow: hidden; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-node { width: 158px; max-width: 100%; height: 34px; display: grid; grid-template-columns: 7px minmax(0, 1fr) 7px 16px; align-items: center; gap: 5px; padding: 0 4px 0 6px; border: 1px solid var(--gg-divider); border-radius: 6px; background: var(--gg-card); color: var(--gg-ink); box-sizing: border-box; transition: width .12s ease; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gg-faint); }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-title { min-width: 0; overflow: hidden; color: var(--gg-ink); font-size: 10px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-port { width: 7px; height: 7px; border: 1px solid var(--gg-accent); border-radius: 50%; box-sizing: border-box; }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-preview-action { display: inline-flex; align-items: center; justify-content: center; color: var(--gg-accent); }
+        #${COLLAPSE_SETTINGS_PANEL_ID} .gg-collapse-settings-hint { margin-top: 8px; font-size: 10.5px; color: var(--gg-muted); line-height: 1.4; }
     `;
     document.head.appendChild(style);
 }
@@ -1973,8 +2192,17 @@ function syncCollapseSettingsPanel() {
     if (!collapseSettingsPanel) return;
     const slider = collapseSettingsPanel.querySelector("input[type=range]");
     const value = collapseSettingsPanel.querySelector(".gg-collapse-settings-value");
+    const preview = collapseSettingsPanel.querySelector(".gg-collapse-preview-node");
+    const previewSize = collapseSettingsPanel.querySelector(".gg-collapse-preview-size");
     if (slider) slider.value = String(collapseFixedWidth);
     if (value) value.textContent = String(collapseFixedWidth);
+    if (preview) preview.style.width = `${collapseFixedWidth}px`;
+    if (previewSize) previewSize.textContent = `${collapseFixedWidth} × 34`;
+    for (const button of collapseSettingsPanel.querySelectorAll(".gg-collapse-width-preset")) {
+        const selected = Number(button.dataset.collapseWidth) === collapseFixedWidth;
+        button.setAttribute("aria-pressed", selected ? "true" : "false");
+        button.classList.toggle("is-active", selected);
+    }
 }
 
 function createCollapseSettingsPanel() {
@@ -1989,31 +2217,74 @@ function createCollapseSettingsPanel() {
     panel.setAttribute("aria-label", "节点折叠设置");
     panel.innerHTML = `
         <div class="gg-collapse-settings-title">节点折叠设置</div>
-        <div class="gg-collapse-settings-row">
-            <label>折叠宽度</label>
-            <input type="range" min="${COLLAPSE_WIDTH_MIN}" max="${COLLAPSE_WIDTH_MAX}" step="1" aria-label="节点折叠宽度">
+        <div class="gg-collapse-width-label">宽度预设</div>
+        <div class="gg-collapse-width-presets" role="group" aria-label="折叠宽度预设">
+            ${COLLAPSE_WIDTH_PRESETS.map(({ value, label }) => `
+                <button type="button" class="gg-btn gg-collapse-width-preset" data-collapse-width="${value}" aria-pressed="false">
+                    <span>${label}</span><small>${value}px</small>
+                </button>
+            `).join("")}
+        </div>
+        <div class="gg-collapse-width-row">
+            <label for="gg-collapse-width-slider">自定义宽度</label>
+            <input id="gg-collapse-width-slider" type="range" min="${COLLAPSE_WIDTH_MIN}" max="${COLLAPSE_WIDTH_MAX}" step="1" aria-label="自定义折叠宽度">
             <span class="gg-collapse-settings-value">${collapseFixedWidth}</span>
         </div>
-        <div class="gg-collapse-settings-hint">所有折叠节点统一为这个宽度（像素）。标题过长会截断，过短则右侧留白。</div>
+        <div class="gg-collapse-width-ends" aria-hidden="true"><span>${COLLAPSE_WIDTH_MIN}</span><span>${COLLAPSE_WIDTH_MAX}</span></div>
+        <div class="gg-collapse-preview-head">
+            <span class="gg-collapse-preview-label">预览</span>
+            <span class="gg-collapse-preview-size">${collapseFixedWidth} × 34</span>
+        </div>
+        <div class="gg-collapse-preview-stage">
+            <div class="gg-collapse-preview-node" style="width:${collapseFixedWidth}px" aria-label="折叠节点预览，宽度 ${collapseFixedWidth} 像素">
+                <span class="gg-collapse-preview-dot"></span>
+                <span class="gg-collapse-preview-title">GG 图像缩放 V2</span>
+                <span class="gg-collapse-preview-port"></span>
+                <span class="gg-collapse-preview-action">${ggIcon("nodeExpand", 13)}</span>
+            </div>
+        </div>
+        <div class="gg-collapse-settings-hint">折叠后所有节点统一这个宽度；标题超出会截断，过短则右侧留白。</div>
     `;
     const slider = panel.querySelector("input[type=range]");
     slider.addEventListener("input", () => {
         const value = normalizeCollapseWidth(slider.value);
         applyCollapseWidthValue(value);
-        syncCollapseSettingsPanel();
         void setSettingValue(COLLAPSE_WIDTH_SETTING_ID, value);
     });
+    for (const button of panel.querySelectorAll(".gg-collapse-width-preset")) {
+        button.addEventListener("click", () => {
+            const value = normalizeCollapseWidth(button.dataset.collapseWidth);
+            applyCollapseWidthValue(value);
+            void setSettingValue(COLLAPSE_WIDTH_SETTING_ID, value);
+        });
+    }
     panel.addEventListener("click", (event) => event.stopPropagation());
     document.body.appendChild(panel);
     collapseSettingsPanel = panel;
     syncCollapseSettingsPanel();
 }
 
+// 登记二级页面板保证器：菜单内打开折叠设置前，顶栏会先调用它确保面板已建好
+// （键盘 Enter 打开二级页也走这条；用待注册队列规避与 toolbar 的加载顺序竞态）
+if (window.__ggRegisterTopDetailEnsurer) {
+    window.__ggRegisterTopDetailEnsurer("gg-node-collapse-button", () => {
+        createCollapseSettingsPanel();
+        applySurface(collapseSettingsPanel);
+        return true;
+    });
+} else {
+    (window.__ggPendingTopDetailEnsurers ||= []).push(["gg-node-collapse-button", () => {
+        createCollapseSettingsPanel();
+        applySurface(collapseSettingsPanel);
+        return true;
+    }]);
+}
+
 function positionCollapseSettingsPanel() {
     if (!collapseSettingsPanel || !collapseSettingsButton) return;
     if (collapseSettingsPanel.dataset.ggTopDetailPanel === "true") return;
     const rect = collapseSettingsButton.getBoundingClientRect();
-    const width = 260;
+    const width = COLLAPSE_SETTINGS_PANEL_WIDTH;
     const left = Math.min(window.innerWidth - width - 10, Math.max(10, rect.right - width));
     const top = Math.min(window.innerHeight - collapseSettingsPanel.offsetHeight - 10, Math.max(10, rect.bottom + 8));
     collapseSettingsPanel.style.left = `${left}px`;
@@ -2022,6 +2293,11 @@ function positionCollapseSettingsPanel() {
 
 function closeCollapseSettingsPanel() {
     if (!collapseSettingsPanel) return;
+    // 面板正挂在二级页里：交给顶栏收掉二级页（顺带复位面板到 body 并隐藏）
+    if (collapseSettingsPanel.dataset.ggTopDetailPanel === "true") {
+        window.__ggToggleTopDetailSubpage?.(COLLAPSE_TOP_BUTTON_ID);
+        return;
+    }
     collapseSettingsPanel.style.display = "none";
     collapseSettingsButton?.classList.remove("active");
 }
@@ -2029,15 +2305,28 @@ function closeCollapseSettingsPanel() {
 function toggleCollapseSettings(event) {
     event?.preventDefault?.();
     event?.stopPropagation?.();
+    // 齿轮位于顶栏菜单内时，二级页侧滑由顶栏统一接管（设计稿 5 ·03 / ·07）。
+    // 本模块已在上方 stopPropagation，事件不会冒泡到顶栏委托处理器，故这里直接委托，
+    // 避免「点了没反应」。确保面板已建好（不依赖顶栏 ensure 注册时序，避免加载竞态）。
+    if (window.__ggTopToolsMenuOpen?.() === true && event?.target?.closest?.("#gg-top-tools-nav")) {
+        if (!collapseSettingsPanel) { createCollapseSettingsPanel(); applySurface(collapseSettingsPanel); }
+        window.__ggToggleTopDetailSubpage?.(COLLAPSE_TOP_BUTTON_ID);
+        return;
+    }
+    const menuOpen = window.__ggTopToolsMenuOpen?.() === true;
+    if (menuOpen) {
+        createCollapseSettingsPanel();
+        applySurface(collapseSettingsPanel);
+        window.__ggToggleTopDetailSubpage?.(COLLAPSE_TOP_BUTTON_ID);
+        collapseSettingsButton?.classList.add("active");
+        return;
+    }
     createCollapseSettingsPanel();
     const opening = collapseSettingsPanel.style.display !== "block";
     if (opening) {
-        // 宿主可能中途切过主题，每次打开重新取一次皮肤
         applySurface(collapseSettingsPanel);
         collapseSettingsPanel.style.display = "block";
-        const menuOpen = window.__ggTopToolsMenuOpen?.() === true;
-        const embedded = menuOpen && window.__ggEmbedTopDetailPanel?.(COLLAPSE_TOP_BUTTON_ID) === true;
-        if (!embedded) positionCollapseSettingsPanel();
+        positionCollapseSettingsPanel();
         syncCollapseSettingsPanel();
         collapseSettingsButton?.classList.add("active");
     } else {
@@ -2175,7 +2464,7 @@ app.registerExtension({
             closeCollapseSettingsPanel();
         });
         window.addEventListener("resize", () => {
-            if (collapseSettingsPanel?.style.display === "block") positionCollapseSettingsPanel();
+            if (collapseSettingsPanel?.style.display === "block" && collapseSettingsPanel.dataset.ggTopDetailPanel !== "true") positionCollapseSettingsPanel();
         });
     },
 

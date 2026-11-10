@@ -124,6 +124,12 @@ class Graph:
                 if options.get("control_after_generate"):
                     widgets.append("fixed")
                     named["control_after_generate"] = "fixed"
+                elif kind == "GGPromptEnhancer" and name == "seed" and "control_after_generate" not in named:
+                    # V3 schema 不再声明 control_after_generate，但新版前端仍会在 seed 后
+                    # 自动加这个控件。位置数组少了这一位（18 格），加载时会被老存档迁移
+                    # 误判成「只有一个主模型」，mmproj / 上下文长度 / seed 全部错位。
+                    widgets.append("fixed")
+                    named["control_after_generate"] = "fixed"
             inputs.append(slot)
 
         for bucket in ("required", "optional"):
@@ -211,7 +217,7 @@ def build(definitions):
         graph.node(base, "GGRegionEditPrepare", region + "_prepare", "② " + label + "修改需求（清空即跳过）", (970, offset), {"处理区域": label, "编辑需求": request}, size=(420, 370))
         crop_values = {"遮罩填充": False, "扩展方式": "四边统一", "扩展方式.扩展系数": 1.1, "输出尺寸": "原像素", "输出尺寸.倍数取整": 8}
         graph.node(base + 1, "GGMaskCrop", region + "_crop", "③ " + label + "局部裁剪／等比补边", (1450, offset), crop_values, size=(410, 300), dynamic={"扩展方式": {"扩展系数": ["FLOAT", {"default": 1.4}]}, "输出尺寸": {"倍数取整": ["INT", {"default": 8}]}})
-        enhancer_values = {"任务模式": "图生图", "输出语言": "中文", "增强方式": "本地LLM", "api_key": "", "主模型": option(defs["GGPromptEnhancer"], "主模型", "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf", fallback="Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf"), "mmproj": option(defs["GGPromptEnhancer"], "mmproj", "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf", fallback="Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf"), "上下文长度": 8192, "最大生成token": 2048, "生成后自动卸载模型": True, "seed": 12345}
+        enhancer_values = {"任务模式": "图生图", "输出语言": "中文", "增强方式": "本地LLM", "api_key": "", "文生图LLM模型": option(defs["GGPromptEnhancer"], "文生图LLM模型", "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf", fallback="Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf"), "图生图LLM模型": option(defs["GGPromptEnhancer"], "图生图LLM模型", "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf", fallback="Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf"), "mmproj": option(defs["GGPromptEnhancer"], "mmproj", "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf", fallback="Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf"), "上下文长度": 8192, "最大生成token": 2048, "生成后自动卸载模型": True, "seed": 12345}
         graph.node(base + 2, "GGPromptEnhancer", region + "_enhance", "可选 AI：单独优化" + label + "请求", (1910, offset), enhancer_values, size=(420, 600), grow={"图片": [("图片1", "IMAGE")]})
         graph.node(base + 3, "ComfySwitchNode", region + "_prompt_select", "AI 开／关：真正跳过未选分支", (1910, offset + 690), size=(420, 150), output_type="STRING")
         graph.node(base + 4, "GGTextConcat", region + "_prompt_final", "优化后追加固定轮廓约束", (2370, offset + 690), size=(420, 220))

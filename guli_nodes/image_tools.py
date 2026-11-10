@@ -3,6 +3,8 @@ import torch.nn.functional as torch_F
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 from PIL.PngImagePlugin import PngInfo
 import numpy as np
+import math
+from collections import Counter
 from nodes import PreviewImage, SaveImage
 from comfy.cli_args import args
 import comfy.utils
@@ -29,6 +31,7 @@ from .aspect_ratio import (
     ORIENTATION_TYPES,
     RESOLUTION_OPTIONS,
     SIDE_TYPES,
+    _unpack_mode,
     apply_orientation,
     dimensions_by_ratio,
     dimensions_by_resolution,
@@ -1614,42 +1617,168 @@ class GGImageComparer2(ImageComparerBase):
 
 _缩放方法选项 = ["nearest-exact", "bilinear", "lanczos", "area", "bicubic"]
 
+# 「缩放方式」把两种定尺寸的思路并成一个选择器：
+#   按倍数   —— 原来那套（缩放倍率），行为不变；
+#   按参数   —— 直接给长边/短边/宽度/高度，另一边按原比例推算；按宽度高度则精确给宽高。
+# 合成一级六项、而不是「模式 → 依据」两级，是因为两级要嵌套 DynamicCombo：
+# 本机前端没有嵌套动态下拉的先例，翻车时表现为整片控件消失；
+# 一级六项少点一次，参数显隐也更容易稳定。
+_缩放依据选项 = ("按长边", "按短边", "按宽度", "按高度")
+_缩放方式选项 = ("按倍数",) + _缩放依据选项 + ("按宽度高度",)
 
-def _缩放图像(图像, 缩放方法="lanczos", 缩放倍率=1.5):
-    """在像素空间缩放 IMAGE，并只返回缩放后的图像。"""
-    if not isinstance(图像, torch.Tensor) or 图像.ndim != 4:
-        raise ValueError("图像输入必须是 ComfyUI IMAGE 格式（批量、高度、宽度、通道）。")
+# 缩放依据 → 对应的输入名（两者不同名，避免「按宽度」和「按宽度高度」的宽度混在一起）
+_依据输入名 = {"按长边": "长边", "按短边": "短边", "按宽度": "宽度", "按高度": "高度"}
 
-    if 缩放方法 not in _缩放方法选项:
-        raise ValueError(f"不支持的缩放方法「{缩放方法}」。")
+# 整除数的快速选择：16 放第一项，动态下拉没有独立默认值，第一项就是默认值。
+# 想要的非预设值走「自定义」，所以这个控件既能一键选常用档，也能自由填。
+_整除数选项 = ("16", "0", "4", "8", "32", "64", "128", "自定义")
+_整除数默认 = 16
 
+
+def _校验整除数(值) -> int:
+    数值 = int(值)
+    if 数值 < 0 or 数值 > 256:
+        raise ValueError(f"整除数需要填 0~256，现在填的是 {数值}；填 0 表示不对齐。")
+    return 数值
+
+
+def _解析整除数(值, 默认=_整除数默认) -> int:
+    """拆出整除数：兼容快速选择（字符串/嵌套字典）、「自定义」分支和纯数字。"""
+    if isinstance(值, dict):
+        选中 = 值.get("整除数")
+        if isinstance(选中, dict):
+            选中 = 选中.get("整除数")
+        if 选中 == "自定义":
+            return _校验整除数(值.get("自定义整除数", 默认))
+        if 选中 in (None, ""):
+            return 默认
+        值 = 选中
+    if isinstance(值, (int, float)) and not isinstance(值, bool):
+        return _校验整除数(int(值))
     try:
-        倍率 = float(缩放倍率)
+        return _校验整除数(int(str(值).strip()))
     except (TypeError, ValueError) as exc:
-        raise ValueError("缩放倍率必须是有效数字。") from exc
-    if not torch.isfinite(torch.tensor(倍率)) or 倍率 <= 0:
-        raise ValueError("缩放倍率必须大于 0。")
-    倍率 = min(10000.0, max(0.1, 倍率))
+        raise ValueError(f"整除数「{值}」不是有效数字。") from exc
 
-    _, 原始高度, 原始宽度, _ = 图像.shape
-    目标高度 = max(1, round(原始高度 * 倍率))
-    目标宽度 = max(1, round(原始宽度 * 倍率))
 
+def _解析缩放方式(值):
+    """拆开「缩放方式」的嵌套取值，返回 (方式, 该方式下的参数)。
+
+    兼容旧工作流：老版本的第一个下拉是「缩放方法」，值会落进这一格，
+    这里按插值名/倍率还原成「按倍数」，不让老工作流一开就报错。
+    """
+    if isinstance(值, dict):
+        方式 = 值.get("缩放方式")
+        if isinstance(方式, dict):  # 少数前端会把选中值再套一层
+            return 方式.get("缩放方式", "按倍数"), 值
+        return (方式 or "按倍数"), 值
+    if isinstance(值, str) and 值:
+        if 值 in _缩放方式选项:
+            return 值, {}
+        if 值 in _缩放方法选项:
+            return "按倍数", {"缩放插值": 值}
+        return 值, {}  # 认不出来的字符串原样上抛，由调用方报「不支持的缩放方式」
+    if isinstance(值, (int, float)) and not isinstance(值, bool):
+        return "按倍数", {"缩放倍率": float(值)}
+    return "按倍数", {}
+
+
+def _边长缩放比例(原宽, 原高, 依据, 数值):
+    """按「长边/短边/宽度/高度」算出缩放比例；数值非法时抛中文错误。"""
+    try:
+        数值 = float(数值)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"「{依据}」的数值必须是有效数字。") from exc
+    if not math.isfinite(数值) or 数值 <= 0:
+        raise ValueError(f"「{依据}」的数值必须大于 0，现在填的是 {数值:g}。")
+
+    参照 = {
+        "按长边": max(原宽, 原高),
+        "按短边": min(原宽, 原高),
+        "按宽度": 原宽,
+        "按高度": 原高,
+    }.get(依据)
+    if 参照 is None or 参照 <= 0:
+        raise ValueError(f"不支持的缩放依据「{依据}」。")
+    return 数值 / float(参照)
+
+
+def _缩放图像到(图像, 目标宽, 目标高, 插值="lanczos"):
+    """把 IMAGE 直接重采样到 目标宽×目标高（不裁不补，比例可能被改变）。"""
+    if 插值 not in _缩放方法选项:
+        raise ValueError(f"不支持的缩放插值「{插值}」。")
     缩放后 = 图像.movedim(-1, 1)
-    缩放后 = comfy.utils.common_upscale(缩放后, 目标宽度, 目标高度, 缩放方法, "disabled")
-    缩放后 = 缩放后.movedim(1, -1)
+    缩放后 = comfy.utils.common_upscale(缩放后, int(目标宽), int(目标高), 插值, "disabled")
+    return 缩放后.movedim(1, -1)
 
-    return 缩放后
+
+def _执行图像缩放(图像, 缩放方式="按倍数", 缩放插值="lanczos", 缩放倍率=1.5,
+                  长边=1024, 短边=768, 宽度=1024, 高度=1024, 整除数=_整除数默认):
+    if not isinstance(图像, torch.Tensor) or 图像.ndim != 4:
+        raise ValueError("图像输入必须是 ComfyUI IMAGE 格式（批次、高度、宽度、通道）。")
+
+    整除数 = _解析整除数(整除数)
+    方式, 原始参数 = _解析缩放方式(缩放方式)
+    参数 = dict(原始参数 or {})
+
+    # 旧工作流的控件顺序不同，倍率可能落在「缩放插值」这一格；先捞回来再归位
+    if 缩放插值 not in _缩放方法选项:
+        if isinstance(缩放插值, (int, float)) and not isinstance(缩放插值, bool):
+            参数.setdefault("缩放倍率", float(缩放插值))
+        缩放插值 = "lanczos"
+    if 方式 not in _缩放方式选项:
+        raise ValueError(f"不支持的缩放方式「{方式}」。")
+
+    _, 原高, 原宽, _ = 图像.shape
+    if 原宽 < 1 or 原高 < 1:
+        raise ValueError(f"输入图像尺寸异常（{原宽}×{原高}），无法缩放。")
+
+    if 方式 == "按宽度高度":
+        目标宽 = _就近整除(int(参数.get("宽度", 宽度)), 整除数)
+        目标高 = _就近整除(int(参数.get("高度", 高度)), 整除数)
+        if 目标宽 < 1 or 目标高 < 1:
+            raise ValueError(f"宽度和高度都要大于 0，现在填的是 {目标宽}×{目标高}。")
+        return _缩放图像到(图像, 目标宽, 目标高, 缩放插值)
+
+    if 方式 == "按倍数":
+        try:
+            比例 = float(参数.get("缩放倍率", 缩放倍率))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("缩放倍率必须是有效数字。") from exc
+        if not math.isfinite(比例) or 比例 <= 0:
+            raise ValueError("缩放倍率必须大于 0。")
+        比例 = min(10000.0, max(0.1, 比例))
+    else:
+        数值 = 参数.get(_依据输入名[方式], {"按长边": 长边, "按短边": 短边,
+                                            "按宽度": 宽度, "按高度": 高度}[方式])
+        比例 = _边长缩放比例(原宽, 原高, 方式, 数值)
+
+    # 比例只在输出侧取整，原图尺寸永远参与计算，连续缩放不会累积误差；
+    # 宽高各自就近吸附到整除数倍数，用户填 1000 配 16 会输出 1008 而不是报错
+    return _缩放图像到(
+        图像,
+        _就近整除(round(原宽 * 比例), 整除数),
+        _就近整除(round(原高 * 比例), 整除数),
+        缩放插值,
+    )
 
 
 class GG图像缩放:
+    """旧版前端（没有 V3 动态接口）用的扁平参数版：所有参数一次全显示。"""
+
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "图像": ("IMAGE",),
-                "缩放方法": (_缩放方法选项[:], {"default": "lanczos"}),
+                "缩放方式": (list(_缩放方式选项), {"default": "按倍数"}),
+                "缩放插值": (_缩放方法选项[:], {"default": "lanczos"}),
                 "缩放倍率": ("FLOAT", {"default": 1.5, "min": 0.1, "max": 10000.0, "step": 0.05}),
+                "长边": ("INT", {"default": 1024, "min": 1, "max": 16384, "step": 1}),
+                "短边": ("INT", {"default": 768, "min": 1, "max": 16384, "step": 1}),
+                "宽度": ("INT", {"default": 1024, "min": 1, "max": 16384, "step": 1}),
+                "高度": ("INT", {"default": 1024, "min": 1, "max": 16384, "step": 1}),
+                "整除数": ("INT", {"default": 16, "min": 0, "max": 256, "step": 4}),
             },
         }
 
@@ -1658,8 +1787,593 @@ class GG图像缩放:
     FUNCTION = "execute"
     CATEGORY = "GuliNodes/图像"
 
-    def execute(self, 图像, 缩放方法="lanczos", 缩放倍率=1.5):
-        return (_缩放图像(图像, 缩放方法, 缩放倍率),)
+    def execute(self, 图像, 缩放方式="按倍数", 缩放插值="lanczos", 缩放倍率=1.5,
+                长边=1024, 短边=768, 宽度=1024, 高度=1024, 整除数=16):
+        return (_执行图像缩放(图像, 缩放方式, 缩放插值, 缩放倍率,
+                              长边, 短边, 宽度, 高度, 整除数),)
+
+
+# ---------------------------------------------------------------------------
+# GG 图像缩放 V2
+#
+# 与上面的 `GG 图像缩放` 分工：
+#   `GG 图像缩放` 只负责“把尺寸定下来”（按倍数或按长/短边、宽、高、宽高），输出只有图像；
+#   `GG 图像缩放 V2` 先按边长/自定义宽高定出目标框，再决定内容怎么落进框里
+#   （拉伸、裁剪、三种填充），同时缩放遮罩并输出实际宽高，供下游按真实尺寸排布。
+#
+# 全部在 torch 张量上算，不走 PIL 往返：批次一次整形，裁剪/填充都是切片，
+# 单张 4K 图像的耗时就只有一次重采样；批次越大，摊到每张的成本越低。
+# ---------------------------------------------------------------------------
+
+_缩放V2模式选项 = ("拉伸", "裁剪", "填充·自定义颜色", "填充·边框颜色", "填充·边缘像素", "总像素等比例")
+_缩放V2方向选项 = ("居中", "上", "下", "左", "右")
+_缩放V2条件选项 = ("总是", "最长边大于目标时", "最短边小于目标时")
+
+
+def _解析填充颜色(值) -> tuple[float, float, float]:
+    """把 #RRGGBB / #RGB / r,g,b / (r,g,b) 解析成 0~1 的 RGB；解析不了抛中文错误。"""
+    if isinstance(值, (tuple, list)) and len(值) == 3:
+        通道 = [float(分量) for 分量 in 值]
+        if max(通道) > 1.0:  # 传的是 0~255 的整数写法
+            通道 = [分量 / 255.0 for 分量 in 通道]
+        return tuple(min(1.0, max(0.0, 分量)) for 分量 in 通道)
+
+    if isinstance(值, str):
+        文本 = 值.strip()
+        if "," in 文本:
+            片段 = [段.strip() for 段 in 文本.split(",")]
+            if len(片段) == 3:
+                try:
+                    return _解析填充颜色(tuple(int(段) for 段 in 片段))
+                except ValueError:
+                    pass  # 落到下面按十六进制再试一次
+        文本 = 文本.lstrip("#")
+        if len(文本) == 3:
+            文本 = "".join(字 * 2 for 字 in 文本)
+        if len(文本) == 6:
+            try:
+                数值 = int(文本, 16)
+            except ValueError:
+                数值 = -1
+            if 数值 >= 0:
+                return ((数值 >> 16 & 0xFF) / 255.0,
+                        (数值 >> 8 & 0xFF) / 255.0,
+                        (数值 & 0xFF) / 255.0)
+
+    raise ValueError(f"填充颜色「{值}」无法识别，请填 #RRGGBB（例如 #364254），也支持 r,g,b。")
+
+
+def _就近整除(尺寸: int, 整除数: int) -> int:
+    """把尺寸就近取到整除数倍数，至少保留一个整除数；整除数 <= 1 时原样返回。"""
+    尺寸 = max(1, int(尺寸))
+    if 整除数 <= 1:
+        return 尺寸
+    倍数 = int(math.floor(尺寸 / 整除数 + 0.5))
+    return max(int(整除数), 倍数 * int(整除数))
+
+
+def _缩放V2目标尺寸(原宽: int, 原高: int, 缩放方法: str,
+                    将边缩放到: int, 宽度: int, 高度: int, 整除数: int):
+    """按缩放方法算出目标宽高（已对齐整除数），返回 (宽, 高)。"""
+    if 缩放方法 in ("按长边等比例", "按短边等比例"):
+        依据 = "按长边" if 缩放方法 == "按长边等比例" else "按短边"
+        比例 = _边长缩放比例(原宽, 原高, 依据, 将边缩放到)
+        return (_就近整除(round(原宽 * 比例), 整除数),
+                _就近整除(round(原高 * 比例), 整除数))
+
+    if 缩放方法 != "自定义宽高":
+        raise ValueError(f"不支持的缩放方法「{缩放方法}」。")
+
+    # 自定义宽高：一边填 0 表示按另一边等比例推算，两边都 0 表示保持原尺寸
+    if int(宽度) <= 0 and int(高度) <= 0:
+        return _就近整除(原宽, 整除数), _就近整除(原高, 整除数)
+    if int(宽度) <= 0:
+        比例 = float(高度) / float(原高)
+        return _就近整除(round(原宽 * 比例), 整除数), _就近整除(高度, 整除数)
+    if int(高度) <= 0:
+        比例 = float(宽度) / float(原宽)
+        return _就近整除(宽度, 整除数), _就近整除(round(原高 * 比例), 整除数)
+    return _就近整除(宽度, 整除数), _就近整除(高度, 整除数)
+
+
+def _总像素目标尺寸(原宽: int, 原高: int, 参考宽: int, 参考高: int, 整除数: int):
+    """保持原图宽高比，让输出 宽×高 尽量接近 参考宽×参考高 的总像素。"""
+    目标总像素 = float(参考宽) * float(参考高)
+    比例 = float(原宽) / float(原高)
+    基准高 = max(1, int(round(math.sqrt(目标总像素 / 比例))))
+
+    # 开方取整会带 ±1 像素误差，这里在邻域里挑总像素最接近的一组
+    候选 = []
+    for 偏移 in (-1, 0, 1):
+        候选高 = max(1, 基准高 + 偏移)
+        候选宽 = max(1, int(round(候选高 * 比例)))
+        候选.append((abs(候选宽 * 候选高 - 目标总像素), 候选宽, 候选高))
+    _, 最佳宽, 最佳高 = min(候选, key=lambda 项: 项[0])
+    return _就近整除(最佳宽, 整除数), _就近整除(最佳高, 整除数)
+
+
+def _方向偏移(容器宽: int, 容器高: int, 内容宽: int, 内容高: int, 固定方向: str):
+    """内容放进容器时，按固定方向算左上角偏移；内容比容器大时对应轴偏移为 0。"""
+    差宽 = max(0, int(容器宽) - int(内容宽))
+    差高 = max(0, int(容器高) - int(内容高))
+    if 固定方向 == "上":
+        return 差宽 // 2, 0
+    if 固定方向 == "下":
+        return 差宽 // 2, 差高
+    if 固定方向 == "左":
+        return 0, 差高 // 2
+    if 固定方向 == "右":
+        return 差宽, 差高 // 2
+    return 差宽 // 2, 差高 // 2
+
+
+def _重采样图像(图像: torch.Tensor, 宽: int, 高: int, 插值: str) -> torch.Tensor:
+    通道前置 = 图像.movedim(-1, 1).contiguous()
+    缩放后 = comfy.utils.common_upscale(通道前置, int(宽), int(高), 插值, "disabled")
+    return 缩放后.movedim(1, -1).contiguous()
+
+
+def _重采样遮罩(遮罩: torch.Tensor, 宽: int, 高: int, 插值: str) -> torch.Tensor:
+    # 遮罩避开 lanczos / bicubic：这两个算法会在二值边界外振铃出负值光晕，
+    # 缩完再 clamp 也只会得到一圈脏边。双线性或区域更干净。
+    方法 = "bilinear" if 插值 in ("lanczos", "bicubic") else 插值
+    结果 = comfy.utils.common_upscale(遮罩.unsqueeze(1), int(宽), int(高), 方法, "disabled")
+    return 结果.squeeze(1).clamp(0.0, 1.0)
+
+
+def _规整遮罩(遮罩, 批次: int, 高: int, 宽: int):
+    """把各种形状的 MASK 统一成 批次×高×宽，并对齐到图像尺寸；没接返回 None。"""
+    if 遮罩 is None:
+        return None
+    if not isinstance(遮罩, torch.Tensor):
+        raise ValueError("遮罩输入必须是 ComfyUI MASK 张量。")
+    if 遮罩.ndim == 4:  # 偶见的 批次×1×高×宽 形状
+        遮罩 = 遮罩[:, 0]
+    if 遮罩.ndim == 2:
+        遮罩 = 遮罩.unsqueeze(0)
+    if 遮罩.ndim != 3:
+        raise ValueError(f"遮罩输入必须是 批次×高×宽，实际维度是 {遮罩.ndim}。")
+
+    if 遮罩.shape[0] == 1 and 批次 > 1:
+        遮罩 = 遮罩.repeat(批次, 1, 1)
+    elif 遮罩.shape[0] != 批次:
+        raise ValueError(
+            f"遮罩批次（{遮罩.shape[0]}）与图像批次（{批次}）不一致；只接 1 张遮罩时会自动复用。"
+        )
+
+    遮罩 = 遮罩.to(dtype=torch.float32)
+    if 遮罩.shape[1] != 高 or 遮罩.shape[2] != 宽:
+        遮罩 = _重采样遮罩(遮罩, 宽, 高, "bilinear")
+    return 遮罩
+
+
+def _贴到画布(内容: torch.Tensor, 目标宽: int, 目标高: int,
+              偏移x: int, 偏移y: int, 底色: torch.Tensor | None) -> torch.Tensor:
+    """把 [批次,h,w,C] 贴到目标尺寸画布；底色为 [批次,1,1,C]，None 表示全 0。"""
+    批次, 高, 宽, 通道 = 内容.shape
+    if 底色 is None:
+        画布 = 内容.new_zeros((批次, 目标高, 目标宽, 通道))
+    else:
+        画布 = 底色.to(device=内容.device, dtype=内容.dtype).expand(
+            批次, 目标高, 目标宽, 通道
+        ).clone()
+    画布[:, 偏移y:偏移y + 高, 偏移x:偏移x + 宽, :] = 内容
+    return 画布
+
+
+def _纯色画布(图像: torch.Tensor, 填充颜色) -> torch.Tensor:
+    rgb = _解析填充颜色(填充颜色)
+    底色 = torch.tensor(rgb, device=图像.device, dtype=图像.dtype).view(1, 1, 1, 3)
+    通道 = int(图像.shape[-1])
+    if 通道 == 3:
+        return 底色
+    if 通道 < 3:
+        return 底色[..., :通道].contiguous()
+    补 = torch.ones((1, 1, 1, 通道 - 3), device=图像.device, dtype=图像.dtype)
+    return torch.cat([底色, 补], dim=-1)
+
+
+def _边框主色(图像: torch.Tensor) -> torch.Tensor:
+    """取每张图四条边的众数色（前 20% 高频色加权平均），作为留白填充色。
+
+    返回 [批次,1,1,C]。只读边界像素，成本 O(批次 × 周长)，与像素总数无关。
+    """
+    数组 = 图像.detach().float().clamp(0.0, 1.0).cpu().numpy()
+    批次, 高, 宽, 通道 = 数组.shape
+    色板 = np.zeros((批次, 1, 1, 通道), dtype=np.float32)
+    if 高 < 1 or 宽 < 1:
+        return torch.from_numpy(色板).to(device=图像.device, dtype=图像.dtype)
+
+    for 序号 in range(批次):
+        边缘 = np.concatenate([
+            数组[序号, :, 0, :], 数组[序号, :, -1, :],
+            数组[序号, 0, :, :], 数组[序号, -1, :, :],
+        ], axis=0)
+        量化 = np.clip(np.round(边缘 * 255.0), 0, 255).astype(np.int32)
+        计数 = Counter(map(tuple, 量化.tolist()))
+        主要 = 计数.most_common(max(1, len(计数) // 5))
+        总权重 = sum(次数 for _, 次数 in 主要)
+        if 总权重 <= 0:
+            continue
+        加权 = np.zeros(3, dtype=np.float64)
+        for rgb, 次数 in 主要:
+            加权 += np.array(rgb[:3], dtype=np.float64) * 次数
+        色板[序号, 0, 0, :3] = (加权 / 总权重 / 255.0).astype(np.float32)
+        if 通道 > 3:
+            色板[序号, 0, 0, 3:] = 1.0
+    return torch.from_numpy(色板).to(device=图像.device, dtype=图像.dtype)
+
+
+def _复制边缘填充(内容: torch.Tensor, 目标宽: int, 目标高: int,
+                  偏移x: int, 偏移y: int) -> torch.Tensor:
+    """留白处用最近的一行/一列边界像素向外延伸。
+
+    用 clamp 索引一次性 gather 出来，不用 torch_F.pad("replicate")：
+    后者在单侧留白超过图像自身尺寸时会直接报错，大比例放大时就踩到了。
+    """
+    _, 高, 宽, _ = 内容.shape
+    xs = torch.clamp(torch.arange(目标宽, device=内容.device) - 偏移x, 0, 宽 - 1)
+    ys = torch.clamp(torch.arange(目标高, device=内容.device) - 偏移y, 0, 高 - 1)
+    return 内容[:, ys][:, :, xs].contiguous()
+
+
+def _覆盖裁剪(图像, 遮罩, 原宽, 原高, 目标宽, 目标高, 插值, 固定方向):
+    """等比放大到刚好盖住目标框，再按固定方向裁掉多出的边：不拉伸、不留白。"""
+    比例 = max(目标宽 / 原宽, 目标高 / 原高)
+    缩放宽 = max(目标宽, int(round(原宽 * 比例)))
+    缩放高 = max(目标高, int(round(原高 * 比例)))
+    图 = _重采样图像(图像, 缩放宽, 缩放高, 插值)
+    罩 = _重采样遮罩(遮罩, 缩放宽, 缩放高, 插值) if 遮罩 is not None else None
+
+    x, y = _方向偏移(缩放宽, 缩放高, 目标宽, 目标高, 固定方向)
+    图 = 图[:, y:y + 目标高, x:x + 目标宽, :].contiguous()
+    if 罩 is not None:
+        罩 = 罩[:, y:y + 目标高, x:x + 目标宽].contiguous()
+    return 图, 罩
+
+
+def _等比留白(图像, 遮罩, 原宽, 原高, 目标宽, 目标高, 插值, 固定方向):
+    """等比缩到刚好装进目标框，返回 (图, 罩, 偏移x, 偏移y)。"""
+    比例 = min(目标宽 / 原宽, 目标高 / 原高)
+    缩放宽 = max(1, min(目标宽, int(round(原宽 * 比例))))
+    缩放高 = max(1, min(目标高, int(round(原高 * 比例))))
+    图 = _重采样图像(图像, 缩放宽, 缩放高, 插值)
+    罩 = _重采样遮罩(遮罩, 缩放宽, 缩放高, 插值) if 遮罩 is not None else None
+    x, y = _方向偏移(目标宽, 目标高, 缩放宽, 缩放高, 固定方向)
+    return 图, 罩, x, y
+
+
+def _填充落框(图像, 遮罩, 原宽, 原高, 目标宽, 目标高, 插值, 固定方向, 缩放模式, 填充颜色):
+    图, 罩, x, y = _等比留白(图像, 遮罩, 原宽, 原高, 目标宽, 目标高, 插值, 固定方向)
+
+    if 缩放模式 == "填充·边缘像素":
+        新图 = _复制边缘填充(图, 目标宽, 目标高, x, y)
+    elif 缩放模式 == "填充·自定义颜色":
+        新图 = _贴到画布(图, 目标宽, 目标高, x, y, _纯色画布(图, 填充颜色))
+    else:  # 填充·边框颜色
+        新图 = _贴到画布(图, 目标宽, 目标高, x, y, _边框主色(图))
+
+    if 罩 is None:
+        return 新图, None
+    # 填充区不属于任何遮罩区域，外扩部分补 0
+    新罩 = _贴到画布(罩.unsqueeze(-1), 目标宽, 目标高, x, y, None).squeeze(-1)
+    return 新图, 新罩
+
+
+def _执行图像缩放V2(图像, 遮罩, 缩放方法, 缩放插值, 缩放模式, 固定方向,
+                    执行条件, 填充颜色, 整除数, 宽度=1024, 高度=1024, 将边缩放到=1024):
+    if 图像 is None:
+        raise ValueError("图像不能为空：请连接 IMAGE 输入。")
+    if not isinstance(图像, torch.Tensor) or 图像.ndim != 4:
+        raise ValueError("图像输入必须是 ComfyUI IMAGE 格式（批次、高度、宽度、通道）。")
+
+    批次, 原高, 原宽, 通道 = 图像.shape
+    if 原宽 < 1 or 原高 < 1:
+        raise ValueError(f"输入图像尺寸异常（{原宽}×{原高}），无法缩放。")
+
+    整除数 = int(整除数 or 0)
+    if 整除数 < 0 or 整除数 > 256:
+        raise ValueError("整除数需要填 0~256；填 0 表示不按倍数对齐。")
+
+    if 缩放插值 not in _缩放方法选项:
+        raise ValueError(f"不支持的缩放插值「{缩放插值}」。")
+    if 缩放模式 not in _缩放V2模式选项:
+        raise ValueError(f"不支持的缩放模式「{缩放模式}」。")
+    if 固定方向 not in _缩放V2方向选项:
+        raise ValueError(f"不支持的固定方向「{固定方向}」。")
+
+    遮罩 = _规整遮罩(遮罩, 批次, 原高, 原宽)
+
+    if 缩放模式 == "总像素等比例":
+        # 总像素要靠「宽×高」当预算，只有自定义宽高才拿得到这两个值
+        if 缩放方法 != "自定义宽高":
+            raise ValueError(
+                "「总像素等比例」需要把「缩放方法」改成「自定义宽高」，"
+                "再在宽度/高度里填参考像素尺寸（当作目标总像素）。"
+            )
+        if int(宽度) <= 0 or int(高度) <= 0:
+            raise ValueError(
+                "「总像素等比例」的宽度和高度都要大于 0："
+                f"现在填的是 {int(宽度)}×{int(高度)}，总像素为 0 算不出目标尺寸。"
+            )
+        目标宽, 目标高 = _总像素目标尺寸(原宽, 原高, int(宽度), int(高度), 整除数)
+    else:
+        目标宽, 目标高 = _缩放V2目标尺寸(
+            原宽, 原高, 缩放方法, int(将边缩放到), int(宽度), int(高度), 整除数
+        )
+
+    # 执行条件：不满足时退回原尺寸（只保留整除数对齐），避免无意义的二次重采样
+    if 执行条件 == "最长边大于目标时" and max(原宽, 原高) <= max(目标宽, 目标高):
+        目标宽, 目标高 = _就近整除(原宽, 整除数), _就近整除(原高, 整除数)
+    elif 执行条件 == "最短边小于目标时" and min(原宽, 原高) >= min(目标宽, 目标高):
+        目标宽, 目标高 = _就近整除(原宽, 整除数), _就近整除(原高, 整除数)
+
+    if 目标宽 == 原宽 and 目标高 == 原高:
+        输出图, 输出遮罩 = 图像, 遮罩
+    elif 缩放模式 == "拉伸":
+        输出图 = _重采样图像(图像, 目标宽, 目标高, 缩放插值)
+        输出遮罩 = _重采样遮罩(遮罩, 目标宽, 目标高, 缩放插值) if 遮罩 is not None else None
+    elif 缩放模式 in ("裁剪", "总像素等比例"):
+        # 总像素模式的比例误差已经控制在 1 像素内，居中裁掉即可，不必再拉伸
+        输出图, 输出遮罩 = _覆盖裁剪(
+            图像, 遮罩, 原宽, 原高, 目标宽, 目标高, 缩放插值,
+            "居中" if 缩放模式 == "总像素等比例" else 固定方向,
+        )
+    else:
+        输出图, 输出遮罩 = _填充落框(
+            图像, 遮罩, 原宽, 原高, 目标宽, 目标高, 缩放插值, 固定方向,
+            缩放模式, 填充颜色,
+        )
+
+    if 输出遮罩 is None:
+        输出遮罩 = torch.zeros(
+            (批次, 目标高, 目标宽), device=输出图.device, dtype=torch.float32
+        )
+
+    return 输出图, int(目标宽), int(目标高), 输出遮罩
+
+
+class GG图像缩放V2:
+    """旧版前端（没有 V3 动态接口）用的扁平参数版，所有参数一次全显示。"""
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "图像": ("IMAGE",),
+                "缩放方法": (["按长边等比例", "按短边等比例", "自定义宽高"], {"default": "按长边等比例"}),
+                "将边缩放到": ("INT", {"default": 1024, "min": 8, "max": 16384, "step": 1}),
+                "宽度": ("INT", {"default": 1024, "min": 0, "max": 16384, "step": 1}),
+                "高度": ("INT", {"default": 1024, "min": 0, "max": 16384, "step": 1}),
+                "缩放插值": (_缩放方法选项[:], {"default": "lanczos"}),
+                "缩放模式": (list(_缩放V2模式选项), {"default": "拉伸"}),
+                "固定方向": (list(_缩放V2方向选项), {"default": "居中"}),
+                "执行条件": (list(_缩放V2条件选项), {"default": "总是"}),
+                "填充颜色": ("STRING", {"default": "#364254"}),
+                "整除数": ("INT", {"default": 0, "min": 0, "max": 256, "step": 1}),
+            },
+            "optional": {
+                "遮罩": ("MASK",),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "MASK")
+    RETURN_NAMES = ("图像", "宽度", "高度", "遮罩")
+    FUNCTION = "execute"
+    CATEGORY = "GuliNodes/图像"
+
+    def execute(self, 图像, 缩放方法="按长边等比例", 将边缩放到=1024, 宽度=1024, 高度=1024,
+                缩放插值="lanczos", 缩放模式="拉伸", 固定方向="居中", 执行条件="总是",
+                填充颜色="#364254", 整除数=0, 遮罩=None):
+        return _执行图像缩放V2(
+            图像, 遮罩, 缩放方法, 缩放插值, 缩放模式, 固定方向, 执行条件,
+            填充颜色, 整除数, 宽度, 高度, 将边缩放到,
+        )
+
+
+# ---------------------------------------------------------------------------
+# GG 尺寸适配
+#
+# 按 Qwen-Image 2.1 常用训练尺寸生成稳定尺寸（内部缩放后的不动点），
+# 再以裁剪、补边或拉伸方式输出。尺寸选择逻辑参考 BlueBox 的 CutQwenImage21，
+# 图像处理复用本模块的 torch 批量重采样工具。
+# ---------------------------------------------------------------------------
+
+_QWEN21_RESOLUTIONS = tuple(range(512, 2048 + 1, 32))
+_QWEN21_STANDARD_RATIOS = (1.0, 4 / 3, 3 / 4, 16 / 9, 9 / 16, 3 / 2, 2 / 3)
+_QWEN21_MODES = ("裁剪", "补边", "拉伸")
+
+
+def _qwen21_auto_resolution(宽度: int, 高度: int) -> int:
+    目标 = math.sqrt(float(宽度) * float(高度))
+    档位 = int(round(目标 / 32.0)) * 32
+    return max(_QWEN21_RESOLUTIONS[0], min(_QWEN21_RESOLUTIONS[-1], 档位))
+
+
+def _qwen21_whitelist(分辨率: int, 容差比例: float):
+    n = int(分辨率) // 32
+    容差 = max(1, int(n * float(容差比例)))
+    目标面积 = n * n
+    结果 = []
+    for k in range(1, n * 3):
+        for m in range(1, n * 3):
+            面积 = k * m
+            if abs(面积 - 目标面积) <= 容差:
+                结果.append((k * 32, m * 32, 面积))
+    return 结果
+
+
+def _qwen21_ratio_distance(a: float, b: float) -> float:
+    return abs(math.log(a) - math.log(b))
+
+
+def _qwen21_pick_size(宽度: int, 高度: int, 分辨率: int, 容差比例: float):
+    候选 = _qwen21_whitelist(分辨率, 容差比例)
+    if not 候选:
+        raise ValueError(f"分辨率 {分辨率} 无法生成稳定尺寸，请把容差比例调大。")
+    输入比例 = 宽度 / 高度
+    目标面积 = 分辨率 * 分辨率
+
+    def score(item):
+        宽, 高, 格数 = item
+        比例 = 宽 / 高
+        输入偏差 = _qwen21_ratio_distance(比例, 输入比例)
+        标准偏差 = min(_qwen21_ratio_distance(比例, 标准) for 标准 in _QWEN21_STANDARD_RATIOS)
+        面积偏差 = abs(格数 * 1024 - 目标面积) / 目标面积
+        return 输入偏差 + 标准偏差 * 0.6 + 面积偏差 * 0.4
+
+    return min(候选, key=score)[:2]
+
+
+def _qwen21_verify_fixed_point(宽度: int, 高度: int, 分辨率: int):
+    比例 = math.sqrt((分辨率 * 分辨率) / (宽度 * 高度))
+    return (
+        max(32, int(round(宽度 * 比例 / 32.0)) * 32),
+        max(32, int(round(高度 * 比例 / 32.0)) * 32),
+    )
+
+
+def _qwen21_pick_target_size(宽度: int, 高度: int, 分辨率: int, 容差比例: float):
+    目标宽, 目标高 = _qwen21_pick_size(宽度, 高度, 分辨率, 容差比例)
+    if _qwen21_verify_fixed_point(目标宽, 目标高, 分辨率) == (目标宽, 目标高):
+        return 目标宽, 目标高
+
+    输入比例 = 宽度 / 高度
+    合法候选 = []
+    for 候选宽, 候选高, _ in _qwen21_whitelist(分辨率, 容差比例):
+        if _qwen21_verify_fixed_point(候选宽, 候选高, 分辨率) == (候选宽, 候选高):
+            合法候选.append((候选宽, 候选高))
+    if 合法候选:
+        return min(合法候选, key=lambda wh: _qwen21_ratio_distance(wh[0] / wh[1], 输入比例))
+    return 目标宽, 目标高
+
+
+def _qwen21_pad_color(图像: torch.Tensor, 宽度: int, 高度: int, 颜色: float):
+    批次, _, _, 通道 = 图像.shape
+    画布 = torch.full((批次, 高度, 宽度, 通道), float(颜色), dtype=图像.dtype, device=图像.device)
+    return 画布
+
+
+def _qwen21_transform(图像: torch.Tensor, 目标宽: int, 目标高: int, 模式: str, 补边颜色: float):
+    if 模式 == "拉伸":
+        return _重采样图像(图像, 目标宽, 目标高, "bilinear")
+    if 模式 == "裁剪":
+        return _覆盖裁剪(图像, None, int(图像.shape[2]), int(图像.shape[1]), 目标宽, 目标高, "bilinear", "居中")[0]
+
+    原高, 原宽 = int(图像.shape[1]), int(图像.shape[2])
+    比例 = min(目标宽 / 原宽, 目标高 / 原高)
+    缩放宽 = max(1, min(目标宽, int(round(原宽 * 比例))))
+    缩放高 = max(1, min(目标高, int(round(原高 * 比例))))
+    内容 = _重采样图像(图像, 缩放宽, 缩放高, "bilinear")
+    x = (目标宽 - 缩放宽) // 2
+    y = (目标高 - 缩放高) // 2
+    结果 = _qwen21_pad_color(图像, 目标宽, 目标高, 补边颜色)
+    结果[:, y:y + 缩放高, x:x + 缩放宽, :] = 内容
+    return 结果
+
+
+def _执行Qwen21尺寸适配(图像, 分辨率="default", 容差比例=1.0, 模式="裁剪", 补边颜色=0.0):
+    if not isinstance(图像, torch.Tensor) or 图像.ndim != 4:
+        raise ValueError("图像输入必须是 ComfyUI IMAGE 格式（批次、高度、宽度、通道）。")
+    _, 原高, 原宽, _ = 图像.shape
+    if 原宽 < 1 or 原高 < 1:
+        raise ValueError(f"输入图像尺寸异常（{原宽}×{原高}），无法适配。")
+    if 分辨率 in (None, "default", "自动"):
+        实际分辨率 = _qwen21_auto_resolution(原宽, 原高)
+    else:
+        try:
+            实际分辨率 = int(分辨率)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("分辨率必须选择 default 或 512~2048 的 32 倍数。") from exc
+    if 实际分辨率 not in _QWEN21_RESOLUTIONS:
+        raise ValueError("分辨率必须是 512~2048 之间、步进 32 的档位。")
+    try:
+        容差比例 = float(容差比例)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("容差比例必须是有效数字。") from exc
+    if not math.isfinite(容差比例) or 容差比例 < 0.2 or 容差比例 > 3.0:
+        raise ValueError("容差比例需要在 0.2~3.0 之间。")
+    if 模式 not in _QWEN21_MODES:
+        raise ValueError(f"不支持的处理模式「{模式}」。")
+    补边颜色 = min(1.0, max(0.0, float(补边颜色)))
+    目标宽, 目标高 = _qwen21_pick_target_size(原宽, 原高, 实际分辨率, 容差比例)
+    输出 = _qwen21_transform(图像, 目标宽, 目标高, 模式, 补边颜色)
+    return 输出, int(目标宽), int(目标高), int(实际分辨率)
+
+
+class GG尺寸适配:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "图像": ("IMAGE",),
+                "分辨率": (["default"] + [str(值) for 值 in _QWEN21_RESOLUTIONS], {"default": "default"}),
+                "容差比例": ("FLOAT", {"default": 1.0, "min": 0.2, "max": 3.0, "step": 0.1}),
+                "模式": (list(_QWEN21_MODES), {"default": "裁剪"}),
+                "补边颜色": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "INT")
+    RETURN_NAMES = ("图像", "宽度", "高度", "分辨率")
+    FUNCTION = "execute"
+    CATEGORY = "GuliNodes/图像"
+
+    def execute(self, 图像, 分辨率="default", 容差比例=1.0, 模式="裁剪", 补边颜色=0.0):
+        return _执行Qwen21尺寸适配(图像, 分辨率, 容差比例, 模式, 补边颜色)
+
+
+# ---------------------------------------------------------------------------
+# GG 纯色图像
+#
+# 生成指定宽高、指定颜色的纯色图：作画布底、做外扩/贴回的背景、给合成节点垫底都用得上。
+# 只要三个参数，不接任何输入，是纯粹的发生器节点。
+# ---------------------------------------------------------------------------
+
+_纯色图像尺寸上限 = 8192
+
+
+def _生成纯色图像(宽度, 高度, 颜色) -> torch.Tensor:
+    """生成 宽度×高度 的纯色图，返回 [1,高,宽,3] 的 IMAGE 张量。"""
+    try:
+        宽 = int(宽度)
+        高 = int(高度)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("宽度和高度必须是整数像素值。") from exc
+
+    if 宽 < 1 or 高 < 1:
+        raise ValueError(f"宽度和高度都要大于 0，现在填的是 {宽}×{高}。")
+    if 宽 > _纯色图像尺寸上限 or 高 > _纯色图像尺寸上限:
+        raise ValueError(
+            f"单边最大 {_纯色图像尺寸上限} 像素，现在填的是 {宽}×{高}；"
+            "再大就会吃掉几 GB 显存，需要大画布请用缩放/填充类节点。"
+        )
+
+    rgb = _解析填充颜色(颜色)
+    # 单通道值先做成 1×1×1×3，再 expand+contiguous：只分配一次输出内存，不做逐像素填充
+    像素 = torch.tensor(rgb, dtype=torch.float32).view(1, 1, 1, 3)
+    return 像素.expand(1, 高, 宽, 3).contiguous()
+
+
+class GG纯色图像:
+    """旧版前端用的扁平参数版。"""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "宽度": ("INT", {"default": 512, "min": 1, "max": _纯色图像尺寸上限, "step": 1}),
+                "高度": ("INT", {"default": 512, "min": 1, "max": _纯色图像尺寸上限, "step": 1}),
+                "填充颜色": ("STRING", {"default": "#00ff00"}),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("图像",)
+    FUNCTION = "execute"
+    CATEGORY = "GuliNodes/图像"
+
+    def execute(self, 宽度=512, 高度=512, 填充颜色="#00ff00"):
+        return (_生成纯色图像(宽度, 高度, 填充颜色),)
 
 
 if io is not None:
@@ -1729,24 +2443,323 @@ if io is not None:
                 display_name="GG 图像缩放",
                 category="GuliNodes/图像",
                 description=(
-                    "根据输入图像的实际宽度和高度，在像素空间中按倍率和指定算法缩放。"
-                    "仅输出缩放后的图像。"
+                    "两种定尺寸方式：「按倍数」沿用倍率缩放；「按参数」直接给长边、短边、宽度或高度，"
+                    "另一边按原比例推算，选「按宽度高度」则精确给宽高。只显示当前方式用得到的参数。"
                 ),
                 inputs=[
-                    io.Image.Input("图像", tooltip="参考图像，节点会自动读取其宽度和高度。"),
-                    io.Combo.Input("缩放方法", options=_缩放方法选项, default="lanczos"),
-                    io.Float.Input("缩放倍率", default=1.5, min=0.1, max=10000.0, step=0.05),
+                    io.Image.Input("图像", tooltip="要缩放的图像，支持批量。"),
+                    io.DynamicCombo.Input("缩放方式", options=[
+                        io.DynamicCombo.Option(key="按倍数", inputs=[
+                            io.Float.Input(
+                                "缩放倍率", default=1.5, min=0.1, max=10000.0, step=0.05,
+                                tooltip="大于 1 放大、小于 1 缩小，宽高按同一比例变化。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="按长边", inputs=[
+                            io.Int.Input(
+                                "长边", default=1024, min=1, max=16384, step=1,
+                                tooltip="把较长的一边定成这个像素，另一边按原比例推算。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="按短边", inputs=[
+                            io.Int.Input(
+                                "短边", default=768, min=1, max=16384, step=1,
+                                tooltip="把较短的一边定成这个像素，另一边按原比例推算。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="按宽度", inputs=[
+                            io.Int.Input(
+                                "宽度", default=1024, min=1, max=16384, step=1,
+                                tooltip="按目标宽度等比缩放，高度自动推算。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="按高度", inputs=[
+                            io.Int.Input(
+                                "高度", default=1024, min=1, max=16384, step=1,
+                                tooltip="按目标高度等比缩放，宽度自动推算。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="按宽度高度", inputs=[
+                            io.Int.Input(
+                                "宽度", default=1024, min=1, max=16384, step=1,
+                                tooltip="精确输出宽度；与当前比例不同时会拉伸变形。",
+                            ),
+                            io.Int.Input(
+                                "高度", default=1024, min=1, max=16384, step=1,
+                                tooltip="精确输出高度；需要不变形的裁切或填充，请用 GG 图像缩放 V2。",
+                            ),
+                        ]),
+                    ]),
+                    io.Combo.Input(
+                        "缩放插值",
+                        options=list(_缩放方法选项),
+                        default="lanczos",
+                        tooltip="重采样算法，所有缩放方式都生效；缩小用 area 更干净，放大用 lanczos 或 bicubic 更锐利。",
+                    ),
+                    io.DynamicCombo.Input(
+                        "整除数",
+                        options=[
+                            io.DynamicCombo.Option(key="16", inputs=[]),
+                            io.DynamicCombo.Option(key="0", inputs=[]),
+                            io.DynamicCombo.Option(key="4", inputs=[]),
+                            io.DynamicCombo.Option(key="8", inputs=[]),
+                            io.DynamicCombo.Option(key="32", inputs=[]),
+                            io.DynamicCombo.Option(key="64", inputs=[]),
+                            io.DynamicCombo.Option(key="128", inputs=[]),
+                            io.DynamicCombo.Option(key="自定义", inputs=[
+                                io.Int.Input(
+                                    "自定义整除数", default=24, min=1, max=256, step=1,
+                                    tooltip="填这一档想要的倍数，例如 12、24、48。",
+                                ),
+                            ]),
+                        ],
+                        extra_dict={"default": "16"},
+                        tooltip=(
+                            "输出宽高会就近吸附到这个数的整数倍：填 1000 配 16 会得到 1008，不报错也不截断。"
+                            "常用档直接选，其它值选「自定义」；选 0 表示不对齐。"
+                        ),
+                    ),
                 ],
                 outputs=[
                     io.Image.Output(display_name="图像"),
                 ],
+                search_aliases=["resize", "scale", "缩放", "图像缩放", "长边", "短边"],
             )
 
         @classmethod
-        def execute(cls, 图像, 缩放方法="lanczos", 缩放倍率=1.5):
-            return io.NodeOutput(_缩放图像(图像, 缩放方法, 缩放倍率))
+        def execute(cls, 图像, 缩放方式="按倍数", 缩放插值="lanczos", 整除数="16"):
+            return io.NodeOutput(_执行图像缩放(图像, 缩放方式, 缩放插值, 整除数=整除数))
 
     GG图像缩放 = GG图像缩放_V3
+
+    class GG图像缩放V2_V3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GG图像缩放V2",
+                display_name="GG 图像缩放 V2",
+                category="GuliNodes/图像",
+                description=(
+                    "先按最长边、最短边或自定义宽高定出目标尺寸，再决定内容怎么落进框里："
+                    "拉伸、裁剪，或按自定义颜色、边框主色、边缘像素填充留白。"
+                    "遮罩随图像一起缩放，另输出实际宽高供下游按真实尺寸排布。"
+                    "只显示当前选择下真正生效的参数。"
+                ),
+                inputs=[
+                    io.Image.Input("图像", tooltip="要缩放的图像，支持批量。"),
+                    io.Mask.Input(
+                        "遮罩",
+                        optional=True,
+                        tooltip="可选；与图像同步缩放。不接时输出与图像同尺寸的全零遮罩。",
+                    ),
+                    io.DynamicCombo.Input("缩放方法", options=[
+                        io.DynamicCombo.Option(key="按长边等比例", inputs=[
+                            io.Int.Input(
+                                "将边缩放到", default=1024, min=8, max=16384, step=1,
+                                tooltip="把最长边缩放到这个像素，另一边按原比例推算；再就近对齐「整除数」。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="按短边等比例", inputs=[
+                            io.Int.Input(
+                                "将边缩放到", default=768, min=8, max=16384, step=1,
+                                tooltip="把最短边缩放到这个像素，另一边按原比例推算；再就近对齐「整除数」。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="自定义宽高", inputs=[
+                            io.Int.Input(
+                                "宽度", default=1024, min=0, max=16384, step=1,
+                                tooltip="目标宽度；填 0 表示按高度等比例推算，宽高都填 0 表示只按「整除数」处理。",
+                            ),
+                            io.Int.Input(
+                                "高度", default=1024, min=0, max=16384, step=1,
+                                tooltip="目标高度；填 0 表示按宽度等比例推算，宽高都填 0 表示只按「整除数」处理。",
+                            ),
+                        ]),
+                    ]),
+                    io.Combo.Input(
+                        "缩放插值",
+                        options=list(_缩放方法选项),
+                        default="lanczos",
+                        tooltip="重采样算法；缩小用 area 更干净，放大用 lanczos 或 bicubic 更锐利。遮罩始终用非振铃算法。",
+                    ),
+                    io.DynamicCombo.Input("缩放模式", options=[
+                        io.DynamicCombo.Option(key="拉伸", inputs=[]),
+                        io.DynamicCombo.Option(key="裁剪", inputs=[
+                            io.Combo.Input(
+                                "固定方向", options=list(_缩放V2方向选项), default="居中",
+                                tooltip="等比盖满后裁掉多出的边，这里决定保留哪一侧。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="填充·自定义颜色", inputs=[
+                            io.Combo.Input(
+                                "固定方向", options=list(_缩放V2方向选项), default="居中",
+                                tooltip="缩放到装进目标框后贴在哪个位置。",
+                            ),
+                            io.Color.Input(
+                                "填充颜色", default="#364254",
+                                tooltip="留白处的纯色，十六进制写法，例如 #364254。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="填充·边框颜色", inputs=[
+                            io.Combo.Input(
+                                "固定方向", options=list(_缩放V2方向选项), default="居中",
+                                tooltip="缩放到装进目标框后贴在哪个位置。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="填充·边缘像素", inputs=[
+                            io.Combo.Input(
+                                "固定方向", options=list(_缩放V2方向选项), default="居中",
+                                tooltip="缩放到装进目标框后贴在哪个位置。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="总像素等比例", inputs=[]),
+                    ]),
+                    io.Int.Input(
+                        "整除数", default=0, min=0, max=256, step=1,
+                        tooltip="把输出宽高就近对齐到这个数的整数倍（8、16、64 最常用）；填 0 表示不对齐。",
+                    ),
+                    io.Combo.Input(
+                        "执行条件",
+                        options=list(_缩放V2条件选项),
+                        default="总是",
+                        tooltip=(
+                            "「最长边大于目标时」只缩不放，原图不够大就原样返回；"
+                            "「最短边小于目标时」只放不缩。两种条件都仍会按「整除数」对齐。"
+                        ),
+                    ),
+                ],
+                outputs=[
+                    io.Image.Output(display_name="图像"),
+                    io.Int.Output(display_name="宽度"),
+                    io.Int.Output(display_name="高度"),
+                    io.Mask.Output(display_name="遮罩"),
+                ],
+                search_aliases=["resize", "scale", "图像缩放", "缩放", "填充", "裁剪"],
+            )
+
+        @classmethod
+        def execute(cls, 图像, 遮罩=None, 缩放方法="按长边等比例", 缩放插值="lanczos",
+                    缩放模式="拉伸", 整除数=0, 执行条件="总是"):
+            方法, 方法值 = _unpack_mode(缩放方法, "缩放方法", "按长边等比例")
+            模式, 模式值 = _unpack_mode(缩放模式, "缩放模式", "拉伸")
+            图, 宽, 高, 罩 = _执行图像缩放V2(
+                图像,
+                遮罩,
+                方法,
+                缩放插值,
+                模式,
+                模式值.get("固定方向", "居中"),
+                执行条件,
+                模式值.get("填充颜色") or "#364254",
+                整除数,
+                方法值.get("宽度", 1024),
+                方法值.get("高度", 1024),
+                方法值.get("将边缩放到", 1024),
+            )
+            return io.NodeOutput(图, 宽, 高, 罩)
+
+    GG图像缩放V2 = GG图像缩放V2_V3
+
+    class GG尺寸适配_V3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GG尺寸适配",
+                display_name="GG 尺寸适配",
+                category="GuliNodes/图像",
+                description=(
+                    "按输入图像比例、常见训练比例和目标面积选择 Qwen-Image 2.1 稳定尺寸，"
+                    "并通过内部缩放模拟检查固定点；输出可选择裁剪、补边或拉伸。"
+                ),
+                inputs=[
+                    io.Image.Input("图像", tooltip="要适配的图像，支持批量。"),
+                    io.Combo.Input(
+                        "分辨率",
+                        options=["default"] + [str(值) for 值 in _QWEN21_RESOLUTIONS],
+                        default="default",
+                        tooltip="default 按输入图像面积自动选择；也可固定为 512~2048 的 32 倍数。",
+                    ),
+                    io.Float.Input(
+                        "容差比例",
+                        default=1.0,
+                        min=0.2,
+                        max=3.0,
+                        step=0.1,
+                        tooltip="稳定尺寸候选的面积容差；数值越大，可选比例越多。",
+                    ),
+                    io.DynamicCombo.Input("模式", options=[
+                        io.DynamicCombo.Option(key="裁剪", inputs=[]),
+                        io.DynamicCombo.Option(key="补边", inputs=[
+                            io.Float.Input(
+                                "补边颜色",
+                                default=0.0,
+                                min=0.0,
+                                max=1.0,
+                                step=0.01,
+                                tooltip="补边区域的灰度颜色，0 为黑色，1 为白色。",
+                            ),
+                        ]),
+                        io.DynamicCombo.Option(key="拉伸", inputs=[]),
+                    ]),
+                ],
+                outputs=[
+                    io.Image.Output(display_name="图像"),
+                    io.Int.Output(display_name="宽度"),
+                    io.Int.Output(display_name="高度"),
+                    io.Int.Output(display_name="分辨率"),
+                ],
+                search_aliases=[
+                    "Qwen Image 2.1", "Qwen-Image", "稳定尺寸", "固定点", "裁剪", "补边"
+                ],
+            )
+
+        @classmethod
+        def execute(cls, 图像, 分辨率="default", 容差比例=1.0, 模式="裁剪"):
+            处理模式, 模式值 = _unpack_mode(模式, "模式", "裁剪")
+            return io.NodeOutput(*_执行Qwen21尺寸适配(
+                图像,
+                分辨率,
+                容差比例,
+                处理模式,
+                模式值.get("补边颜色", 0.0),
+            ))
+
+    GG尺寸适配 = GG尺寸适配_V3
+
+    class GG纯色图像_V3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GG纯色图像",
+                display_name="GG 纯色图像",
+                category="GuliNodes/图像",
+                description=(
+                    "按指定宽度、高度生成一张纯色图，作画布底、外扩填充色或合成垫底都可用。"
+                    "不接任何输入，是纯发生器节点。"
+                ),
+                inputs=[
+                    io.Int.Input(
+                        "宽度", default=512, min=1, max=_纯色图像尺寸上限, step=1,
+                        tooltip=f"输出图宽度（像素），最大 {_纯色图像尺寸上限}。",
+                    ),
+                    io.Int.Input(
+                        "高度", default=512, min=1, max=_纯色图像尺寸上限, step=1,
+                        tooltip=f"输出图高度（像素），最大 {_纯色图像尺寸上限}。",
+                    ),
+                    io.Color.Input(
+                        "填充颜色", default="#00ff00",
+                        tooltip="整张图的颜色，十六进制写法，例如 #00ff00。",
+                    ),
+                ],
+                outputs=[io.Image.Output(display_name="图像")],
+                search_aliases=["ColorImage", "纯色", "纯色图像", "空白图像", "画布", "背景色"],
+            )
+
+        @classmethod
+        def execute(cls, 宽度=512, 高度=512, 填充颜色="#00ff00"):
+            return io.NodeOutput(_生成纯色图像(宽度, 高度, 填充颜色))
+
+    GG纯色图像 = GG纯色图像_V3
 
     class GG色彩校正_V3(io.ComfyNode):
         @classmethod
@@ -1795,6 +2808,9 @@ NODE_CLASS_MAPPINGS = {
     "GGImageComparer2": GGImageComparer2,
     "GGImageComparer4": GGImageComparer4,
     "GG图像缩放": GG图像缩放,
+    "GG图像缩放V2": GG图像缩放V2,
+    "GG尺寸适配": GG尺寸适配,
+    "GG纯色图像": GG纯色图像,
 }
 
 
@@ -1811,4 +2827,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GGImageComparer2": "GG 图像对比 2张",
     "GGImageComparer4": "GG 图像对比 N张",
     "GG图像缩放": "GG 图像缩放",
+    "GG图像缩放V2": "GG 图像缩放 V2",
+    "GG尺寸适配": "GG 尺寸适配",
+    "GG纯色图像": "GG 纯色图像",
 }

@@ -788,7 +788,9 @@ app.registerExtension({
                 ? "关闭 ComfyUI 完成后 TapRelay 通知"
                 : "开启 ComfyUI 完成后 TapRelay 通知";
             toggleButton.setAttribute("aria-label", toggleButton.title);
-            toggleButton.innerHTML = ggIcon(enabled ? "bell" : "bellOff", 18);
+            // 中继用广播波纹图标（relay）替代铃铛：铃铛读起来像通知订阅，
+            // 与「中继转发」语义不符。开/关仅靠 .gg-state-on / .gg-state-off 着色区分。
+            toggleButton.innerHTML = ggIcon("relay", 18);
         };
 
         const refreshToggleButton = () => updateToggleButton(getSettingValue(SETTING_ID, true));

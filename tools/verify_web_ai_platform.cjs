@@ -12,8 +12,22 @@ const TARGET = 'https://fanyi.baidu.com/mtpe-individual/transText#/';
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   // iframe 里的百度页面会报各种跨域错误，这里只收顶层页面的。
+  // 真机脚本异常收集统一口径（问题文档第 5 条）：外部扩展 gulips.bridge 启动时
+  // 抛 `io is not defined`，内嵌网页还会刷 CSP report-only 报告，都属环境噪音；
+  // 只放行下面明确识别的几条，其它任何 console error 仍然计入 errors，
+  // 不允许把「无脚本异常」放宽成空跑。404 另由 response 钩子单独归类。
+  const ENV_NOISE = [
+    /Error calling extension 'gulips[.]bridge' method 'setup'/,
+    /report-only Content Security Policy/,
+    /Framing .* violates the following report-only/,
+    /upgrade-insecure-requests' is ignored when delivered in a report-only policy/,
+    /Failed to load resource/,
+  ];
   page.on('console', (m) => {
-    if (m.type() === 'error' && m.location().url.includes('/extensions/')) errors.push(m.text());
+    if (m.type() !== 'error') return;
+    const text = m.text();
+    if (ENV_NOISE.some((re) => re.test(text))) return;
+    errors.push('console: ' + text);
   });
 
   await page.goto('http://127.0.0.1:8188/', { waitUntil: 'networkidle', timeout: 120000 });

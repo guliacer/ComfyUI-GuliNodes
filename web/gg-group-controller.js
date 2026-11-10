@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { detectHostTheme } from "./gg-ui-design.js";
 
 const NODE_NAME_M = "GGGroupControllerM";
 const NODE_NAME_S = "GGGroupControllerS";
@@ -27,6 +28,9 @@ const MIN_W        = 270;
 const DROPDOWN_H   = 28;
 const SINGLE_H     = PAD_Y + DROPDOWN_H + 6 + ROW_H + PAD_Y;
 const ENABLE_ROW_Y = PAD_Y + DROPDOWN_H + 6 + ROW_H / 2;
+// 左侧输入端口圆点占 x≈10，端口标签在部分渲染路径（Nodes 2.0 / Vue）仍会画出来。
+// 自绘文字从这里起画，给圆点和标签留出空位，避免「启用」与「▼ 组名」挤成一行。
+const PORT_CLEARANCE = 22;
 const RECOMPUTE_INTERVAL = 300;
 
 function drawRoundRect(ctx, x, y, w, h, r) {
@@ -366,6 +370,8 @@ function syncEnableWidget(node) {
     widget.type = ENABLE_HIDDEN_TYPE;
     widget.computeSize = () => [0, -4];
   }
+  // 控件标签也压成空格：DOM 渲染路径会拿 widget.label 当端口名画出来。
+  if (widget.label !== ROW_INPUT_LABEL) widget.label = ROW_INPUT_LABEL;
 
   if (!widget._ggGroupEnableBound) {
     widget._ggGroupEnableBound = true;
@@ -382,6 +388,9 @@ function syncEnableWidget(node) {
 
   const input = node.inputs?.find((slot) => slot.widget?.name === ENABLE_WIDGET);
   if (input) {
+    // 与多组控制的行输入同口径：端口名只留圆点，不画「启用」二字。
+    // name 保持不变，GG 选项确认的连线与读档都不受影响。
+    if (input.label !== ROW_INPUT_LABEL) input.label = ROW_INPUT_LABEL;
     input.alwaysVisible = true;
     if (!input.pos || input.pos[0] !== radius || input.pos[1] !== ENABLE_ROW_Y) {
       input.pos = [radius, ENABLE_ROW_Y];
@@ -853,8 +862,28 @@ function ensureStateS(node) {
   syncEnableWidget(node);
 }
 
+// 单组控制的自绘配色跟随画布明暗：浅色主题下 #ddd 一类亮字在白底上对比度极低，
+// 等于看不见（AGENTS.md「绘制配色要跟随画布明暗」）。detectHostTheme 自带 1 秒缓存。
+function singleColors() {
+  const dark = detectHostTheme() !== "light";
+  return dark ? {
+    field: "rgba(255,255,255,0.06)", border: "rgba(255,255,255,0.18)",
+    divider: "rgba(255,255,255,0.10)", icon: "#888",
+    text: "#ddd", placeholder: "#888", muted: "#777", text2: "#bbb",
+    countBg: "rgba(255,255,255,0.10)", countInk: "#999",
+    emptyBtn: "rgba(255,255,255,0.05)",
+  } : {
+    field: "rgba(15,23,42,0.04)", border: "rgba(15,23,42,0.18)",
+    divider: "rgba(15,23,42,0.12)", icon: "#64748b",
+    text: "#1f2937", placeholder: "#64748b", muted: "#64748b", text2: "#334155",
+    countBg: "rgba(15,23,42,0.08)", countInk: "#334155",
+    emptyBtn: "rgba(15,23,42,0.06)",
+  };
+}
+
 function drawSingleNode(node, ctx) {
   if (node.flags?.collapsed) return;
+  const C = singleColors();
 
   node.size[1] = SINGLE_H;
   const toggleWidget = syncEnableWidget(node);
@@ -889,8 +918,8 @@ function drawSingleNode(node, ctx) {
   node._hitDropdown = { x: dX, y: dY, w: dW, h: dH };
 
   ctx.save();
-  ctx.fillStyle   = "rgba(255,255,255,0.06)";
-  ctx.strokeStyle = "rgba(255,255,255,0.18)";
+  ctx.fillStyle   = C.field;
+  ctx.strokeStyle = C.border;
   ctx.lineWidth   = 1;
   ctx.beginPath();
   drawRoundRect(ctx, dX, dY, dW, dH, 5);
@@ -899,11 +928,11 @@ function drawSingleNode(node, ctx) {
   ctx.restore();
 
   ctx.save();
-  ctx.fillStyle    = "#888";
+  ctx.fillStyle    = C.icon;
   ctx.font         = "11px sans-serif";
   ctx.textAlign    = "left";
   ctx.textBaseline = "middle";
-  ctx.fillText("▼", dX + 8, dY + dH / 2);
+  ctx.fillText("▼", dX + PORT_CLEARANCE, dY + dH / 2);
   ctx.restore();
 
   if (group?.color) {
@@ -916,20 +945,21 @@ function drawSingleNode(node, ctx) {
   }
 
   const displayText = selTitle || "点击选择编组…";
-  const textColor   = selTitle ? "#ddd" : "#555";
-  const maxTW       = dW - 30 - (group?.color ? 18 : 0);
+  const textColor   = selTitle ? C.text : C.placeholder;
+  const textX       = dX + PORT_CLEARANCE + 16;
+  const maxTW       = dW - (textX - dX) - 6 - (group?.color ? 18 : 0);
   ctx.save();
   ctx.fillStyle    = textColor;
   ctx.font         = "13px sans-serif";
   ctx.textAlign    = "left";
   ctx.textBaseline = "middle";
-  ctx.fillText(truncateText(ctx, displayText, maxTW), dX + 24, dY + dH / 2);
+  ctx.fillText(truncateText(ctx, displayText, maxTW), textX, dY + dH / 2);
   ctx.restore();
 
   y += dH + 6;
 
   ctx.save();
-  ctx.strokeStyle = "rgba(255,255,255,0.1)";
+  ctx.strokeStyle = C.divider;
   ctx.lineWidth   = 1;
   ctx.beginPath();
   ctx.moveTo(PAD_X, y - 3);
@@ -943,11 +973,11 @@ function drawSingleNode(node, ctx) {
 
   if (!group) {
     ctx.save();
-    ctx.fillStyle = "rgba(255,255,255,0.05)";
+    ctx.fillStyle = C.emptyBtn;
     ctx.beginPath();
     drawRoundRect(ctx, btnX, btnY, BTN_W, BTN_H, 11);
     ctx.fill();
-    ctx.fillStyle    = "#555";
+    ctx.fillStyle    = C.muted;
     ctx.font         = "bold 10px sans-serif";
     ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
@@ -955,11 +985,11 @@ function drawSingleNode(node, ctx) {
     ctx.restore();
 
     ctx.save();
-    ctx.fillStyle    = "#444";
+    ctx.fillStyle    = C.muted;
     ctx.font         = "italic 11px sans-serif";
     ctx.textAlign    = "left";
     ctx.textBaseline = "middle";
-    ctx.fillText("请先选择编组", PAD_X + 4, y + ROW_H / 2);
+    ctx.fillText("请先选择编组", PAD_X + PORT_CLEARANCE, y + ROW_H / 2);
     ctx.restore();
   } else {
     ctx.save();
@@ -979,27 +1009,19 @@ function drawSingleNode(node, ctx) {
 
     const cntX = btnX - 28;
     ctx.save();
-    ctx.fillStyle = "rgba(255,255,255,0.1)";
+    ctx.fillStyle = C.countBg;
     ctx.beginPath();
     drawRoundRect(ctx, cntX, btnY, 24, BTN_H, 4);
     ctx.fill();
-    ctx.fillStyle    = "#999";
+    ctx.fillStyle    = C.countInk;
     ctx.font         = "10px sans-serif";
     ctx.textAlign    = "center";
     ctx.textBaseline = "middle";
     ctx.fillText(String(groupNodes.length), cntX + 12, btnY + BTN_H / 2);
     ctx.restore();
 
-    ctx.save();
-    ctx.fillStyle    = bypassed ? "#777" : "#bbb";
-    ctx.font         = "12px sans-serif";
-    ctx.textAlign    = "left";
-    ctx.textBaseline = "middle";
-    ctx.fillText(
-      truncateText(ctx, group.title || "未命名编组", cntX - PAD_X - 8),
-      PAD_X + 4, y + ROW_H / 2
-    );
-    ctx.restore();
+    // 选中组名已在第一行下拉框里显示，第二行不再重复画一次：
+    // 这一行只留组内节点数与启停状态，避免同一文本上下叠着出现。
   }
 }
 

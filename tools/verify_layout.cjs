@@ -3,9 +3,15 @@
 //       node tools/verify_layout.cjs
 const { chromium } = require('playwright-core');
 const fs = require('node:fs');
+const path = require('node:path');
 
-const WORKFLOW =
-  'W:/AIphotograph/ComfyUI_windows_portable/ComfyUI/user/default/workflows/GG-人像背景分区编辑_Qwen2.1_Turbo.json';
+// 优先读仓库自带的 examples 版本：本机 user/default/workflows 里那份常常没同步，
+// 旧脚本直接 readFileSync 会 ENOENT（历史遗留，问题文档观察区「示例工作流 missing」）。
+const WORKFLOW = [
+  path.join(__dirname, '..', 'examples', 'workflows', 'GG-人像背景分区编辑_Qwen2.1_Turbo.json'),
+  'W:/AIphotograph/ComfyUI_windows_portable/ComfyUI/user/default/workflows/GG-人像背景分区编辑_Qwen2.1_Turbo.json',
+].find((candidate) => fs.existsSync(candidate));
+if (!WORKFLOW) throw new Error('找不到示例工作流 GG-人像背景分区编辑_Qwen2.1_Turbo.json');
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 
 (async () => {
@@ -13,8 +19,24 @@ const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
   const page = await browser.newPage({ viewport: { width: 1700, height: 1000 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
+  // 真机脚本异常收集统一口径（问题文档第 5 条）：外部扩展 gulips.bridge 启动时
+  // 抛 `io is not defined`，内嵌网页还会刷 CSP report-only 报告，都属环境噪音；
+  // 只放行下面明确识别的几条，其它任何 console error 仍然计入 errors，
+  // 不允许把「无脚本异常」放宽成空跑。404 另由 response 钩子单独归类。
+  const ENV_NOISE = [
+    /Error calling extension 'gulips[.]bridge' method 'setup'/,
+    /report-only Content Security Policy/,
+    /Framing .* violates the following report-only/,
+    /upgrade-insecure-requests' is ignored when delivered in a report-only policy/,
+    /Failed to load resource/,
+    // 外部扩展 ComfyUI-GuliPS 的动态 chunk 预加载失败：与被测模块无关的环境噪音。
+    /\[vite:preloadError\].*ComfyUI-GuliPS/,
+  ];
   page.on('console', (m) => {
-    if (m.type() === 'error') errors.push('console: ' + m.text());
+    if (m.type() !== 'error') return;
+    const text = m.text();
+    if (ENV_NOISE.some((re) => re.test(text))) return;
+    errors.push('console: ' + text);
   });
 
   await page.goto('http://127.0.0.1:8188/', { waitUntil: 'networkidle', timeout: 120000 });

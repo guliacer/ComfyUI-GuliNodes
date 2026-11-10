@@ -63,8 +63,8 @@ def fake_modules():
 class FakeWorkerProxy:
     """只替换进程启动；真正的模型工厂和资源清理仍走 worker helper。"""
     worker = None
-    def __init__(self, model_path, mmproj_path, context_length, interrupt_check=None):
-        self.native = self.worker.load_llm_model(model_path, mmproj_path, context_length)
+    def __init__(self, model_path, mmproj_path, context_length, interrupt_check=None, text_only=False):
+        self.native = self.worker.load_llm_model(model_path, mmproj_path, context_length, text_only=text_only)
     def __getattr__(self, name):
         return getattr(self.native, name)
     def close(self):
@@ -133,6 +133,17 @@ class LocalLLMCompatibilityTests(unittest.TestCase):
     def test_text_only_load_does_not_require_any_visual_handler(self):
         FakeLlama.architecture = "llama"
         llm = pe._LocalLLMStorage.load("text.gguf", "无", 4096)
+        self.assertIsNone(llm.chat_handler)
+
+    def test_text_only_borrows_matching_handler_without_gpu(self):
+        llm = pe._LocalLLMStorage.load("PE.gguf", "PE.mmproj.gguf", 4096, text_only=True)
+        self.assertIsInstance(llm.chat_handler, self.handlers.Qwen35ChatHandler)
+        self.assertFalse(llm.chat_handler.kwargs.get("enable_thinking", True))
+        self.assertFalse(llm.chat_handler.kwargs.get("use_gpu", True))
+
+    def test_text_only_unknown_architecture_skips_handler(self):
+        FakeLlama.architecture = "unsupported_model"
+        llm = pe._LocalLLMStorage.load("text.gguf", "vision.gguf", 4096, text_only=True)
         self.assertIsNone(llm.chat_handler)
 
     def test_same_key_reuses_model(self):

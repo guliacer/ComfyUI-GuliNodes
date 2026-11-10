@@ -74,14 +74,24 @@ function chooseAndUpload(node) {
     input.click();
 }
 
+function getButton(node) {
+    return node.widgets?.find((widget) => widget?.name === BUTTON_NAME) ?? null;
+}
+
 function setupNode(node) {
     if (!node || (node.comfyClass !== NODE_NAME && node.type !== NODE_NAME)) return;
-    if (node._ggTxtLoadUploadInstalled) return;
-    node._ggTxtLoadUploadInstalled = true;
+    // 判据看「按钮是不是真在」，不能看「装过没」：先置位再创建的话，
+    // 中间任何一步抛错都会把节点永久标成已装，按钮之后再也不会出现。
+    if (getButton(node)) return;
 
-    node.addWidget("button", BUTTON_NAME, "上传", () => chooseAndUpload(node));
-    node.setDirtyCanvas?.(true, true);
-    node.graph?.setDirtyCanvas?.(true, true);
+    try {
+        const button = node.addWidget("button", BUTTON_NAME, "上传", () => chooseAndUpload(node));
+        if (!button) return;
+        node.setDirtyCanvas?.(true, true);
+        node.graph?.setDirtyCanvas?.(true, true);
+    } catch (error) {
+        console.error("[GGTxtLoad] 上传按钮挂载失败，将在下次生命周期重试", error);
+    }
 }
 
 app.registerExtension({

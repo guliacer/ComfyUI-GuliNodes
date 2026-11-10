@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import "./gg-widget-input-layout.js";
 
 const MIN_NODE_WIDTH = 150;
 const MIN_NODE_HEIGHT = 44;
@@ -17,6 +18,12 @@ const AUTOFIT_EXCLUDED_NODE_NAMES = new Set([
     "GGPromptEnhancer",
     "GGOptionConfirm",
     "GGImageSuperResolution",
+    // GG 图像对比 2张：大预览节点，尺寸完全归用户。autofit 在创建路径上
+    // scheduleFit(allowShrink:true)，会把它 onNodeCreated 里刚定的 260×420
+    // 按 computeSize 内容尺寸收回去；Vue 拖拽路径又不写 canvas.resizing_node，
+    // 手动尺寸记不下来，用户拉大后下一次 fit 还是会缩。整类排除，
+    // 尺寸下限与防收缩由 gg-image-comparer.js 自己接管。
+    "GGImageComparer2",
 ]);
 
 let measureContext = null;
@@ -149,14 +156,17 @@ function requiredNodeWidth(node) {
 
 function compactNodeWidth(node, computedWidth) {
     const requiredWidth = requiredNodeWidth(node);
+    // 节点可以声明自己的宽度下限（`_ggAutoFitMinWidth`）：控件是「标签左 + 数值右」
+    // 的排法时，按标签估宽会把数值切掉，节点自己量出来的宽度更准。
+    const floorWidth = Number(node?._ggAutoFitMinWidth) || 0;
     // 含 DOM widget（预览/面板/输入框等）的节点，宽度必须能容纳其内容。
     // computedWidth 是节点原生 computeSize 的结果，已包含 DOM widget 的
     // 内容宽度（如 WebAI 面板 520、视频预览 360），不能截断到
     // MAX_AUTO_NODE_WIDTH，否则内容会溢出节点边界。
     if (hasLayoutSensitiveWidget(node)) {
-        return Math.max(MIN_NODE_WIDTH, computedWidth, requiredWidth);
+        return Math.max(MIN_NODE_WIDTH, computedWidth, requiredWidth, floorWidth);
     }
-    return Math.max(MIN_NODE_WIDTH, requiredWidth);
+    return Math.max(MIN_NODE_WIDTH, requiredWidth, floorWidth);
 }
 
 function constrainedComputedSize(node) {
@@ -215,6 +225,13 @@ function fitNode(node, options = {}) {
         return;
     }
 
+    // 用户正握着这条边拖：任何自动写入都会跟拉力打架，把「拖小」实时顶回去，
+    // 手动尺寸就永远记不到小值。拖拽期间整场停手，松手后再说。
+    const liveCanvas = app?.canvas || globalThis.LGraphCanvas?.active_canvas;
+    if (liveCanvas?.resizing_node === node) {
+        return;
+    }
+
     // 含多行文本框的节点，高度必须交给用户/原生自由调节：autofit 一旦按内容定高，
     // 多行框的最小高度会把节点卡在“只能拉高、无法压低”。这类节点整体跳过 autofit
     // （宽度也交回原生），确保用户能自己拉伸高度。
@@ -234,10 +251,13 @@ function fitNode(node, options = {}) {
         return;
     }
 
-    // GGLoRACustomLoader 由 gg-lora-custom-loader.js 自行管理高度
+    // 两个 LoRA 节点都由各自的前端模块自行管理高度
     // （隐藏/显示 LoRA 槽位时精确贴合内容），autofit 只负责宽度，
     // 避免 allowShrink:false 把高度抬出内容范围。
-    const heightLocked = node.comfyClass === "GGLoRACustomLoader" || node.type === "GGLoRACustomLoader";
+    const heightLocked = node.comfyClass === "GGLoRACustomLoader"
+        || node.type === "GGLoRACustomLoader"
+        || node.comfyClass === "GGLoRAGroupLoader"
+        || node.type === "GGLoRAGroupLoader";
 
     installWidgetCallbacks(node);
 
@@ -259,7 +279,14 @@ function fitNode(node, options = {}) {
     // 写成内容高度（绕开所有扩展逻辑），这时 current 已经被改小了，拿它当下限等于认账。
     const floorWidth = Math.max(currentWidth, Number(manual?.[0]) || 0);
     const floorHeight = Math.max(currentHeight, Number(manual?.[1]) || 0);
-    let width = allowShrink ? minimumWidth : Math.max(floorWidth, minimumWidth);
+    // 宽度：用户手动拖过就用他留的值（允许比内容窄——截断是他自己的选择，
+    // 再拖宽随时可以），只在内容里含 DOM 面板时保住最小可用宽度。
+    // 之前 max(floor, minimumWidth) 会把用户拖窄的节点在下次值变化时顶回内容宽。
+    let width = allowShrink
+        ? minimumWidth
+        : manual && !hasLayoutSensitiveWidget(node)
+        ? manual[0]
+        : Math.max(floorWidth, minimumWidth);
     let height = heightOwnedByPortLayout
         ? currentHeight
         : customHeight
@@ -362,6 +389,13 @@ app.registerExtension({
             const liveSize = readNodeSize(this);
             if (canvas?.resizing_node === this && liveSize) {
                 this[MANUAL_SIZE_FLAG] = [Math.round(Number(liveSize[0]) || 0), Math.round(Number(liveSize[1]) || 0)];
+                // 持久化副本：读档时节点对象是新建的，内存标记要靠 properties 带回来。
+                try {
+                    if (!this.properties || typeof this.properties !== "object") this.properties = {};
+                    this.properties._ggAutoFitUserSize = [this[MANUAL_SIZE_FLAG][0], this[MANUAL_SIZE_FLAG][1]];
+                } catch {
+                    // properties 不可写时退回内存标记路径
+                }
             }
             return result;
         };
@@ -381,6 +415,14 @@ app.registerExtension({
             const isFirstLoad = !initializedNodes.has(this);
             if (isFirstLoad) {
                 initializedNodes.add(this);
+            }
+            // 拖拽时写进 properties 的用户尺寸在这里认领：fitNode 的 floor 用
+            // max(current, manual)，没有这一步读档后官方 refreshNode 会先按内容
+            // 收回去、manual 就永远追不回来。
+            const savedUser = this.properties?._ggAutoFitUserSize;
+            if (Array.isArray(savedUser) && savedUser.length >= 2
+                && Number(savedUser[0]) > 0 && Number(savedUser[1]) > 0) {
+                this[MANUAL_SIZE_FLAG] = [Math.round(Number(savedUser[0])), Math.round(Number(savedUser[1]))];
             }
             // 工作流里存的就是上次的尺寸（用户可能特意拉过），加载后一律只增不减。
             scheduleFit(this, { allowShrink: false });
@@ -402,3 +444,14 @@ app.registerExtension({
         setTimeout(() => scheduleFit(node, { allowShrink: false }), 0);
     },
 });
+
+// 内容变化（控件显隐、端口增删）之后调用：允许把高度收回到内容尺寸。
+// 加载路径默认只增不减，靠这条把「隐藏了一堆控件但节点还留着旧高度」的情况收回来；
+// 用户手动拖过的节点（MANUAL_SIZE_FLAG）在 fitNode 里仍然只增不减。
+//
+// 必须同步跑 fitNode，不能走 scheduleFit：那个队列合并 allowShrink 时是「只降不升」
+// （有一路说不许缩，整批就不许缩），而加载路径正好排着一路 allowShrink:false，
+// 异步派发会被它盖掉、高度收不回来。
+export function refitAfterContentChange(node) {
+    fitNode(node, { allowShrink: true });
+}

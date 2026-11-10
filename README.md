@@ -190,6 +190,10 @@ RTX 4060 Ti 16GB / Qwen PE Q5_K_S 的同参 64-token 生成实测为 17.44 → 2
 
 ## 更新记录
 
+### 未发布
+
+- **提示词增强**：本地LLM 文生图也会借用配套 mmproj 构造 Qwen 聊天模板并关闭思考，不再让模型先写上千 token 的英文分析；同一模型同一需求实测从 38 秒降到约 15 秒，输出语言设为中文时也能正常出中文。
+
 ### 最新更新（已发布）
 
 - **界面与工具栏**：统一深浅主题及主次按钮样式，将翻译、连线、光效与分组主开关收入工具菜单，完善开关状态、悬停提示、键盘焦点与窄屏显示。
@@ -223,7 +227,7 @@ RTX 4060 Ti 16GB / Qwen PE Q5_K_S 的同参 64-token 生成实测为 17.44 → 2
 | [KJNodes](https://github.com/kijai/ComfyUI-KJNodes)、[JosiaNodes](https://github.com/Josia-doit/ComfyUI_JosiaNodes)、[rgthree](https://github.com/rgthree/rgthree-comfy) | 思路参考：双图对比、画布标注、分组样式与单组 / 多组启停。 |
 | [ComfyUI_essentials](https://github.com/cubiq/ComfyUI_essentials)、[QQ / Wysl](https://github.com/wysl/QQ_ComfyUI_Tools) | 思路参考：数学表达式与多选控件，提示词增强 API / 本地PE 逻辑及官方模板移植自 TE MAN / QQ 同类节点。 |
 | [llama-cpp-python](https://github.com/abetlen/llama-cpp-python) | 桥接：GGUF 推理与按架构选择视觉 handler，不内置其推理或投影实现。 |
-| [Goohaitools](https://github.com/goohai/Goohaitools-comfyui) | 适配 / 思路参考：提示词增强与性能对照、遮罩裁剪恢复、区域编辑、图像合并及缩放，按本项目结构与自带库重写。 |
+| [Goohaitools](https://github.com/goohai/Goohaitools-comfyui) | 适配 / 思路参考：提示词增强与性能对照（文生图复用 Qwen 聊天模板关闭思考）、遮罩裁剪恢复、区域编辑、图像合并及缩放，按本项目结构与自带库重写。 |
 | [ComfyUI-BlueBox](https://github.com/zhoutingxi/ComfyUI-BlueBox) | 思路参考：图像加载、颜色校准和 Qwen 稳定尺寸候选与落框方式。 |
 | [ComfyUI_LayerStyle](https://github.com/chflame163/ComfyUI_LayerStyle) | 适配：宽高与颜色生成纯色图像的功能形态。 |
 | [Inpaint-CropAndStitch](https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch) | 思路参考：重绘遮罩处理、上下文扩展、画面外扩和裁剪回贴。 |

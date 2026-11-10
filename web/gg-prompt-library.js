@@ -26,6 +26,14 @@ const NODE_NAME = "GGPromptLibrary";
 const PROMPT_WIDGET = "提示词";
 const DOM_WIDGET_NAME = "gg_prompt_library";
 const ROUTE = "/guli/prompt_library";
+// 预览图：文件在后端（/guli/prompt_library_preview 路由），JSON 里只存文件名列表；
+// 文件管理（上传校验、防穿越、孤儿清理）都在后端，前端只管选择、展示与轮播。
+const PREVIEW_ROUTE = "/guli/prompt_library_preview";
+const MAX_PREVIEWS = 9;
+const PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+// 悬浮卡片延时弹预览（滑过不闪）；多于一张时按这个间隔自动轮播
+const PREVIEW_HOVER_DELAY = 250;
+const PREVIEW_ROTATE_MS = 2000;
 // 宽度分三个数，别混用：
 // DEFAULT_WIDTH 是新建节点的默认宽度；MIN_NODE_WIDTH 是节点允许拖到的最窄；
 // NODE_INSET 是节点左右边框 + 内边距，面板宽度必须扣掉它。
@@ -58,7 +66,7 @@ const COLORS = [
 // 配色只从设计层取。以前这里猜的是 `--input-text` / `--comfy-input-bg` 这类宿主变量：
 // 宿主变量在不同主题下取值不一样，猜错了就是深色主题里一行灰字（用户实测报的「发灰」）。
 const THEME = {
-  accent: "var(--gg-accent, #3b82f6)",
+  accent: "var(--gg-accent, #4C8DFF)",
   ink: "var(--gg-ink, #3f4856)",
   muted: "var(--gg-muted, #6b7280)",
   border: "var(--gg-divider, rgba(148, 163, 184, 0.38))",
@@ -148,6 +156,124 @@ function applyPreset(node, preset) {
   widget.callback?.(widget.value);
   node.setDirtyCanvas?.(true, true);
   node.graph?.setDirtyCanvas?.(true, true);
+}
+
+// ---------------------------------------------------------------- 预览图
+
+function previewFileUrl(presetId, file) {
+  return `${PREVIEW_ROUTE}/${encodeURIComponent(presetId)}/${encodeURIComponent(file)}`;
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("读取图片文件失败。"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function uploadPreviewFile(panel, file) {
+  if (!file.type?.startsWith("image/")) {
+    throw new Error("只能添加图片文件（PNG / JPEG / WEBP / GIF）。");
+  }
+  if (file.size > PREVIEW_MAX_BYTES) {
+    throw new Error("预览图不能超过 5MB，请压缩后再添加。");
+  }
+  const presetId = panel.editor.previewId || panel.pendingPreviewId || panel.editingId;
+  if (!presetId) throw new Error("还没有可保存的提示词。");
+  const image = await readAsDataUrl(file);
+  const response = await api.fetchApi(`${PREVIEW_ROUTE}/${encodeURIComponent(presetId)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image }),
+  });
+  const data = await response.json().catch(() => null);
+  if (!data?.ok) throw new Error(data?.message || "预览图保存失败。");
+  return data.file;
+}
+
+// ---------------------------------------------------------------- 悬浮预览弹层
+//
+// 悬浮有预览图的卡片时弹出，多于一张自动轮播；挂在 body 上（跟分类下拉同一套
+// 理由：面板 overflow hidden 会裁掉弹层）。同一时间只允许一个弹层。
+
+let previewHover = null;
+
+function closePreviewHover() {
+  if (!previewHover) return;
+  if (previewHover.openTimer) clearTimeout(previewHover.openTimer);
+  if (previewHover.timer) clearInterval(previewHover.timer);
+  previewHover.popover?.remove?.();
+  previewHover = null;
+}
+
+function positionPreviewPopover(popover, card) {
+  const rect = card.getBoundingClientRect();
+  const width = popover.offsetWidth || 320;
+  const height = popover.offsetHeight || 260;
+  const margin = 8;
+  let left = rect.left + rect.width / 2 - width / 2;
+  left = Math.max(margin, Math.min(left, window.innerWidth - width - margin));
+  // 优先放卡片上方，放不下放下方，最后还要收进屏幕里
+  let top = rect.top - height - 6;
+  if (top < margin) top = rect.bottom + 6;
+  top = Math.max(margin, Math.min(top, window.innerHeight - height - margin));
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+}
+
+function openPreviewHover(card, preset) {
+  const files = Array.isArray(preset?.previews) ? preset.previews : [];
+  if (!previewHover || !files.length) {
+    previewHover = null;
+    return;
+  }
+  const popover = makeElement("div", {});
+  popover.className = "gg-surface gg-popover gg-plib-hover-preview";
+  applySurface(popover);
+
+  const name = makeElement("span", {}, preset.name || "未命名");
+  name.className = "gg-plib-hover-name";
+  const counter = makeElement("span", {});
+  counter.className = "gg-plib-hover-count";
+  const head = makeElement("div", {});
+  head.className = "gg-plib-hover-head";
+  head.append(name, counter);
+
+  const image = makeElement("img", {});
+  image.alt = preset.name || "预览图";
+  const imageBox = makeElement("div", {});
+  imageBox.className = "gg-plib-hover-imgbox";
+  imageBox.append(image);
+
+  popover.append(head, imageBox);
+  document.body.append(popover);
+
+  let index = 0;
+  const show = (next) => {
+    index = ((next % files.length) + files.length) % files.length;
+    image.src = previewFileUrl(preset.id, files[index]);
+    counter.textContent = files.length > 1 ? `${index + 1} / ${files.length}` : "预览图";
+    if (files.length > 1) {
+      // 预加载下一张，轮播切换时不闪空白
+      const upcoming = files[(index + 1) % files.length];
+      if (upcoming && upcoming !== files[index]) new Image().src = previewFileUrl(preset.id, upcoming);
+    }
+  };
+  show(0);
+  // 单张静态展示，多张自动轮播
+  const timer = files.length > 1
+    ? setInterval(() => show(index + 1), PREVIEW_ROTATE_MS)
+    : null;
+  Object.assign(previewHover, { popover, timer });
+  positionPreviewPopover(popover, card);
+}
+
+function schedulePreviewHover(panel, card, preset) {
+  closePreviewHover();
+  const openTimer = setTimeout(() => openPreviewHover(card, preset), PREVIEW_HOVER_DELAY);
+  previewHover = { card, openTimer, popover: null, timer: null };
 }
 
 // ---------------------------------------------------------------- DOM 构件
@@ -421,6 +547,120 @@ function ensureStyle() {
   margin: 4px 6px;
   background: var(--gg-divider);
 }
+/* ---- 预览图 ---- */
+/* 详情里的缩略图条：横向排，放不下自动换行 */
+.gg-plib-preview-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.gg-plib-thumb {
+  position: relative;
+  width: 56px;
+  height: 42px;
+  border: 1px solid var(--gg-divider);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--gg-field);
+  flex: 0 0 auto;
+}
+.gg-plib-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+/* 悬停缩略图浮出删除按钮：CSS 控制显隐（pointer-events 不能省，否则透明也能点） */
+.gg-plib-thumb-del {
+  position: absolute;
+  right: 2px;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: color-mix(in srgb, #000 62%, transparent);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease;
+}
+.gg-plib-thumb:hover .gg-plib-thumb-del {
+  opacity: 1;
+  pointer-events: auto;
+}
+.gg-plib-thumb-del:hover {
+  background: var(--gg-danger);
+}
+.gg-plib-thumb-add {
+  width: 56px;
+  height: 42px;
+  padding: 0;
+  border: 1px dashed var(--gg-divider);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--gg-muted);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+.gg-plib-thumb-add:hover:not(:disabled) {
+  border-color: var(--gg-accent);
+  color: var(--gg-accent);
+}
+.gg-plib-thumb-add:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* 悬浮卡片的预览弹层：外壳交给设计层，这里只管内部排布 */
+.gg-plib-hover-preview {
+  padding: 6px;
+  max-width: min(320px, calc(100vw - 16px));
+}
+.gg-plib-hover-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.gg-plib-hover-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--gg-ink);
+}
+.gg-plib-hover-count {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--gg-muted);
+  font-variant-numeric: tabular-nums;
+}
+/* 图像底色固定用深色：不管主题深浅，效果图都在同一块中性底上看 */
+.gg-plib-hover-imgbox {
+  width: min(304px, calc(100vw - 40px));
+  height: 210px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #10141b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gg-plib-hover-imgbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  display: block;
+}
 `;
   document.head.appendChild(style);
 }
@@ -505,6 +745,18 @@ function createEditor() {
   textInput.placeholder = "预设内容（点击卡片时会原样填进文本框）";
   textInput.spellcheck = false;
 
+  // 预览图：缩略图条 + 虚线添加位。上传立即走后端路由落盘，保存表单时随整库提交。
+  const previewLabel = makeElement("span", { fontSize: "10.5px", color: THEME.muted }, "预览图");
+  const previewStrip = makeElement("div", {});
+  previewStrip.className = "gg-plib-preview-strip";
+  const previewInput = makeElement("input", {});
+  previewInput.type = "file";
+  previewInput.accept = "image/png,image/jpeg,image/webp,image/gif";
+  previewInput.multiple = true;
+  previewInput.style.display = "none";
+  const previewRow = makeElement("div", { display: "flex", flexDirection: "column", gap: "4px" });
+  previewRow.append(previewLabel, previewStrip, previewInput);
+
   const footRow = makeElement("div", { display: "flex", gap: "5px", alignItems: "center" });
   const saveButton = makeElement("button", { ...baseButtonStyle(), borderColor: THEME.accent, color: THEME.accent }, "保存");
   saveButton.type = "button";
@@ -514,7 +766,7 @@ function createEditor() {
   deleteButton.type = "button";
   footRow.append(saveButton, cancelButton, deleteButton);
 
-  wrap.append(headRow, colorRow, textInput, footRow);
+  wrap.append(headRow, colorRow, textInput, previewRow, footRow);
 
   return {
     wrap,
@@ -527,6 +779,11 @@ function createEditor() {
     groupValue: "",
     groupCustom: false,
     textInput,
+    previewStrip,
+    previewInput,
+    previewFiles: [],
+    previewId: "",
+    previewUploading: false,
     swatches,
     saveButton,
     cancelButton,
@@ -706,6 +963,43 @@ function openGroupMenuFor(panel) {
   menu.style.visibility = "";
 }
 
+function renderPreviewStrip(panel) {
+  const { editor } = panel;
+  if (!editor?.previewStrip) return;
+  editor.previewStrip.replaceChildren();
+  editor.previewFiles.forEach((file, index) => {
+    const thumb = makeElement("div", {});
+    thumb.className = "gg-plib-thumb";
+    const image = makeElement("img", {});
+    image.src = previewFileUrl(editor.previewId, file);
+    image.alt = `预览图 ${index + 1}`;
+    image.loading = "lazy";
+    const del = makeElement("button", {}, "✕");
+    del.type = "button";
+    del.className = "gg-plib-thumb-del";
+    del.title = "删除这张预览图（保存后生效）";
+    del.addEventListener("click", (event) => {
+      event.stopPropagation();
+      editor.previewFiles.splice(index, 1);
+      renderPreviewStrip(panel);
+      fitNode(panel.node);
+    });
+    thumb.append(image, del);
+    editor.previewStrip.append(thumb);
+  });
+  if (editor.previewFiles.length < MAX_PREVIEWS) {
+    const add = makeElement("button", {}, editor.previewUploading ? "上传中…" : "＋ 添加");
+    add.type = "button";
+    add.className = "gg-plib-thumb-add";
+    add.title = "保存预览图到这条提示词；悬浮列表卡片时会自动轮播展示";
+    add.disabled = editor.previewUploading;
+    add.addEventListener("click", () => editor.previewInput.click());
+    editor.previewStrip.append(add);
+  }
+  // 缩略图数量变化会改变编辑表单高度，走一次贴合闭环
+  fitNode(panel.node);
+}
+
 function openEditor(panel, preset) {
   const { editor } = panel;
   if (!editor) return;
@@ -720,6 +1014,13 @@ function openEditor(panel, preset) {
     swatch.dataset.active = key === editor.selectedColor ? "1" : "0";
   }
   editor.deleteButton.style.display = panel.editingId ? "" : "none";
+  // 预览图：编辑已有的用它的 id；新增的先发一个临时 id——上传会直接落盘到
+  // 该 id 的目录，保存表单时随整库提交；取消编辑时后端删掉这个没人引用的目录。
+  if (!panel.editingId) panel.pendingPreviewId = makePresetId();
+  editor.previewId = panel.editingId || panel.pendingPreviewId || "";
+  editor.previewFiles = Array.isArray(preset?.previews) ? [...preset.previews] : [];
+  editor.previewUploading = false;
+  renderPreviewStrip(panel);
   editor.wrap.style.display = "flex";
   fitNode(panel.node);
   editor.nameInput.focus();
@@ -729,6 +1030,15 @@ function closeEditor(panel) {
   const { editor } = panel;
   if (!editor) return;
   closeGroupMenu();
+  // 新增预设被放弃时，上传过的预览图目录没人引用了，让后端直接删掉；
+  // 已保存预设不受影响（后端对库内 id 会拒绝删除）。
+  if (!panel.editingId && panel.pendingPreviewId && editor.previewFiles.length) {
+    api.fetchApi(`${PREVIEW_ROUTE}/${encodeURIComponent(panel.pendingPreviewId)}`, { method: "DELETE" })
+      .catch(() => {});
+  }
+  panel.pendingPreviewId = null;
+  editor.previewFiles = [];
+  editor.previewId = "";
   editor.wrap.style.display = "none";
   panel.editingId = null;
   fitNode(panel.node);
@@ -749,11 +1059,12 @@ async function submitEditor(panel) {
   panel.collapsedGroups.delete(group);
   const presets = [...(presetCache ?? [])];
   const payload = {
-    id: panel.editingId ?? makePresetId(),
+    id: panel.editingId ?? panel.pendingPreviewId ?? makePresetId(),
     name,
     group,
     color: editor.selectedColor,
     text,
+    previews: [...editor.previewFiles],
   };
   const index = presets.findIndex((item) => item.id === payload.id);
   if (index >= 0) presets[index] = payload;
@@ -761,6 +1072,8 @@ async function submitEditor(panel) {
 
   try {
     await persistPresets(presets);
+    // 已随整库落库：置空临时标记，避免 closeEditor 把刚保存的预览图目录当孤儿删掉
+    panel.pendingPreviewId = null;
     closeEditor(panel);
     setStatus(panel, "");
   } catch (error) {
@@ -885,7 +1198,10 @@ function createPanel(node) {
 function createCard(panel, preset) {
   const card = makeElement("div", { borderLeftColor: colorValue(preset.color) });
   card.className = "gg-plib-card";
-  card.title = `${preset.name}\n\n${preset.text}`;
+  const previews = Array.isArray(preset.previews) ? preset.previews : [];
+  // 有预览图的卡片用悬浮弹层展示效果图，原生 title tooltip 会跟弹层叠在一起，去掉；
+  // 名称显示在弹层头部。
+  card.title = previews.length ? "" : `${preset.name}\n\n${preset.text}`;
 
   const name = makeElement("span", { color: THEME.ink }, preset.name);
   name.className = "gg-plib-name";
@@ -905,6 +1221,12 @@ function createCard(panel, preset) {
 
   actions.append(editButton, deleteButton);
   card.append(name, actions);
+
+  if (previews.length) {
+    card.classList.add("gg-plib-has-preview");
+    card.addEventListener("mouseenter", () => schedulePreviewHover(panel, card, preset));
+    card.addEventListener("mouseleave", () => closePreviewHover());
+  }
 
   // 单击填充、双击编辑：单击先挂起，双击时取消。
   let clickTimer = null;
@@ -1043,6 +1365,8 @@ function renderList(panel) {
 }
 
 function refreshPanel(panel) {
+  // 列表要整体重建，旧卡片上的悬浮弹层先收掉，别让弹层悬在已经不存在的卡片旁
+  closePreviewHover();
   const presets = presetCache ?? [];
   const groupCount = new Set(presets.map((preset) => preset.group || "未分类")).size;
   panel.info.textContent = presets.length
@@ -1164,6 +1488,33 @@ function bindPanel(panel) {
     editor.groupValue = editor.groupInput.value;
   });
 
+  // 预览图：选完文件逐张上传（立即落盘），成功一张显示一张；失败即停并提示。
+  editor.previewInput.addEventListener("change", async () => {
+    const files = [...(editor.previewInput.files ?? [])];
+    editor.previewInput.value = "";
+    if (!files.length) return;
+    const room = MAX_PREVIEWS - editor.previewFiles.length;
+    if (room <= 0) {
+      setStatus(panel, `每个提示词最多 ${MAX_PREVIEWS} 张预览图。`, true);
+      return;
+    }
+    if (files.length > room) {
+      setStatus(panel, `最多还能添加 ${room} 张预览图，多出的已忽略。`, true);
+    }
+    editor.previewUploading = true;
+    renderPreviewStrip(panel);
+    for (const file of files.slice(0, room)) {
+      try {
+        editor.previewFiles.push(await uploadPreviewFile(panel, file));
+      } catch (error) {
+        setStatus(panel, String(error.message || error), true);
+        break;
+      }
+    }
+    editor.previewUploading = false;
+    renderPreviewStrip(panel);
+  });
+
   for (const input of [editor.nameInput, editor.groupInput, editor.textInput]) {
     input.addEventListener("wheel", (event) => event.stopPropagation());
     input.addEventListener("keydown", (event) => {
@@ -1226,6 +1577,7 @@ function setupNode(node) {
   };
   domWidget.onRemoved = function () {
     closeGroupMenu();
+    closePreviewHover();
     if (panel.listener) panelListeners.delete(panel.listener);
     panel.listener = null;
     panel.host.remove?.();

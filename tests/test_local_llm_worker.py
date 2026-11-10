@@ -78,6 +78,14 @@ for line in sys.stdin:
         if mode == "malformed":
             print(PREFIX + "{not JSON", flush=True)
             continue
+        if mode == "stale_reply":
+            # 模拟「上一轮被中断的请求把响应留在管道里」：先吐一条旧序号，再吐本次的。
+            reply({"id": req["id"] - 1}, {"choices": [{"message": {"content": "旧响应"}}]})
+            reply(req, {"choices": [{"message": {"content": '{"rewritten_prompt":"测试增强"}'}}]})
+            continue
+        if mode == "future_reply":
+            reply({"id": req["id"] + 1}, {"choices": []})
+            continue
         reply(req, {"choices": [{"message": {"content": '{"rewritten_prompt":"测试增强"}'}}],
                     "echo": req["kwargs"], "pid": os.getpid()})
     elif op == "close":
@@ -247,6 +255,40 @@ class LocalLLMTransportTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 3)
         self.assert_released(proxy)
 
+    def test_base_exception_interrupt_still_releases_child(self):
+        # ComfyUI 的 InterruptProcessingException 继承 BaseException 而不是 Exception。
+        # 只捕 Exception 的实现在这里会漏掉回收：worker 继续生成，响应留在管道里。
+        calls = []
+
+        class Cancelled(BaseException):
+            pass
+
+        def check():
+            calls.append(1)
+            if len(calls) >= 2:
+                raise Cancelled()
+
+        proxy = self.bridge.LocalLLMProxy("query_hang", "视觉.mmproj.gguf", 4096, interrupt_check=check)
+        self.proxies.append(proxy)
+        started = time.monotonic()
+        with self.assertRaises(Cancelled):
+            self.generate(proxy)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertTrue(proxy.closed)
+        self.assert_released(proxy)
+
+    def test_stale_response_from_abandoned_request_is_discarded(self):
+        proxy = self.start("stale_reply")
+        result = self.generate(proxy)
+        self.assertIn("测试增强", result["choices"][0]["message"]["content"])
+        self.assertIsNone(proxy._process.poll())
+
+    def test_future_sequence_number_is_still_a_protocol_error(self):
+        proxy = self.start("future_reply")
+        with self.assertRaisesRegex(RuntimeError, "本地LLM.*序号"):
+            self.generate(proxy)
+        self.assert_released(proxy)
+
     def test_close_during_generation_kills_child_immediately(self):
         proxy = self.bridge.LocalLLMProxy("query_hang", "视觉.mmproj.gguf", 4096)
         self.proxies.append(proxy)
@@ -376,6 +418,7 @@ class WorkerFactoryTests(unittest.TestCase):
                     self.chat_handler.close()
         module = types.ModuleType("llama_cpp")
         module.Llama = Llama
+        module.llama_print_system_info = lambda: b"CPU : TEST=1"
         return module, instances
 
     def test_factory_retains_context_and_gpu_constructor_arguments(self):
@@ -481,7 +524,8 @@ class WorkerFactoryTests(unittest.TestCase):
             responses = self.serve([{"id": 1, "op": "load", "model_path": "fake", "mmproj_path": "", "context_length": 512},
                                     {"id": 2, "op": "generate", "kwargs": {"messages": []}}])
         self.assertEqual(responses[0]["result"], {"ready": True, "torch_loaded": False,
-                                                 "metadata": {"general.architecture": "llama"}})
+                                                  "backend_info": "CPU : TEST=1",
+                                                  "metadata": {"general.architecture": "llama"}})
         self.assertEqual(responses[1]["result"]["choices"][0]["message"]["content"], "fake reply")
         self.assertEqual(instances[0].close_calls, 1)
 
@@ -530,7 +574,7 @@ class StorageTransportIntegrationTests(unittest.TestCase):
         second = storage.load("model.gguf", "vision.gguf", 8192)
         self.assertIsNot(first, second)
         self.assertIsNotNone(first._process.poll())
-        self.assertEqual(storage.key, ("model.gguf", "vision.gguf"))
+        self.assertEqual(storage.key, ("model.gguf", "vision.gguf", False))
         self.assertEqual(storage.context_length, 8192)
         self.assertEqual(before, self.pe.folder_paths.folder_names_and_paths)
         self.assertEqual(self.free_mock.call_count, 2)
@@ -595,9 +639,9 @@ class StorageTransportIntegrationTests(unittest.TestCase):
 
     def test_local_mode_output_guard_matches_language(self):
         zh = self.pe._local_output_guard("中文")
-        self.assertIn("不要输出任何英文说明", zh)
+        self.assertIn("不要输出任何思考过程", zh)
         en = self.pe._local_output_guard("英文")
-        self.assertIn("English prompt", en)
+        self.assertIn("Do not write any thinking", en)
         self.assertNotEqual(zh, en)
 
     def test_default_context_is_the_tested_optimal_value(self):
@@ -620,24 +664,75 @@ class StorageTransportIntegrationTests(unittest.TestCase):
         need = self.free_mock.call_args[0][0]
         self.assertGreater(need, self.pe.LLM_VRAM_OVERHEAD)
 
-    def test_auto_unload_false_retains_child_and_default_true_exits_it(self):
+    def test_keep_loading_retains_child_and_after_unload_exits_it(self):
         pe = self.pe
-        kwargs = {pe.P_METHOD: pe.METHOD_LLM, pe.P_LLM: "model.gguf", pe.P_PROMPT: "保留人物", pe.P_UNLOAD: False}
-        self.assertEqual(pe._run(kwargs), "测试增强")
+        kwargs = {pe.P_METHOD: pe.METHOD_LLM, pe.P_LLM_LEGACY: "model.gguf", pe.P_PROMPT: "保留人物",
+                  pe.P_UNLOAD: pe.UNLOAD_KEEP}
+        # _run 现在返回 (提示词, 提示词JSON, 是否反推)
+        self.assertEqual(pe._run(kwargs)[0], "测试增强")
         retained = pe._LocalLLMStorage.llm
         self.assertIsNone(retained._process.poll())
-        kwargs.pop(pe.P_UNLOAD)
         kwargs[pe.P_PROMPT] = "第二次需求"
-        self.assertEqual(pe._run(kwargs), "测试增强")
+        kwargs[pe.P_UNLOAD] = pe.UNLOAD_AFTER
+        self.assertEqual(pe._run(kwargs)[0], "测试增强")
         self.assertIsNotNone(retained._process.poll())
         self.assertIsNone(pe._LocalLLMStorage.llm)
         self.assertIsNone(pe._LocalLLMStorage.key)
+
+    def test_old_boolean_unload_flag_is_still_honoured(self):
+        pe = self.pe
+        # 老工作流存的是布尔 True，等价于「运行后自动卸载」。
+        kwargs = {pe.P_METHOD: pe.METHOD_LLM, pe.P_LLM_LEGACY: "model.gguf", pe.P_PROMPT: "保留人物",
+                  pe.P_UNLOAD: True}
+        self.assertEqual(pe._run(kwargs)[0], "测试增强")
+        self.assertIsNone(pe._LocalLLMStorage.llm)
+
+    def test_auto_strategy_follows_free_memory(self):
+        pe = self.pe
+        kwargs = {pe.P_METHOD: pe.METHOD_LLM, pe.P_LLM_LEGACY: "model.gguf", pe.P_PROMPT: "保留人物",
+                  pe.P_UNLOAD: pe.UNLOAD_AUTO}
+        with patch.object(pe, "_low_free_memory", return_value=False):
+            self.assertEqual(pe._run(kwargs)[0], "测试增强")
+        self.assertIsNotNone(pe._LocalLLMStorage.llm)
+        with patch.object(pe, "_low_free_memory", return_value=True):
+            self.assertEqual(pe._run(kwargs)[0], "测试增强")
+        self.assertIsNone(pe._LocalLLMStorage.llm)
 
     def test_failed_startup_leaves_storage_empty(self):
         with self.assertRaisesRegex(RuntimeError, "本地LLM.*模拟加载失败"):
             self.pe._LocalLLMStorage.load("load_error", "无", 4096)
         self.assertIsNone(self.pe._LocalLLMStorage.llm)
         self.assertIsNone(self.pe._LocalLLMStorage.key)
+
+    def test_interrupt_clears_cached_proxy_and_closed_one_is_not_reused(self):
+        pe = self.pe
+        import comfy.model_management as mm
+
+        class Cancelled(BaseException):
+            pass
+
+        calls = []
+
+        def check():
+            calls.append(1)
+            if len(calls) >= 2:
+                raise Cancelled()
+
+        with patch.object(mm, "throw_exception_if_processing_interrupted", check):
+            with self.assertRaises(Cancelled):
+                pe._request_local_llm(model_name="query_hang", mmproj_name="无", context_length=4096,
+                                      system_prompt="rules", user_prompt="request", max_output_tokens=32,
+                                      image_base64_list=[])
+        self.assertIsNone(pe._LocalLLMStorage.llm)
+        self.assertIsNone(pe._LocalLLMStorage.key)
+
+        # 就算缓存里被塞进一个已回收的代理，也不能复用它（它的管道里可能留着旧响应）。
+        stale = pe._LocalLLMStorage.load("model.gguf", "无", 4096)
+        stale.close()
+        self.assertTrue(stale.closed)
+        fresh = pe._LocalLLMStorage.load("model.gguf", "无", 4096)
+        self.assertIsNot(fresh, stale)
+        self.assertIsNone(fresh._process.poll())
 
     def test_failed_query_clears_dead_cached_proxy_for_same_key_retry(self):
         pe = self.pe

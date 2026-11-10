@@ -17,8 +17,15 @@ const MIN_NODE_WIDTH = 520;
 const MIN_PANEL_WIDTH = 200;
 const MIN_PANEL_HEIGHT = 360;
 const MAX_PANEL_HEIGHT = 1500;
-const DEFAULT_PANEL_HEIGHT = 820;
+// 与 guli_nodes/web_ai_tools.py 里「节点高度」的 default 同源（2026-11-06 改为 500）。
+// widget 有值时以 widget 为准，这里只作参数缺失 / 非法值时的兜底。
+const DEFAULT_PANEL_HEIGHT = 500;
 const URL_BAR_HEIGHT = 28;
+// 节点底部提示条：仿「装 GuliNodes ↗」那种浅灰居中小字横条。
+// 它独立占一行，不挤压 iframe —— iframe 仍按「节点高度 - 地址栏」算，
+// 只是 host 与节点整体高度各多出 HINT_BAR_HEIGHT。
+const HINT_BAR_HEIGHT = 28;
+const HINT_TEXT = "空白太多？调整上方的节点高度。";
 const HIDDEN_TAG = "ggHiddenWebAI";
 const hiddenWidgetState = {};
 
@@ -282,13 +289,14 @@ function applyPanelLayout(panel, width) {
     const panelHeight = getPanelHeight(panel.node);
     const iframeHeight = Math.max(MIN_PANEL_HEIGHT - URL_BAR_HEIGHT, panelHeight - URL_BAR_HEIGHT);
 
+    const hostHeight = panelHeight + HINT_BAR_HEIGHT;
     Object.assign(panel.host.style, {
         width: `${outerWidth}px`,
         minWidth: `${outerWidth}px`,
         maxWidth: `${outerWidth}px`,
-        height: `${panelHeight}px`,
-        minHeight: `${panelHeight}px`,
-        maxHeight: `${panelHeight}px`,
+        height: `${hostHeight}px`,
+        minHeight: `${hostHeight}px`,
+        maxHeight: `${hostHeight}px`,
     });
     Object.assign(panel.iframe.style, {
         height: `${iframeHeight}px`,
@@ -322,7 +330,8 @@ function resizeNodeToPanel(node) {
     const currentWidth = Number(node.size?.[0]) || MIN_NODE_WIDTH;
     const width = Math.max(MIN_NODE_WIDTH, currentWidth);
     const computed = typeof node.computeSize === "function" ? node.computeSize() : null;
-    const height = Math.max(Number(computed?.[1]) || 0, getPanelHeight(node));
+    const height = Math.max(Number(computed?.[1]) || 0,
+        getPanelHeight(node) + HINT_BAR_HEIGHT);
 
     if (!node.size || node.size[0] !== width || node.size[1] !== height) {
         node.size = [width, height];
@@ -415,13 +424,38 @@ function createPanel(node) {
         textOverflow: "ellipsis",
     });
     urlBar.append(urlLabel, urlText);
-    host.append(iframe, urlBar);
+
+    // 底部提示：浅色通栏 + 居中灰字，和上方的网址栏用一条细线分开。
+    // pointerEvents:none 保证它只是提示，不会抢走画布 / iframe 的交互。
+    const hintBar = document.createElement("div");
+    hintBar.dataset.ggWebAIHint = "1";
+    hintBar.textContent = HINT_TEXT;
+    Object.assign(hintBar.style, {
+        alignItems: "center",
+        background: "#ffffff",
+        borderTop: "1px solid rgba(148, 163, 184, 0.28)",
+        boxSizing: "border-box",
+        color: "#94a3b8",
+        display: "flex",
+        fontSize: "11px",
+        height: `${HINT_BAR_HEIGHT}px`,
+        justifyContent: "center",
+        letterSpacing: "0.2px",
+        lineHeight: "1",
+        minHeight: `${HINT_BAR_HEIGHT}px`,
+        overflow: "hidden",
+        pointerEvents: "none",
+        whiteSpace: "nowrap",
+    });
+
+    host.append(iframe, urlBar, hintBar);
 
     return {
         node,
         host,
         iframe,
         urlText,
+        hintBar,
         currentUrl: "",
     };
 }
@@ -473,7 +507,8 @@ function ensureWebAIWidget(node) {
     widget.computeSize = function (width) {
         const nodeWidth = Number(width) || node.size?.[0] || MIN_NODE_WIDTH;
         applyPanelLayout(panel, nodeWidth);
-        return [Math.max(MIN_NODE_WIDTH, nodeWidth), getPanelHeight(node)];
+        return [Math.max(MIN_NODE_WIDTH, nodeWidth),
+            getPanelHeight(node) + HINT_BAR_HEIGHT];
     };
     widget.onRemoved = function () {
         panel.iframe.removeAttribute("src");

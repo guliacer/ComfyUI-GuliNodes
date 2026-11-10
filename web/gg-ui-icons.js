@@ -1,15 +1,17 @@
 import { ensureGGDesign } from "./gg-ui-design.js";
+import { WIDGET_SKIN_SCOPE_ATTRIBUTE } from "./gg-skin-scope.js";
 
 const ICONS = {
     brush: '<path d="m16.5 3.5 4 4L8 20l-5 1 1-5L16.5 3.5z"/><path d="m13.2 6.8 4 4"/>',
-    toolGrid: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2" class="gg-ui-fill"/>',
-    palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.6 0 2.2-1 1.7-2.1-.6-1.3.2-2.4 1.7-2.4h1.9c2 0 3.2-1.3 3.2-3.4C20.5 7.6 16.7 3.5 12 3.5z"/><circle cx="7.5" cy="10.5" r="1.1" class="gg-ui-fill"/><circle cx="11" cy="7.5" r="1.1" class="gg-ui-fill"/><circle cx="15.5" cy="8.5" r="1.1" class="gg-ui-fill"/>',
-    node: '<rect x="5" y="5" width="14" height="14" rx="4"/><circle cx="5" cy="10" r="1.4" class="gg-ui-fill"/><circle cx="19" cy="14" r="1.4" class="gg-ui-fill"/><path d="M9 9.2h6"/><path d="M9 13h4.5"/>',
+    toolGrid: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/>',
+    palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.6 0 2.2-1 1.7-2.1-.6-1.3.2-2.4 1.7-2.4h1.9c2 0 3.2-1.3 3.2-3.4C20.5 7.6 16.7 3.5 12 3.5z"/><circle cx="7.5" cy="10.5" r="1.1"/><circle cx="11" cy="7.5" r="1.1"/><circle cx="15.5" cy="8.5" r="1.1"/>',
+    node: '<rect x="5" y="5" width="14" height="14" rx="4"/><circle cx="5" cy="10" r="1.4"/><circle cx="19" cy="14" r="1.4"/><path d="M9 9.2h6"/><path d="M9 13h4.5"/>',
     body: '<rect x="5" y="5" width="14" height="14" rx="4"/><path d="M5 10h14"/><path d="M8.5 14h7"/><path d="M8.5 16.7h5"/>',
     title: '<rect x="5" y="5" width="14" height="14" rx="4"/><path d="M5 10h14"/><path d="M8 7.6h8"/>',
     trash: '<path d="M5 7.5h14"/><path d="M9 7.5V5.3h6v2.2"/><path d="m7.2 7.5.8 12.2h8l.8-12.2"/><path d="M10.3 11.2v5.2"/><path d="M13.7 11.2v5.2"/>',
     pipette: '<path d="m14.5 4 5.5 5.5"/><path d="m17.2 6.8-8.8 8.8-3.6.8.8-3.6 8.8-8.8"/><path d="M4.5 20h5"/>',
-    more: '<circle cx="5.5" cy="12" r="1.35" class="gg-ui-fill"/><circle cx="12" cy="12" r="1.35" class="gg-ui-fill"/><circle cx="18.5" cy="12" r="1.35" class="gg-ui-fill"/>',
+    more: '<circle cx="5.5" cy="12" r="1.35"/><circle cx="12" cy="12" r="1.35"/><circle cx="18.5" cy="12" r="1.35"/>',
+    search: '<circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.4 4.4"/>',
     width: '<path d="M4 6.5v11"/><path d="M20 6.5v11"/><path d="M7.5 12h9"/><path d="m10 9.5-2.5 2.5L10 14.5"/><path d="m14 9.5 2.5 2.5L14 14.5"/>',
     height: '<path d="M6.5 4h11"/><path d="M6.5 20h11"/><path d="M12 7.5v9"/><path d="m9.5 10 2.5-2.5L14.5 10"/><path d="m9.5 14 2.5 2.5L14.5 14"/>',
     alignLeft: '<path d="M5 5v14"/><rect x="8" y="6.5" width="10.5" height="3.2" rx="1.2"/><rect x="8" y="11" width="7.5" height="3.2" rx="1.2"/><rect x="8" y="15.5" width="5.5" height="3.2" rx="1.2"/>',
@@ -35,9 +37,11 @@ const ICONS = {
     modelUnload: '<rect x="6" y="4.5" width="12" height="12" rx="3"/><path d="M9 8.5h6"/><path d="M9 12h3.5"/><path d="M8.5 2.5v2"/><path d="M15.5 2.5v2"/><path d="M12 16.5v5"/><path d="m9.8 19.3 2.2 2.2 2.2-2.2"/>',
     memorySweep: '<path d="M20.5 3.5 14 10"/><path d="M12.2 8.6 5 14.2a6.6 6.6 0 0 0 4.8 4.8l5.6-7.2z"/><path d="m8.6 12.4 3 3"/><path d="M3.5 20.5h3"/>',
     linkFlow: '<circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/>',
-    linkTune: '<circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/><circle cx="13.6" cy="6.5" r="1.2" class="gg-ui-fill"/><circle cx="18.5" cy="11.4" r="1.2" class="gg-ui-fill"/>',
+    linkTune: '<circle cx="5.5" cy="6.5" r="2.1"/><circle cx="18.5" cy="17.5" r="2.1"/><path d="M7.6 6.5h6a4.9 4.9 0 0 1 4.9 4.9v4"/><circle cx="13.6" cy="6.5" r="1.2"/><circle cx="18.5" cy="11.4" r="1.2"/>',
     toolbarCollapse: '<rect x="4.5" y="5.5" width="15" height="13" rx="3"/><path d="M4.5 10h15"/><path d="M9 14.5h6"/><path d="m9.5 17 2.5-2.5 2.5 2.5"/>',
     toolbarExpand: '<rect x="4.5" y="5.5" width="15" height="13" rx="3"/><path d="M4.5 10h15"/><path d="M9 14.5h6"/><path d="m9.5 12.8 2.5 2.5 2.5-2.5"/>',
+    // 二级页返回（左侧箭头 + 竖线），对应「‹ 返回」
+    chevronLeft: '<path d="M15 5l-7 7 7 7"/><path d="M20 5v14"/>',
     nodeCollapse: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M4 9.5h16"/><path d="m9.5 16.5 2.5-2.5 2.5 2.5"/>',
     nodeExpand: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M4 9.5h16"/><path d="m9.5 14 2.5 2.5 2.5-2.5"/>',
     nodePin: '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>',
@@ -47,23 +51,31 @@ const ICONS = {
     floatingText: '<rect x="4" y="5" width="13" height="11" rx="3"/><path d="M7.5 9h6"/><path d="M7.5 12h4"/><rect x="13.5" y="12.5" width="6.5" height="6.5" rx="2"/><path d="M15.6 15.8h2.3"/>',
     groupStyle: '<rect x="3.5" y="3.5" width="17" height="17" rx="4" stroke-dasharray="3.2 2.4"/><rect x="8.2" y="8.2" width="7.6" height="7.6" rx="1.8"/>',
     translate: '<path d="M3.5 5.5h8"/><path d="M7.5 3.5v2"/><path d="M11.5 5.5c-.4 4-3.2 7.3-8 9"/><path d="M4.5 8.8c1.5 2.7 3.9 4.4 6.5 5"/><path d="m13.5 20.5 4-11 4 11"/><path d="M15 17h5"/>',
-    tagName: '<path d="M12.6 3.5H5.5a2 2 0 0 0-2 2v7.1a2 2 0 0 0 .6 1.4l7.3 7.3a2 2 0 0 0 2.8 0l7.1-7.1a2 2 0 0 0 0-2.8l-7.3-7.3a2 2 0 0 0-1.4-.6z"/><circle cx="8" cy="8" r="1.3" class="gg-ui-fill"/>',
+    tagName: '<path d="M12.6 3.5H5.5a2 2 0 0 0-2 2v7.1a2 2 0 0 0 .6 1.4l7.3 7.3a2 2 0 0 0 2.8 0l7.1-7.1a2 2 0 0 0 0-2.8l-7.3-7.3a2 2 0 0 0-1.4-.6z"/><circle cx="8" cy="8" r="1.3"/>',
 
-    catImage: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="9" r="1.5" class="gg-ui-fill"/><circle cx="15.5" cy="9" r="1.5" class="gg-ui-fill"/><path d="M8 14c1 1.5 3 2.5 4 2.5s3-1 4-2.5"/>',
+    catImage: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="9" r="1.5"/><circle cx="15.5" cy="9" r="1.5"/><path d="M8 14c1 1.5 3 2.5 4 2.5s3-1 4-2.5"/>',
     catLatent: '<path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>',
     catText: '<path d="M4 7V4"/><path d="M8 7V4"/><path d="M12 7V4"/><path d="M16 7V4"/><path d="M20 7V4"/><path d="M4 10h16"/><path d="M8 14h8"/><path d="M10 18h4"/>',
     catModel: '<path d="M12 3l-2 4h4l-2-4z"/><path d="M4 9h16"/><rect x="6" y="12" width="12" height="9" rx="2"/><path d="M9 15.5h6"/><path d="M9 18.5h4"/>',
     catMask: '<ellipse cx="12" cy="14" rx="9" ry="6"/><path d="M3 14c0-3.5 4-6 9-6s9 2.5 9 6"/><path d="M7 8c2-2 5-3 5-3s3 1 5 3"/>',
-    catVideo: '<polygon points="6,4 20,12 6,20" class="gg-ui-fill"/><path d="M22 7h-4v10h4"/><path d="M22 12h2"/>',
-    catAI: '<path d="M12 2a7 7 0 0 1 7 7 7 7 0 0 1-7 7c-1.5 0-3-.5-4-1.5L4 18v-5a7 7 0 0 1-1-4A7 7 0 0 1 12 2z"/><circle cx="9" cy="10" r="1" class="gg-ui-fill"/><circle cx="15" cy="10" r="1" class="gg-ui-fill"/><path d="M9 14c1.5 1 3.5 1 5 0"/>',
+    catVideo: '<polygon points="6,4 20,12 6,20"/><path d="M22 7h-4v10h4"/><path d="M22 12h2"/>',
+    catAI: '<path d="M12 2a7 7 0 0 1 7 7 7 7 0 0 1-7 7c-1.5 0-3-.5-4-1.5L4 18v-5a7 7 0 0 1-1-4A7 7 0 0 1 12 2z"/><circle cx="9" cy="10" r="1"/><circle cx="15" cy="10" r="1"/><path d="M9 14c1.5 1 3.5 1 5 0"/>',
     catWorkflow: '<rect x="4" y="5" width="16" height="14" rx="4"/><rect x="7.5" y="8" width="4.2" height="3.2" rx="1.2"/><rect x="12.3" y="12.8" width="4.2" height="3.2" rx="1.2"/><path d="M11.7 9.6h2.1a2 2 0 0 1 2 2v1.2"/><path d="M12.3 14.4h-2.1a2 2 0 0 1-2-2v-1.2"/>',
     catInput: '<rect x="2" y="8" width="14" height="10" rx="2"/><path d="M16 11h4v2h-4"/><path d="M20 11l3 1.5L20 14"/><path d="M6 12h6"/>',
     catSample: '<path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z"/><path d="M12 6v6l4 2"/>',
     sparkle: '<path d="M12 2l2.2 6.8L21 11l-6.8 2.2L12 20l-2.2-6.8L3 11l6.8-2.2L12 2z"/>',
-    zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" class="gg-ui-fill"/>',
+    zap: '<polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>',
     bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10.3 21h3.4"/>',
     bellOff: '<path d="M13.7 21a2 2 0 0 1-3.4 0"/><path d="M18 8a6 6 0 0 0-9.5-4.9"/><path d="M6 8c0 7-3 7-3 9h12"/><path d="M18 17h3"/><path d="m3 3 18 18"/>',
-    image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="9" r="1.5" class="gg-ui-fill"/><path d="M3 16l5-5 4 4 3-3 5 5v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3z"/>',
+    // 敲击中继：广播波纹（中心源 + 两道扩散弧），对应「中继转发」语义，
+    // 替代原先误用的铃铛（铃铛读起来像通知订阅）。状态靠 .gg-state-off 着色区分，无需 off 变体。
+    relay: '<circle cx="12" cy="17.4" r="1.85"/><path d="M8.1 13.6a5.6 5.6 0 0 1 7.8 0"/><path d="M5 10.3a10 10 0 0 1 14 0"/>',
+    image: '<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="9" r="1.5"/><path d="M3 16l5-5 4 4 3-3 5 5v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-3z"/>',
+    subworkflow: '<rect x="3" y="5" width="10.5" height="9" rx="2"/><path d="M14 9.5h3.2"/><path d="M16 7.2v4.6"/><path d="M19.6 9.5h1.4"/><path d="M6.5 8.5h4"/><path d="M6.5 11h2.6"/><path d="M17.4 15.6l2.6 2.6"/><path d="M20 15.6l-2.6 2.6"/>',
+    modeAuto: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"/><path d="M18.5 16.2l.8 2.1 2.1.8-2.1.8-.8 2.1-.8-2.1-2.1-.8 2.1-.8.8-2.1z"/>',
+    modeManual: '<path d="M4 7h10"/><path d="M18 7h2"/><circle cx="16" cy="7" r="2"/><path d="M4 12h4"/><path d="M12 12h8"/><circle cx="10" cy="12" r="2"/><path d="M4 17h8"/><path d="M16 17h4"/><circle cx="14" cy="17" r="2"/>',
+    modeRandom: '<rect x="3.5" y="4.5" width="17" height="15" rx="3.5"/><circle cx="8.4" cy="9.2" r="1.25"/><circle cx="15.6" cy="9.2" r="1.25"/><circle cx="12" cy="12.1" r="1.25"/><circle cx="8.4" cy="14.9" r="1.25"/><circle cx="15.6" cy="14.9" r="1.25"/>',
+    effectPool: '<path d="M6.2 4.5v5.4"/><path d="M3.5 7.2h5.4"/><path d="M17.4 13.4v5.2"/><path d="M14.8 16h5.2"/><circle cx="6.2" cy="18" r="1.2"/><circle cx="18" cy="6" r="1.2"/>',
     folder: '<path d="M3 7a2 2 0 0 1 2-2h3a2 2 0 0 1 2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>',
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V19a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
 };
@@ -101,9 +113,9 @@ export function ensureGGIconStyles() {
                没装设计层时退到浅色兜底值，至少不会变成透明字。 */
             --gg-ui-ink: var(--gg-ink, #3f4856);
             --gg-ui-muted: var(--gg-muted, #6b7280);
-            --gg-ui-accent: var(--gg-accent, #3b82f6);
-            --gg-ui-accent-soft: color-mix(in srgb, var(--gg-accent, #3b82f6) 13%, transparent);
-            --gg-ui-accent-border: color-mix(in srgb, var(--gg-accent, #3b82f6) 30%, transparent);
+            --gg-ui-accent: var(--gg-accent, #4C8DFF);
+            --gg-ui-accent-soft: color-mix(in srgb, var(--gg-accent, #4C8DFF) 13%, transparent);
+            --gg-ui-accent-border: color-mix(in srgb, var(--gg-accent, #4C8DFF) 30%, transparent);
             --gg-ui-danger: var(--gg-danger, #ef4444);
             --gg-ui-success: var(--gg-ok, #22c55e);
             --gg-ui-warning: var(--gg-warning, #f59e0b);
@@ -115,14 +127,10 @@ export function ensureGGIconStyles() {
             color: inherit;
             fill: none;
             stroke: currentColor;
-            stroke-width: 2.15;
+            stroke-width: 2;
             stroke-linecap: round;
             stroke-linejoin: round;
             vector-effect: non-scaling-stroke;
-        }
-        .gg-ui-icon .gg-ui-fill {
-            fill: currentColor;
-            stroke: none;
         }
         #gg-nodes-panel .tool-btn,
         #gg-toolbar-settings .tool-btn,
@@ -143,18 +151,29 @@ export function ensureGGIconStyles() {
            display 一旦写 !important，各功能想隐藏按钮时就藏不掉了。 */
         .gg-ui-top-button {
             border: 1px solid var(--gg-divider, rgba(100, 116, 139, 0.3)) !important;
-            border-radius: 7px !important;
+            border-radius: 8px !important;
             background: transparent !important;
             color: var(--gg-muted, #6b7280) !important;
             box-shadow: none !important;
             transition: color 0.14s ease, background-color 0.14s ease, border-color 0.14s ease;
         }
         /* 悬停只加深底色、不改颜色：否则「没开」的按钮一悬停就像「开了」 */
-        .gg-ui-top-button:hover,
-        .gg-ui-top-button:focus-visible {
+        .gg-ui-top-button:hover {
             color: var(--gg-ink, #3f4856) !important;
             background: var(--gg-btn-hover, rgba(148, 163, 184, 0.16)) !important;
             border-color: var(--gg-divider, rgba(100, 116, 139, 0.3)) !important;
+        }
+        /* 键盘焦点环（设计稿 2·06）：2px accent + 外扩 2px。
+           只给描边、不换底色——Tab 移动时不会误以为把功能打开了（开是填充、焦点是描边）。 */
+        .gg-ui-top-button:focus-visible {
+            outline: 2px solid var(--gg-ui-accent, #4C8DFF) !important;
+            outline-offset: 2px !important;
+        }
+        /* 按下反馈（设计稿 2·06）：底色再压深一档，不加缩放——
+           顶栏按钮挤在一起，缩放会让相邻按钮视觉抖动。 */
+        .gg-ui-top-button:active {
+            background: var(--gg-ui-press-bg, var(--gg-btn-hover, rgba(148, 163, 184, 0.16))) !important;
+            color: var(--gg-ink, #3f4856) !important;
         }
         /* 关 = 灰：显式写出来，免得 .comfyui-button 的默认白底把「关」显示成「开」 */
         .gg-ui-top-button.gg-state-off {
@@ -188,51 +207,51 @@ export function ensureGGIconStyles() {
         .gg-ui-icon-error { color: var(--gg-ui-danger); }
         .gg-ui-icon-warning { color: var(--gg-ui-warning); }
         
-        div[data-id^="GuliNodes"] {
-            border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}]:not([${WIDGET_SKIN_SCOPE_ATTRIBUTE}="off"]) div[data-id^="GuliNodes"] {
+            border-bottom: 1px solid var(--gg-divider);
             padding: 10px 0;
         }
-        div[data-id^="GuliNodes"]:last-of-type {
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}]:not([${WIDGET_SKIN_SCOPE_ATTRIBUTE}="off"]) div[data-id^="GuliNodes"]:last-of-type {
             border-bottom: none;
         }
-        div[data-id^="GuliNodes"] + div[data-id^="GuliNodes"] {
-            border-top: 1px solid rgba(148, 163, 184, 0.12);
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}]:not([${WIDGET_SKIN_SCOPE_ATTRIBUTE}="off"]) div[data-id^="GuliNodes"] + div[data-id^="GuliNodes"] {
+            border-top: 1px solid var(--gg-divider);
         }
 
         /* ===== 设置面板参数行边框间隔 ===== */
-        .comfy-settings-panel .comfy-setting-row,
-        #comfy-settings-dialog .comfy-setting-row,
-        .comfy-modal .comfy-setting-row,
-        .comfy-menu .comfy-setting-row,
-        [class*="setting-row"],
-        .comfy-list .comfy-list-item {
-            border-bottom: 1px solid rgba(148, 163, 184, 0.13) !important;
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-settings-panel .comfy-setting-row,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] #comfy-settings-dialog .comfy-setting-row,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-modal .comfy-setting-row,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-menu .comfy-setting-row,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] [class*="setting-row"],
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-list .comfy-list-item {
+            border-bottom: 1px solid var(--gg-divider) !important;
             padding: 10px 8px !important;
             margin: 0 !important;
             transition: background-color 0.15s ease;
         }
-        .comfy-settings-panel .comfy-setting-row:last-child,
-        #comfy-settings-dialog .comfy-setting-row:last-child,
-        .comfy-modal .comfy-setting-row:last-child,
-        .comfy-menu .comfy-setting-row:last-child,
-        .comfy-list .comfy-list-item:last-child {
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-settings-panel .comfy-setting-row:last-child,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] #comfy-settings-dialog .comfy-setting-row:last-child,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-modal .comfy-setting-row:last-child,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-menu .comfy-setting-row:last-child,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-list .comfy-list-item:last-child {
             border-bottom: none !important;
         }
-        .comfy-settings-panel .comfy-setting-row:hover,
-        #comfy-settings-dialog .comfy-setting-row:hover {
-            background: rgba(99, 102, 241, 0.04) !important;
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-settings-panel .comfy-setting-row:hover,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] #comfy-settings-dialog .comfy-setting-row:hover {
+            background: var(--gg-btn-hover) !important;
         }
 
         /* 设置面板容器内边距 */
-        .comfy-settings-panel,
-        #comfy-settings-dialog,
-        .comfy-modal {
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-settings-panel,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] #comfy-settings-dialog,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-modal {
             padding: 4px 0 !important;
         }
 
-        .gg-settings-about-row {
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}]:not([${WIDGET_SKIN_SCOPE_ATTRIBUTE}="off"]) .gg-settings-about-row {
             padding-bottom: 16px !important;
-            border-bottom: 1px solid rgba(148, 163, 184, 0.2) !important;
+            border-bottom: 1px solid var(--gg-divider) !important;
             margin-bottom: 8px !important;
         }
     `;
@@ -334,17 +353,17 @@ function injectSettingRowBorders() {
 
     const css = `
         /* 通用设置行 - 覆盖所有可能的容器 */
-        .comfy-settings-panel > div:not([class*="title"]):not([class*="header"]):not([class*="close"]),
-        #comfy-settings-dialog > div,
-        .comfy-modal-content > div > div,
-        [id*="settings"] > div > div,
-        [class*="dialog"] [class*="row"],
-        [class*="panel"] [class*="row"] {
-            border-bottom: 1px solid rgba(148,163,184,0.12) !important;
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-settings-panel > div:not([class*="title"]):not([class*="header"]):not([class*="close"]),
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] #comfy-settings-dialog > div,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] .comfy-modal-content > div > div,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] [id*="settings"] > div > div,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] [class*="dialog"] [class*="row"],
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] [class*="panel"] [class*="row"] {
+            border-bottom: 1px solid var(--gg-divider) !important;
             padding: 8px 6px !important;
         }
-        [class*="dialog"] [class*="row"]:last-child,
-        [class*="panel"] [class*="row"]:last-child {
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] [class*="dialog"] [class*="row"]:last-child,
+        :root[${WIDGET_SKIN_SCOPE_ATTRIBUTE}="all"] [class*="panel"] [class*="row"]:last-child {
             border-bottom: none !important;
         }
     `;
@@ -353,15 +372,7 @@ function injectSettingRowBorders() {
     s.textContent = css;
     document.head.appendChild(s);
 
-    new MutationObserver(ggDebounce(() => {
-        document.querySelectorAll('[class*="setting"], [class*="Setting"]').forEach(el => {
-            if (el.children.length > 1 && el.children[0].tagName !== 'BUTTON' &&
-                el.offsetHeight > 20 && el.offsetHeight < 120) {
-                el.style.borderBottom = '1px solid rgba(148,163,184,0.12)';
-                el.style.padding = '8px 4px';
-            }
-        });
-    })).observe(document.body, { childList: true, subtree: true });
+    // Scope-gated CSS restores original styles immediately; no inline mutation or layout scan.
 }
 
 if (document.readyState === "loading") {

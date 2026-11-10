@@ -48,6 +48,13 @@ app.registerExtension({
         let topSwitchEnabled = getSettingValue(SETTINGS.topSwitchEnabled, true) !== false;
         let floatButtonsEnabled = getSettingValue(SETTINGS.floatButtonsEnabled, true) !== false;
 
+        // 4 枚主开关（翻译 / 连接线 / 光效 / 分组）始终收进 GuliNodes 工具菜单（折叠在内），
+        // 顶栏只留开菜单的入口 + 迷你开关（收起工具栏 / 悬浮按钮），避免顶栏与 ComfyUI 自带及其它
+        // 扩展按钮挤在一起显得杂乱（用户 2026-11-09 要求：回退到重构前口径，可折叠的折叠在菜单里）。
+        // ggNarrow 仅用于窄屏下「4 枚主开关随其它入口一起进入菜单」的布局判定与二级页 resize 兜底，
+        // 不再影响这 4 枚在顶栏/菜单之间的落点（它们始终在菜单）。
+        let ggNarrow = window.matchMedia("(max-width: 1080px)").matches;
+
         let topSwitchHost = document.createElement("div");
         try {
             const { ComfyButtonGroup } = await import("../../scripts/ui/components/buttonGroup.js");
@@ -61,85 +68,199 @@ app.registerExtension({
         topSwitchHost.id = "gg-toolbar-top-switch";
         topSwitchHost.classList.add("gg-toolbar-top-switch-host");
 
+        const TOP_TOOL_SECTIONS = [
+            { id: "appearance", label: "节点外观" },
+            { id: "operations", label: "节点操作" },
+            { id: "workflow", label: "工作流辅助" },
+        ];
         const TOP_TOOL_GROUPS = [
-            { id: "gg-link-style-buttons", label: "连接线" },
-            { id: "gg-group-styler-button", label: "分组样式" },
-            { id: "gg-node-glow-buttons", label: "节点光效" },
-            { id: "gg-node-plugin-name-buttons", label: "插件名称" },
-            { id: "gg-port-list-toggle-button", label: "输入输出列表" },
-            { id: "gg-node-collapse-button", label: "节点折叠" },
-            { id: "gg-node-pin-button", label: "节点固定" },
-            { id: "gg-node-align-button", label: "移动对齐" },
-            { id: "gg-comfy-translate-buttons", label: "界面翻译" },
-            { id: "gg-taprelay-toggle-host", label: "完成通知" },
+            { id: "gg-widget-skin-buttons", label: "节点控件皮肤", section: "appearance", icon: "brush" },
+            { id: "gg-link-style-buttons", label: "连接线", section: "appearance", icon: "linkFlow" },
+            { id: "gg-group-styler-button", label: "分组样式", section: "appearance", icon: "node" },
+            { id: "gg-node-glow-buttons", label: "节点光效", section: "appearance", icon: "sparkle" },
+            { id: "gg-node-plugin-name-buttons", label: "插件名称", section: "appearance", icon: "tagName" },
+            { id: "gg-port-list-toggle-button", label: "输入输出列表", section: "operations", icon: "portList" },
+            { id: "gg-node-collapse-button", label: "节点折叠", section: "operations", icon: "nodeCollapse" },
+            { id: "gg-node-pin-button", label: "节点固定", section: "operations", icon: "nodePin" },
+            { id: "gg-node-align-button", label: "移动对齐", section: "operations", icon: "nodeAlign" },
+            { id: "gg-comfy-translate-buttons", label: "界面翻译", section: "workflow", icon: "translate" },
+            { id: "gg-taprelay-toggle-host", label: "完成通知", section: "workflow", icon: "bell" },
         ];
         const TOP_GROUP_IDS = new Set(TOP_TOOL_GROUPS.map((entry) => entry.id));
+        // 这 4 枚是「主开关」，始终收进 GuliNodes 工具菜单（折叠在内），顶栏不再常驻（见 applyPrimaryPlacement）。
+        const PRIMARY_TOP_GROUPS = new Set([
+            "gg-link-style-buttons",
+            "gg-node-glow-buttons",
+            "gg-group-styler-button",
+            "gg-comfy-translate-buttons",
+        ]);
         const TOP_DETAIL_PANEL_CONFIG = new Map([
-            ["gg-link-style-buttons", { trigger: 'button[title="连接线快速设置"]', panelId: "gg-link-style-panel" }],
-            ["gg-node-glow-buttons", { trigger: 'button[title="节点光效设置"]', panelId: "gg-node-glow-settings-panel" }],
-            ["gg-node-collapse-button", { trigger: 'button[title="节点折叠设置"]', panelId: "gg-node-collapse-settings-panel" }],
+            // 「节点控件皮肤」没有详情面板：三档开关直接做成行内分段控件
+            // （见 gg-widget-skin-settings.js），点行内按钮即切换，不再开第二层。
+            // 触发器用 aria-label 而非 title：ComfyUI 的 buttonGroup 会把按钮的
+            // title 清空（只保留 aria-label），窄屏把齿轮吸进菜单后 title 已为空，
+            // 用 title 匹配会导致点齿轮不触发二级页。
+            ["gg-link-style-buttons", { trigger: 'button[aria-label="连接线快速设置"]', panelId: "gg-link-style-panel", label: "连接线" }],
+            ["gg-node-glow-buttons", { trigger: 'button[aria-label="节点光效设置"]', panelId: "gg-node-glow-settings-panel", label: "节点光效" }],
+            ["gg-node-collapse-button", { trigger: 'button[aria-label="节点折叠设置"]', panelId: "gg-node-collapse-settings-panel", label: "节点折叠" }],
         ]);
         let topToolsMenu = null;
         let topToolsContent = null;
         let topToolsNav = null;
+        let topToolsHeader = null;
+        let topToolsSearch = null;
+        let topToolsHeaderCount = null;
+        let topToolsFooterCount = null;
+        let topToolsEmpty = null;
+        let topToolsBulkOff = null;
         let topToolsDetail = null;
         let topToolsButton = null;
         let topToolsGroup = null;
         let repositionTopToolsMenu = null;
         const topToolRows = new Map();
+        const topToolSections = new Map();
 
-        const closeTopDetailPanel = (panel) => {
+        // ---- 二级页侧滑（设计稿 5 ·03 行三态与二级页 / ·07 统一规格）----
+        // 设置不再向下撑开整行（那会把下面 8 行推到屏幕外），改为：点齿轮 →
+        // 二级页从右侧 180ms 滑入，同宽、头部 ‹ 返回，一级页原位不动。
+        // 菜单关闭时各模块仍用自浮动 popover（positionGlowSettingsPanel 等）。
+        let subpageToolId = null;
+        let subpageEl = null;
+        let subpageTitle = null;
+        let subpageBody = null;
+        // 打开二级页时记录当时的焦点元素（点齿轮即齿轮、键盘 Enter 即所在行），关闭时回退，
+        // 让键盘用户不丢失位置（设计稿 ·07）。
+        let subpageReturnFocus = null;
+        // 各模块按需登记「保证自己的二级页面板已存在」的回调；__ggToggleTopDetailSubpage
+        // 在打开二级页前调用，避免面板还没创建就挂进二级页。
+        const ggTopDetailEnsurers = new Map();
+        window.__ggRegisterTopDetailEnsurer = (toolId, fn) => {
+            if (toolId && typeof fn === "function") ggTopDetailEnsurers.set(toolId, fn);
+        };
+        // 加载顺序无关：特性模块（gg-node-glow / gg-port-list-toggle / gg-link-style 等）
+        // 按字母序早于本文件求值，那时本全局尚未定义，它们的 ensurer 注册会落到这里的待注册队列。
+        // 这里统一冲刷，保证键盘（Enter 打开二级页）路径也能拿到面板保证器。
+        (window.__ggPendingTopDetailEnsurers || []).forEach(([id, fn]) => {
+            if (id && typeof fn === "function") ggTopDetailEnsurers.set(id, fn);
+        });
+        window.__ggPendingTopDetailEnsurers = [];
+
+        const restoreTopDetailPanel = (panel) => {
             if (!panel) return;
-            if (panel.id === "gg-link-style-panel") {
-                if (panel.isConnected) panel.querySelector(".gg-link-style-close")?.click();
-                else panel.remove();
-            } else {
-                panel.style.display = "none";
-                const row = topToolRows.get(panel.dataset.ggTopDetailToolId);
-                row?.source?.querySelector('button[title="节点光效设置"]')?.classList.remove("active");
-            }
-            const row = topToolRows.get(panel.dataset.ggTopDetailToolId);
-            if (row) {
-                row.entry.dataset.expanded = "false";
-                row.detail.hidden = true;
-                row.row.setAttribute("aria-expanded", "false");
-            }
+            panel.style.display = "none";
+            panel.dataset.ggTopDetailPanel = "false";
+            panel.style.position = "";
+            panel.style.inset = "";
+            panel.style.left = ""; panel.style.top = ""; panel.style.right = "";
+            panel.style.width = ""; panel.style.maxWidth = "";
+            panel.style.maxHeight = ""; panel.style.margin = "";
+            if (panel.parentElement) panel.parentElement.removeChild(panel);
+            document.body.appendChild(panel);
         };
 
-        const closeTopDetailPanels = () => {
-            TOP_DETAIL_PANEL_CONFIG.forEach(({ panelId }) => {
-                closeTopDetailPanel(document.getElementById(panelId));
-            });
-        };
-
-        const embedTopDetailPanel = (toolId) => {
+        const openTopDetailSubpage = (toolId) => {
             const config = TOP_DETAIL_PANEL_CONFIG.get(toolId);
-            if (!config || !topToolsDetail) return false;
+            if (!config) return false;
             const panel = document.getElementById(config.panelId);
-            const row = topToolRows.get(toolId);
-            if (!panel || !row) return false;
+            if (!panel) return false;
+            // 首次打开（非切换）时记下当前焦点（点齿轮→齿轮、键盘 Enter→所在行），关闭时回退
+            if (!subpageToolId) subpageReturnFocus = document.activeElement;
+            // 若已有其它工具的二级页开着，先无感复位（让二级页始终只显示当前工具）
+            if (subpageToolId && subpageToolId !== toolId) {
+                const prevConfig = TOP_DETAIL_PANEL_CONFIG.get(subpageToolId);
+                if (prevConfig) restoreTopDetailPanel(document.getElementById(prevConfig.panelId));
+            }
+            applySurface(panel);
             panel.dataset.ggTopDetailPanel = "true";
             panel.dataset.ggTopDetailToolId = toolId;
-            if (panel.parentElement !== row.detail) row.detail.appendChild(panel);
             panel.style.position = "static";
             panel.style.inset = "auto";
-            panel.style.left = "";
-            panel.style.top = "";
-            panel.style.right = "";
-            panel.style.width = "100%";
-            panel.style.maxWidth = "none";
-            panel.style.maxHeight = "none";
-            panel.style.margin = "8px 0 0";
+            panel.style.left = ""; panel.style.top = ""; panel.style.right = "";
+            panel.style.width = "100%"; panel.style.maxWidth = "none";
+            panel.style.maxHeight = "none"; panel.style.margin = "0";
             panel.style.boxSizing = "border-box";
             panel.style.display = "block";
-            row.entry.dataset.expanded = "true";
-            row.detail.hidden = false;
-            row.row.setAttribute("aria-expanded", "true");
-            requestAnimationFrame(() => repositionTopToolsMenu?.());
+            if (panel.parentElement !== subpageBody) subpageBody.appendChild(panel);
+            subpageTitle.textContent = config.label || "";
+            subpageEl.dataset.open = "true";
+            topToolsMenu.dataset.subpageOpen = "true";
+            void subpageEl.offsetWidth; // 强制重排后再过渡，确保滑入动画触发
+            subpageEl.classList.add("gg-top-tools-subpage-open");
+            const row = topToolRows.get(toolId);
+            if (row) { row.entry.dataset.expanded = "true"; row.row.setAttribute("aria-expanded", "true"); }
+            subpageToolId = toolId;
+            syncTopToolsMenu();
+            // 展开态焦点自动落到二级页首个「可见」控件（设计稿 ·07）。
+            // 用 getClientRects 判定真实可见：元素自身 display 可能不是 none，但祖先被
+            // 嵌样式隐藏（如连接线面板的头部关闭钮）时仍拿不到焦点，必须跳过。
+            const focusEls = panel.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])");
+            let first = null;
+            for (const el of focusEls) {
+                const cs = getComputedStyle(el);
+                if (cs.visibility === "hidden") continue;
+                if (el.getClientRects().length === 0) continue;
+                first = el;
+                break;
+            }
+            if (first) requestAnimationFrame(() => first.focus?.());
             return true;
         };
 
+        const closeTopDetailSubpage = () => {
+            if (!subpageToolId) return false;
+            const toolId = subpageToolId;
+            const config = TOP_DETAIL_PANEL_CONFIG.get(toolId);
+            const panel = config && document.getElementById(config.panelId);
+            subpageEl.classList.remove("gg-top-tools-subpage-open");
+            subpageEl.dataset.open = "false";
+            topToolsMenu.dataset.subpageOpen = "false";
+            const row = topToolRows.get(toolId);
+            if (row) { row.entry.dataset.expanded = "false"; row.row.setAttribute("aria-expanded", "false"); }
+            subpageToolId = null;
+            syncTopToolsMenu();
+            // 焦点回退：菜单仍在就回触发控件（齿轮 / 所在行），菜单也要关就回顶栏入口；
+            // 回退目标若已不可见（如被收回 body 的面板），改回顶栏入口避免聚焦到隐藏元素。
+            const ret = subpageReturnFocus;
+            subpageReturnFocus = null;
+            if (ret && document.contains(ret)) {
+                const rcs = getComputedStyle(ret);
+                if (rcs.visibility !== "hidden" && ret.getClientRects().length > 0) {
+                    ret.focus?.();
+                } else if (topToolsMenu.dataset.open !== "true") {
+                    topToolsButton.focus?.();
+                }
+            } else if (topToolsMenu.dataset.open !== "true") {
+                topToolsButton.focus?.();
+            }
+            // 让内容随二级页一起滑走，过渡结束后再复位面板到 body 并隐藏
+            const finish = () => {
+                subpageEl.removeEventListener("transitionend", finish);
+                if (panel) restoreTopDetailPanel(panel);
+            };
+            subpageEl.addEventListener("transitionend", finish);
+            setTimeout(finish, 240); // 兜底：某些浏览器 transitionend 不一定触发
+            return true;
+        };
+
+        // 旧名保留（光效 / 折叠模块仍调用）：菜单打开时进二级页并返回 true（模块即不自浮动）；
+        // 菜单关闭时返回 false，模块退回自浮动 popover。
+        const embedTopDetailPanel = (toolId) => {
+            if (!topToolsMenu || topToolsMenu.dataset.open !== "true") return false;
+            return openTopDetailSubpage(toolId);
+        };
         window.__ggEmbedTopDetailPanel = embedTopDetailPanel;
+
+        // 齿轮 / 行 Enter 的统一开关：同一工具再点 → 关闭；否则打开。
+        window.__ggToggleTopDetailSubpage = (toolId) => {
+            if (subpageToolId === toolId) { closeTopDetailSubpage(); return false; }
+            ggTopDetailEnsurers.get(toolId)?.(toolId);
+            return openTopDetailSubpage(toolId);
+        };
+        window.__ggTopDetailSubpageOpen = (toolId) => subpageToolId === toolId;
+
+        const closeTopDetailPanels = () => {
+            if (subpageToolId) closeTopDetailSubpage();
+        };
 
         const clearTopGroupPosition = (element) => {
             element.classList.remove(
@@ -157,24 +278,100 @@ app.registerExtension({
             element.style.zIndex = "";
         };
 
+        const toolControlButtons = (source) => {
+            if (!source) return [];
+            const buttons = Array.from(source.querySelectorAll?.("button") || []);
+            if (source.matches?.("button")) buttons.unshift(source);
+            return buttons;
+        };
+
+        const getToolToggle = (source) => toolControlButtons(source).find((button) =>
+            button.classList.contains("gg-state-on")
+            || button.classList.contains("gg-state-off")
+            || button.hasAttribute("aria-pressed")
+        ) || null;
+
+        const isToolEnabled = (entry, source) => {
+            if (!source) return false;
+            if (entry.id === "gg-widget-skin-buttons") return source.dataset.scope !== "off";
+            const toggle = getToolToggle(source);
+            return !!toggle && (toggle.classList.contains("gg-state-on")
+                || toggle.getAttribute("aria-pressed") === "true");
+        };
+
+        const applyTopToolFilter = () => {
+            if (!topToolsSearch || !topToolsNav) return;
+            const query = topToolsSearch.value.trim().toLocaleLowerCase();
+            let visibleCount = 0;
+            for (const section of topToolSections.values()) {
+                let sectionCount = 0;
+                for (const entry of section.items.querySelectorAll(".gg-top-tool-entry")) {
+                    const available = entry.dataset.available === "true";
+                    const label = entry.dataset.searchLabel || "";
+                    const visible = available && (!query || label.includes(query));
+                    entry.hidden = !visible;
+                    if (visible) sectionCount += 1;
+                }
+                section.element.hidden = sectionCount === 0;
+                visibleCount += sectionCount;
+            }
+            if (topToolsEmpty) topToolsEmpty.hidden = visibleCount > 0;
+        };
+
         const syncTopToolsMenu = () => {
+            let enabledCount = 0;
             for (const [id, row] of topToolRows) {
                 const source = row.source;
                 const available = !!source;
-                row.entry.hidden = !available;
+                row.entry.dataset.available = String(available);
                 if (!available) continue;
+                const definition = TOP_TOOL_GROUPS.find((entry) => entry.id === id);
+                if (definition && isToolEnabled(definition, source)) enabledCount += 1;
                 const panel = document.getElementById(TOP_DETAIL_PANEL_CONFIG.get(id)?.panelId || "");
-                const expanded = !!panel && panel.parentElement === row.detail && panel.style.display !== "none";
+                // 二级页模式下不再用行内 detail 撑开；展开态只看面板是否挂在二级页
+                const expanded = !!panel && panel.dataset.ggTopDetailPanel === "true" && panel.style.display !== "none";
                 row.entry.dataset.expanded = expanded ? "true" : "false";
-                row.detail.hidden = !expanded;
+                row.detail.hidden = true;
                 row.row.setAttribute("aria-expanded", expanded ? "true" : "false");
             }
+            if (topToolsHeaderCount) topToolsHeaderCount.textContent = `${enabledCount} / ${TOP_TOOL_GROUPS.length}`;
+            if (topToolsFooterCount) topToolsFooterCount.textContent = `共 ${TOP_TOOL_GROUPS.length} 项 · 已启用 ${enabledCount} 项`;
+            applyTopToolFilter();
             repositionTopToolsMenu?.();
+        };
+
+        const disableAllSwitchTools = () => {
+            for (const definition of TOP_TOOL_GROUPS) {
+                // 分段皮肤选择不是开关；批量关闭只操作可识别的二态主开关，跳过动作按钮。
+                if (definition.id === "gg-widget-skin-buttons") continue;
+                const source = topToolRows.get(definition.id)?.source;
+                const toggle = getToolToggle(source);
+                if (toggle && (toggle.classList.contains("gg-state-on")
+                    || toggle.getAttribute("aria-pressed") === "true")) toggle.click();
+            }
+            requestAnimationFrame(syncTopToolsMenu);
         };
 
         window.__ggMountTopGroup = (element) => {
             if (!element || !topToolsDetail || !TOP_GROUP_IDS.has(element.id)) return false;
             if (element === topToolsGroup || element.contains(topToolsGroup)) return false;
+            // 4 枚主开关始终收进 GuliNodes 工具菜单（折叠在内），不再常驻顶栏：宽屏/窄屏都进菜单，
+            // 避免它们与 ComfyUI 自带及其它扩展按钮挤在顶栏显得杂乱（用户 2026-11-09 要求回退到重构前口径）。
+            // 关键点：这里直接落到下面的菜单吸收分支，并让菜单里对应行可见。
+            if (PRIMARY_TOP_GROUPS.has(element.id)) {
+                const row = topToolRows.get(element.id);
+                if (!row) return false;
+                clearTopGroupPosition(element);
+                if (element.parentElement !== row.controls) row.controls.appendChild(element);
+                element.style.setProperty("display", "inline-flex", "important");
+                element.dataset.ggTopToolSource = "true";
+                element.dataset.ggTopToolId = element.id;
+                element.dataset.ggTopGrouped = "true";
+                row.source = element;
+                row.entry.hidden = false;
+                syncTopToolsMenu();
+                return true;
+            }
             const row = topToolRows.get(element.id);
             if (!row) return false;
             clearTopGroupPosition(element);
@@ -189,6 +386,21 @@ app.registerExtension({
             row.entry.hidden = false;
             syncTopToolsMenu();
             return true;
+        };
+
+        // 4 枚主开关始终收进 GuliNodes 工具菜单（折叠在内），不再常驻顶栏：宽屏/窄屏都不吸顶栏，
+        // 避免顶栏与 ComfyUI 自带及其它扩展按钮挤在一起显得杂乱（用户 2026-11-09 要求回退到重构前口径）。
+        // 因此这里只保证它们落在菜单里，不再搬运到 topSwitchHost；ggNarrow 不再影响这 4 枚的落点。
+        const applyPrimaryPlacement = () => {
+            if (!topSwitchHost) return;
+            for (const id of PRIMARY_TOP_GROUPS) {
+                const el = document.getElementById(id);
+                if (!el) continue;
+                const inMenu = !!el.closest("#gg-top-tools-nav");
+                if (!inMenu) window.__ggMountTopGroup?.(el);
+            }
+            syncTopToolsMenu?.();
+            repositionTopToolsMenu?.();
         };
 
         const installTopToolsMenu = () => {
@@ -208,17 +420,19 @@ app.registerExtension({
                     margin-inline: 2px;
                     flex: 0 0 auto;
                 }
-                /* 尺寸比菜单内的 30px 开关略大，跟 ComfyUI 顶栏按钮齐平 */
+                /* 设计稿 13:26 定稿：G 标入口 34×34 / r9（比 4 枚 32px 开关大半号） */
                 #gg-top-tools-button {
                     width: 34px;
                     min-width: 34px;
                     height: 34px;
                     min-height: 34px;
+                    border-radius: 9px;
                     padding: 0;
                 }
                 #gg-top-tools-menu {
                     display: none;
                     padding: 8px;
+                    overflow: hidden; /* 二级页从右侧滑入时裁切，关闭后整页复位 */
                 }
                 #gg-top-tools-menu[data-open="true"] { display: block; }
                 #gg-top-tools-nav {
@@ -226,15 +440,28 @@ app.registerExtension({
                     min-height: 0;
                     padding: 0;
                 }
-                #gg-top-tools-nav::before {
-                    content: "GuliNodes 工具";
-                    display: block;
-                    padding: 2px 8px 7px;
-                    color: var(--gg-muted);
-                    font-size: 11px;
-                    font-weight: 700;
-                    letter-spacing: .2px;
+                #gg-top-tools-content {
+                    display: flex;
+                    flex-direction: column;
+                    min-width: 0;
+                    max-height: calc(100vh - 136px);
                 }
+                .gg-top-tools-header { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 0 2px 8px; }
+                .gg-top-tools-heading { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--gg-ink); font-size: 13px; font-weight: 700; }
+                .gg-top-tools-heading > .gg-ui-icon { color: var(--gg-accent); }
+                .gg-top-tools-count { margin-left: auto; padding: 3px 7px; border: 1px solid var(--gg-divider); border-radius: 999px; color: var(--gg-muted); background: var(--gg-card); font-size: 10.5px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+                .gg-top-tools-search-wrap { position: relative; display: flex; align-items: center; min-width: 0; }
+                .gg-top-tools-search-wrap > .gg-ui-icon { position: absolute; left: 9px; color: var(--gg-muted); pointer-events: none; }
+                .gg-top-tools-search-wrap input { width: 100%; height: 32px; padding: 0 34px 0 32px; border: 1px solid var(--gg-divider); border-radius: 7px; outline: none; color: var(--gg-ink); background: var(--gg-field); font: inherit; font-size: 12px; box-sizing: border-box; }
+                .gg-top-tools-search-wrap input:focus { border-color: var(--gg-accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--gg-accent) 20%, transparent); }
+                .gg-top-tools-search-wrap input::placeholder { color: var(--gg-muted); }
+                .gg-top-tools-search-wrap kbd { position: absolute; right: 8px; min-width: 17px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--gg-divider); border-radius: 4px; color: var(--gg-muted); background: var(--gg-card); font: 10px/1 ui-monospace, monospace; }
+                #gg-top-tools-nav { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-width: thin; scrollbar-color: var(--gg-divider) transparent; }
+                #gg-top-tools-nav::-webkit-scrollbar { width: 6px; }
+                #gg-top-tools-nav::-webkit-scrollbar-thumb { border-radius: 6px; background: var(--gg-divider); }
+                #gg-top-tools-nav .gg-top-tool-section[hidden] { display: none !important; }
+                #gg-top-tools-nav .gg-top-tool-section + .gg-top-tool-section { margin-top: 12px; }
+                #gg-top-tools-nav .gg-top-tool-section-title { margin: 0 8px 6px; color: var(--gg-muted); font-size: 9.5px; font-weight: 700; letter-spacing: .1em; line-height: 14px; }
                 #gg-top-tools-nav .gg-top-tool-entry {
                     display: block;
                     min-width: 0;
@@ -254,14 +481,16 @@ app.registerExtension({
                 }
                 #gg-top-tools-nav .gg-top-tool-row {
                     width: 100%;
-                    min-height: 40px;
+                    /* 设计稿 18:2124 规格表：菜单行高 34 / r8（原 40 / r7） */
+                    min-height: 34px;
                     display: grid;
-                    grid-template-columns: minmax(0, 1fr) auto;
+                    grid-template-columns: 15px minmax(78px, 1fr) minmax(0, auto);
                     align-items: center;
-                    gap: 10px;
-                    padding: 5px 8px;
+                    gap: 9px;
+                    min-height: 34px;
+                    padding: 2px 8px;
                     border: 0;
-                    border-radius: 7px;
+                    border-radius: 8px;
                     background: transparent;
                     color: var(--gg-ink);
                     text-align: left;
@@ -285,6 +514,15 @@ app.registerExtension({
                     font-size: 12.5px;
                     font-weight: 600;
                 }
+                #gg-top-tools-nav .gg-top-tool-row-icon {
+                    width: 15px;
+                    height: 15px;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: var(--gg-muted);
+                }
+                #gg-top-tools-nav .gg-top-tool-row-icon .gg-ui-icon { width: 15px; height: 15px; }
                 #gg-top-tools-nav .gg-top-tool-controls {
                     display: inline-flex;
                     min-width: 0;
@@ -306,24 +544,89 @@ app.registerExtension({
                 #gg-top-tools-nav [data-gg-top-tool-source] > button,
                 /* 有的功能把「按钮本身」交给工具箱托管（它自己就是 source 容器），
                    上面那条 width:auto 会把它压成图标的宽度（实测 19px）。
-                   下面这条用同等的 !important + 多一个 button 选择器把它拽回 30px。 */
+                   下面这条先给开关 / 齿轮控件统一尺寸，再按真实控件类型覆盖。 */
                 #gg-top-tools-nav button[data-gg-top-tool-source],
                 #gg-top-tools-nav [data-gg-top-tool-source] .gg-ui-top-button,
                 #gg-top-tools-nav [data-gg-top-tool-source] .gg-toolbar-top-button {
-                    width: 30px !important;
-                    min-width: 30px !important;
-                    max-width: 30px !important;
-                    height: 30px !important;
-                    min-height: 30px !important;
-                    max-height: 30px !important;
+                    width: 22px !important;
+                    min-width: 22px !important;
+                    max-width: 22px !important;
+                    height: 22px !important;
+                    min-height: 22px !important;
+                    max-height: 22px !important;
                     padding: 0 !important;
-                    border-radius: 7px !important;
+                    border-radius: 8px !important;
                     box-sizing: border-box !important;
                 }
                 #gg-top-tools-nav [data-gg-top-tool-source] .gg-ui-icon {
                     width: 17px;
                     height: 17px;
                 }
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-on,
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-off {
+                    position: relative;
+                    width: 30px !important;
+                    min-width: 30px !important;
+                    max-width: 30px !important;
+                    height: 17px !important;
+                    min-height: 17px !important;
+                    max-height: 17px !important;
+                    padding: 0 !important;
+                    overflow: hidden;
+                    border: 1px solid var(--gg-divider) !important;
+                    border-radius: 999px !important;
+                    background: var(--gg-divider) !important;
+                    color: transparent !important;
+                    box-shadow: none !important;
+                    cursor: pointer;
+                }
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-on {
+                    border-color: var(--gg-accent) !important;
+                    background: var(--gg-accent) !important;
+                }
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-on:hover,
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-off:hover { filter: brightness(1.08); }
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-on > *,
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-off > * { opacity: 0 !important; }
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-on::after,
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-off::after {
+                    content: "";
+                    position: absolute;
+                    top: 2px;
+                    left: 2px;
+                    width: 11px;
+                    height: 11px;
+                    border-radius: 50%;
+                    background: var(--gg-panel);
+                    transition: transform .14s ease;
+                    pointer-events: none;
+                }
+                #gg-top-tools-nav .gg-top-tool-controls button.gg-state-on::after { transform: translateX(13px); }
+                #gg-top-tools-nav .gg-top-tool-controls button[aria-label*="设置"] {
+                    width: 22px !important;
+                    min-width: 22px !important;
+                    max-width: 22px !important;
+                    height: 22px !important;
+                    min-height: 22px !important;
+                    max-height: 22px !important;
+                }
+                .gg-top-tools-empty { padding: 18px 8px; color: var(--gg-muted); text-align: center; font-size: 12px; }
+                .gg-top-tools-empty[hidden] { display: none !important; }
+                .gg-top-tools-footer {
+                    flex: 0 0 auto;
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 8px;
+                    margin-top: 8px;
+                    padding: 8px 2px 0;
+                    border-top: 1px solid var(--gg-divider);
+                    color: var(--gg-muted);
+                    font-size: 10.5px;
+                }
+                .gg-top-tools-bulk-off { padding: 4px 7px; border: 1px solid var(--gg-divider); border-radius: 6px; color: var(--gg-ink); background: var(--gg-btn); font: inherit; cursor: pointer; }
+                .gg-top-tools-bulk-off:hover { background: var(--gg-btn-hover); }
+                .gg-top-tools-bulk-off:focus-visible { outline: 2px solid var(--gg-accent); outline-offset: 1px; }
                 #gg-top-tools-nav .gg-top-tool-detail {
                     display: block;
                     min-width: 0;
@@ -341,6 +644,91 @@ app.registerExtension({
                     border-radius: 12px !important;
                     box-sizing: border-box !important;
                 }
+                #gg-top-tools-subpage-body #gg-node-glow-settings-panel > .gg-node-glow-settings-title,
+                #gg-top-tools-subpage-body #gg-node-collapse-settings-panel > .gg-collapse-settings-title {
+                    display: none !important;
+                }
+                /* 二级页（设计稿 5 ·03 行三态与二级页 / ·07 统一规格）：
+                   同宽、从右侧 180ms 滑入，覆盖一级页；头部 ‹ 返回，一级页原位不动。
+                   不做嵌套浮层——任何设置面板都挂进 body 内的二级页，不再浮动第二层。 */
+                #gg-top-tools-subpage {
+                    position: absolute;
+                    inset: 0;
+                    display: flex;
+                    flex-direction: column;
+                    box-sizing: border-box;
+                    border-radius: inherit;
+                    z-index: 2;
+                    transform: translateX(100%);
+                    opacity: 0;
+                    pointer-events: none;
+                    transition: transform .18s ease, opacity .12s ease;
+                }
+                #gg-top-tools-subpage.gg-top-tools-subpage-open {
+                    transform: translateX(0);
+                    opacity: 1;
+                    pointer-events: auto;
+                }
+                #gg-top-tools-subpage-header {
+                    position: relative;
+                    flex: 0 0 auto;
+                    height: 44px;
+                    min-height: 44px;
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 0 8px;
+                    border-bottom: 1px solid var(--gg-divider);
+                    box-sizing: border-box;
+                }
+                #gg-top-tools-subpage-back {
+                    display: inline-flex;
+                    align-items: center;
+                    gap: 1px;
+                    height: 30px;
+                    min-height: 30px;
+                    padding: 0 9px;
+                    border: 1px solid var(--gg-divider);
+                    border-radius: 8px;
+                    background: var(--gg-btn);
+                    color: var(--gg-ink);
+                    font: inherit;
+                    font-size: 12.5px;
+                    font-weight: 600;
+                    cursor: pointer;
+                }
+                #gg-top-tools-subpage-back:hover { background: var(--gg-btn-hover); }
+                #gg-top-tools-subpage-back:focus-visible {
+                    outline: 2px solid var(--gg-accent);
+                    outline-offset: -2px;
+                }
+                #gg-top-tools-subpage-title {
+                    position: absolute;
+                    left: 50%;
+                    top: 50%;
+                    transform: translate(-50%, -50%);
+                    max-width: calc(100% - 88px);
+                    min-width: 0;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                    text-align: center;
+                    font-size: 13px;
+                    font-weight: 700;
+                    pointer-events: none;
+                }
+                #gg-top-tools-subpage-body {
+                    flex: 1 1 auto;
+                    min-height: 0;
+                    overflow: auto;
+                    padding: 10px 12px;
+                    box-sizing: border-box;
+                }
+                /* 尊重系统“减少动态效果”偏好：二级页滑入/滑出改为瞬切，不做 180ms 位移与淡入，
+                   避免对动效敏感用户造成不适；关闭仍靠 240ms 兜底复位面板，行为不变。 */
+                @media (prefers-reduced-motion: reduce) {
+                    #gg-top-tools-subpage { transition: none; }
+                }
             `;
             document.head.appendChild(style);
 
@@ -352,6 +740,8 @@ app.registerExtension({
             topToolsButton.className = "gg-switch";
             topToolsButton.title = "GuliNodes 工具";
             topToolsButton.setAttribute("aria-label", "GuliNodes 工具");
+            // 动作 / 弹窗类按钮：气泡写「结果文案」而非状态（设计稿第 2 页 ·07）。
+            topToolsButton.dataset.ggBubbleAction = "打开 GuliNodes 工具菜单";
             topToolsButton.setAttribute("aria-expanded", "false");
             topToolsButton.innerHTML = ggIcon("toolGrid", 18);
             topToolsMenu = document.createElement("div");
@@ -362,31 +752,79 @@ app.registerExtension({
             topToolsMenu.setAttribute("role", "menu");
             topToolsContent = document.createElement("div");
             topToolsContent.id = "gg-top-tools-content";
+            topToolsHeader = document.createElement("div");
+            topToolsHeader.className = "gg-top-tools-header";
+            const headerTitle = document.createElement("div");
+            headerTitle.className = "gg-top-tools-heading";
+            headerTitle.innerHTML = `${ggIcon("toolGrid", 16)}<span>GuliNodes 工具</span>`;
+            topToolsHeaderCount = document.createElement("span");
+            topToolsHeaderCount.className = "gg-top-tools-count";
+            topToolsHeaderCount.textContent = `0 / ${TOP_TOOL_GROUPS.length}`;
+            headerTitle.appendChild(topToolsHeaderCount);
+            const searchWrap = document.createElement("label");
+            searchWrap.className = "gg-top-tools-search-wrap";
+            searchWrap.innerHTML = `${ggIcon("search", 15)}<input type="search" autocomplete="off" spellcheck="false" placeholder="搜索工具…" aria-label="搜索工具"><kbd>/</kbd>`;
+            topToolsSearch = searchWrap.querySelector("input");
+            topToolsSearch.addEventListener("input", applyTopToolFilter);
+            topToolsHeader.append(headerTitle, searchWrap);
             topToolsNav = document.createElement("div");
             topToolsNav.id = "gg-top-tools-nav";
             // Kept as a compatibility marker for extensions that only check that
             // the toolbar menu has been installed before mounting their controls.
             topToolsDetail = topToolsNav;
-            topToolsContent.appendChild(topToolsNav);
+            for (const definition of TOP_TOOL_SECTIONS) {
+                const section = document.createElement("section");
+                section.className = "gg-top-tool-section";
+                section.dataset.sectionId = definition.id;
+                const heading = document.createElement("div");
+                heading.className = "gg-top-tool-section-title";
+                heading.textContent = definition.label;
+                const items = document.createElement("div");
+                items.className = "gg-top-tool-section-items";
+                section.append(heading, items);
+                topToolsNav.appendChild(section);
+                topToolSections.set(definition.id, { element: section, heading, items });
+            }
+            topToolsEmpty = document.createElement("div");
+            topToolsEmpty.className = "gg-top-tools-empty";
+            topToolsEmpty.textContent = "没有匹配的工具";
+            topToolsEmpty.hidden = true;
+            topToolsNav.appendChild(topToolsEmpty);
+            const footer = document.createElement("div");
+            footer.className = "gg-top-tools-footer";
+            topToolsFooterCount = document.createElement("span");
+            topToolsFooterCount.textContent = `共 ${TOP_TOOL_GROUPS.length} 项 · 已启用 0 项`;
+            topToolsBulkOff = document.createElement("button");
+            topToolsBulkOff.type = "button";
+            topToolsBulkOff.className = "gg-top-tools-bulk-off";
+            topToolsBulkOff.textContent = "全部关闭";
+            topToolsBulkOff.addEventListener("click", disableAllSwitchTools);
+            footer.append(topToolsFooterCount, topToolsBulkOff);
+            topToolsContent.append(topToolsHeader, topToolsNav, footer);
             topToolsMenu.appendChild(topToolsContent);
             TOP_TOOL_GROUPS.forEach((entry) => {
                 const wrapper = document.createElement("div");
                 wrapper.className = "gg-top-tool-entry";
                 wrapper.dataset.toolId = entry.id;
                 wrapper.dataset.available = "false";
+                wrapper.dataset.searchLabel = entry.label.toLocaleLowerCase();
+                wrapper.dataset.controlType = entry.id === "gg-widget-skin-buttons"
+                    ? "segmented"
+                    : TOP_DETAIL_PANEL_CONFIG.has(entry.id) ? "switch-settings" : "switch";
                 wrapper.hidden = true;
                 const row = document.createElement("div");
                 row.className = "gg-top-tool-row";
                 row.setAttribute("role", "menuitem");
                 row.setAttribute("aria-expanded", "false");
-                row.innerHTML = `<span class="gg-top-tool-row-label"></span><span class="gg-top-tool-controls"></span>`;
+                row.tabIndex = -1; // 可聚焦但不进 Tab 序列，供 ↑/↓ 漫游
+                row.innerHTML = `<span class="gg-top-tool-row-icon">${ggIcon(entry.icon, 15)}</span><span class="gg-top-tool-row-label"></span><span class="gg-top-tool-controls"></span>`;
                 row.querySelector(".gg-top-tool-row-label").textContent = entry.label;
                 const detail = document.createElement("div");
                 detail.className = "gg-top-tool-detail";
                 detail.hidden = true;
                 detail.dataset.ggTopDetailSlot = entry.id;
                 wrapper.append(row, detail);
-                topToolsNav.appendChild(wrapper);
+                topToolSections.get(entry.section)?.items.appendChild(wrapper);
                 topToolRows.set(entry.id, {
                     entry: wrapper,
                     row,
@@ -398,17 +836,54 @@ app.registerExtension({
             // Keep the trigger in the top bar, but portal the menu to body. ComfyUI's
             // top button group can clip descendants or create a stacking context.
             topToolsGroup.append(topToolsButton);
+
+            // 二级页外壳：同宽滑入，覆盖一级页（设计稿 5 ·03 / ·07）。
+            subpageEl = document.createElement("div");
+            subpageEl.id = "gg-top-tools-subpage";
+            subpageEl.className = "gg-surface";
+            applySurface(subpageEl);
+            subpageEl.setAttribute("role", "group");
+            subpageEl.setAttribute("aria-label", "设置二级页");
+            subpageEl.dataset.open = "false";
+            const subpageHeader = document.createElement("div");
+            subpageHeader.className = "gg-top-tools-subpage-header";
+            subpageHeader.id = "gg-top-tools-subpage-header";
+            const subpageBack = document.createElement("button");
+            subpageBack.type = "button";
+            subpageBack.id = "gg-top-tools-subpage-back";
+            subpageBack.className = "gg-top-tools-subpage-back";
+            subpageBack.setAttribute("aria-label", "返回上一级");
+            subpageBack.innerHTML = `${ggIcon("chevronLeft", 16)}<span>返回</span>`;
+            subpageBack.addEventListener("click", () => closeTopDetailSubpage());
+            subpageTitle = document.createElement("div");
+            subpageTitle.className = "gg-top-tools-subpage-title";
+            subpageTitle.id = "gg-top-tools-subpage-title";
+            subpageHeader.append(subpageBack, subpageTitle);
+            subpageBody = document.createElement("div");
+            subpageBody.id = "gg-top-tools-subpage-body";
+            subpageBody.className = "gg-top-tools-subpage-body";
+            subpageEl.append(subpageHeader, subpageBody);
+            topToolsMenu.appendChild(subpageEl);
+            topToolsMenu.dataset.subpageOpen = "false";
+
             document.body.appendChild(topToolsMenu);
 
+            topToolsMenu.addEventListener("click", (event) => {
+                if (event.target.closest?.("[data-gg-top-tool-source]")) {
+                    requestAnimationFrame(syncTopToolsMenu);
+                }
+            }, true);
             topToolsMenu.addEventListener("click", (event) => {
                 const source = event.target.closest?.("[data-gg-top-tool-source]");
                 const toolId = source?.dataset.ggTopToolId;
                 const config = TOP_DETAIL_PANEL_CONFIG.get(toolId);
+                // 点齿轮 → 二级页侧滑（设计稿 5 ·03 / ·07）：不再向下撑开整行。
+                // 同一工具再点齿轮 → 关闭；由 __ggToggleTopDetailSubpage 统一裁决。
                 if (config && event.target.closest?.(config.trigger)) {
-                    requestAnimationFrame(() => {
-                        const panel = document.getElementById(config.panelId);
-                        if (panel && panel.style.display !== "none") embedTopDetailPanel(toolId);
-                    });
+                    event.preventDefault();
+                    event.stopPropagation();
+                    window.__ggToggleTopDetailSubpage?.(toolId);
+                    return;
                 }
                 requestAnimationFrame(syncTopToolsMenu);
                 event.stopPropagation();
@@ -417,7 +892,7 @@ app.registerExtension({
             const positionMenu = () => {
                 if (!topToolsMenu || topToolsMenu.dataset.open !== "true") return;
                 const rect = topToolsButton.getBoundingClientRect();
-                const menuWidth = Math.min(360, window.innerWidth - 16);
+                const menuWidth = Math.min(320, window.innerWidth - 16);
                 const left = Math.min(window.innerWidth - menuWidth - 8, Math.max(8, rect.left));
                 const belowTop = rect.bottom + 8;
                 const top = belowTop + topToolsMenu.offsetHeight <= window.innerHeight - 8
@@ -455,7 +930,66 @@ app.registerExtension({
                 ) setMenuOpen(false);
             }, true);
             document.addEventListener("keydown", (event) => {
-                if (event.key === "Escape" && topToolsMenu.dataset.open === "true") setMenuOpen(false);
+                if (topToolsMenu.dataset.open !== "true") return;
+                // 二级页打开时：Esc / ← 先退回一级页，绝不越过二级页直接关菜单（设计稿 ·07）
+                if (subpageToolId) {
+                    if (event.key === "Escape" || event.key === "ArrowLeft") {
+                        closeTopDetailSubpage();
+                        event.preventDefault();
+                        return;
+                    }
+                    // Tab / Shift+Tab 锁在二级页内：二级页覆盖一级页，键盘不能漏到背后被遮的一级页。
+                    // 只在边界（首/尾控件，或焦点已跑出二级页）处拦截回环；内部元素交给浏览器原生 Tab。
+                    if (event.key === "Tab" && subpageBody) {
+                        const f = Array.from(
+                            subpageBody.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])")
+                        ).filter((el) => getComputedStyle(el).visibility !== "hidden" && el.getClientRects().length > 0);
+                        if (!f.length) return;
+                        const first = f[0], last = f[f.length - 1];
+                        const active = document.activeElement;
+                        if (event.shiftKey) {
+                            if (active === first || !subpageEl.contains(active)) { event.preventDefault(); last.focus(); }
+                        } else {
+                            if (active === last || !subpageEl.contains(active)) { event.preventDefault(); first.focus(); }
+                        }
+                    }
+                    return;
+                }
+                if (event.key === "/" && !event.ctrlKey && !event.metaKey && !event.altKey
+                    && !event.target?.closest?.("input, textarea, select, [contenteditable='true']")) {
+                    event.preventDefault();
+                    topToolsSearch?.focus();
+                    return;
+                }
+                if (event.key === "Escape") { setMenuOpen(false); return; }
+                // 一级页：↑/↓ 在可见行间移动焦点，Enter / 空格展开二级页（有设置面板时）
+                const visibleRows = Array.from(
+                    topToolsNav.querySelectorAll(".gg-top-tool-entry:not([hidden]) > .gg-top-tool-row")
+                );
+                if (!visibleRows.length) return;
+                const activeIndex = visibleRows.indexOf(document.activeElement);
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                    event.preventDefault();
+                    const base = activeIndex < 0 ? 0 : activeIndex;
+                    const next = event.key === "ArrowDown"
+                        ? Math.min(visibleRows.length - 1, base + 1)
+                        : Math.max(0, base - 1);
+                    visibleRows[next].focus();
+                } else if (event.key === "Enter" || event.key === " ") {
+                    const row = document.activeElement?.closest?.(".gg-top-tool-row");
+                    if (row) {
+                        const id = row.closest(".gg-top-tool-entry")?.dataset.toolId;
+                        const cfg = id && TOP_DETAIL_PANEL_CONFIG.get(id);
+                        if (cfg) {
+                            event.preventDefault();
+                            window.__ggToggleTopDetailSubpage?.(id);
+                        } else {
+                            // 无二级页的纯开关行：焦点落到其 source 开关，由原生 Enter 触发
+                            const src = row.querySelector("[data-gg-top-tool-source]");
+                            if (src) src.focus();
+                        }
+                    }
+                }
             });
             window.addEventListener("resize", positionMenu);
             window.__ggTopToolsMenuOpen = () => topToolsMenu.dataset.open === "true";
@@ -473,6 +1007,17 @@ app.registerExtension({
         };
 
         installTopToolsMenu();
+
+        // 顶栏重构：宽/窄切换时搬运 4 枚主开关；同时用 rAF + 延时兜底，捕捉在本扩展之后才挂载的主开关组。
+        const ggNarrowMedia = window.matchMedia("(max-width: 1080px)");
+        ggNarrowMedia.addEventListener("change", (event) => {
+            ggNarrow = event.matches;
+            // 离开窄屏（→宽屏）时若二级页还开着，先收掉再搬运开关，避免面板被遗留在已隐藏的菜单里
+            if (!ggNarrow && subpageToolId) closeTopDetailSubpage();
+            applyPrimaryPlacement();
+        });
+        requestAnimationFrame(() => applyPrimaryPlacement());
+        setTimeout(() => applyPrimaryPlacement(), 1200);
 
         // 创建单个工具栏面板
         const panel = document.createElement("div");
@@ -681,7 +1226,8 @@ app.registerExtension({
             }
             /* 迷你按钮的配色交给设计层（.gg-ui-top-button），这里不再单写一份。 */
             #gg-toolbar-top-switch {
-                --gg-top-control-size: 34px;
+                /* 设计稿 13:26：顶栏 4 枚主开关 32×32 / r8（G 标入口见 #gg-top-tools-button 34 / r9） */
+                --gg-top-control-size: 32px;
                 --gg-top-control-radius: 8px;
                 /* 只在「顶栏宿主找不到、退回固定定位」时才用到，默认跟主题走 */
                 --gg-top-switch-bg: var(--gg-panel, rgba(23,27,36,0.94));
