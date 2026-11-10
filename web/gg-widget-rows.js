@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { paletteVars, detectHostTheme } from "./gg-ui-design.js";
+import { paletteVars, detectHostTheme, nodeColorTint, parseCssColor } from "./gg-ui-design.js";
 import { isWidgetSkinEnabled, onWidgetSkinScopeChange } from "./gg-skin-scope.js";
 
 // 单行多列布局引擎
@@ -35,21 +35,67 @@ const TEXT_FONT = "12px Inter, sans-serif";
 // 颜色全部取自 gg-ui-design 的 --gg-* 令牌，主题跟随宿主画布明暗，按秒缓存。
 // 只改观感：命中区完全沿用官方语义（数值左右 40px 增量、toggle/button 整格点击）。
 // ------------------------------------------------------------------
-let skinCache = null;
-let skinCacheAt = 0;
+// 按「主题 + 节点色」分别缓存：多色节点同屏时不能共用一条缓存，
+// 否则每画一个节点都要重建一次皮肤（61 个节点 × 每帧）。
+const skinCacheByKey = new Map();
 
-function skin() {
-    const now = Date.now();
-    if (skinCache && now - skinCacheAt < 1000) {
-        return skinCache;
+function readColorValue(value) {
+    if (typeof value === "string" && value.trim()) {
+        return value.trim();
     }
+    if (value && typeof value === "object") {
+        for (const key of ["body", "title", "color"]) {
+            const text = value[key];
+            if (typeof text === "string" && text.trim()) {
+                return text.trim();
+            }
+        }
+    }
+    return "";
+}
+
+// 节点自定义颜色：ComfyUI / LiteGraph 把标题色放 `color`、正文底放 `bgcolor`。
+// 必须优先读 `renderingBgColor`：前端会按主题把节点色重新调亮再绘制
+// （light 主题 nodeLightness=0.5，`#353` 实际画成 hsla(120,25%,76.7%)），
+// 直接拿 bgcolor 原值会得到未渲染的深色，控件看起来就像蒙了一层黑。
+// 未设颜色的节点返回空串，继续走主题调色板。
+export function nodeColorValue(node) {
+    const custom = readColorValue(node?.bgcolor) || readColorValue(node?.color);
+    if (!custom || !parseCssColor(custom)) {
+        return "";
+    }
+    try {
+        const rendered = readColorValue(node?.renderingBgColor);
+        if (rendered && parseCssColor(rendered)) {
+            return rendered;
+        }
+    } catch {
+        // 老前端没有 renderingBgColor，退回原始颜色
+    }
+    return custom;
+}
+
+export function skinColorsFor(node) {
+    return skin(node);
+}
+
+function skin(node = null) {
+    const now = Date.now();
     const mode = detectHostTheme();
+    const color = nodeColorValue(node);
+    // 缓存必须同时看「主题 + 节点色」：同一工作流里不同颜色的节点要各自取色，
+    // 只按主题缓存会让后画的节点沿用前一个节点的配色。
+    const key = `${mode}|${color}`;
+    const cached = skinCacheByKey.get(key);
+    if (cached && now - cached.at < 1000) {
+        return cached.value;
+    }
     const vars = paletteVars(mode);
     const dark = mode !== "light";
     const pick = (name, fallback) => vars[name] ?? fallback;
     // fallback 与 gg-ui-design.js 的 PALETTES 定稿值同源（2026-11-08 设计稿落地）。
     // 只在 CSS 变量尚未注入时生效，但两处不同步会让首帧出现旧蓝 / 新蓝混色。
-    skinCache = {
+    const base = {
         field: pick("--gg-field", dark ? "#0F131B" : "#FFFFFF"),
         divider: pick("--gg-divider", dark ? "#262F3D" : "#DDE5F0"),
         ink: pick("--gg-ink", dark ? "#EEF2F8" : "#16202E"),
@@ -66,8 +112,14 @@ function skin() {
         pickedBg: pick("--gg-picked-bg", dark ? "#1B3466" : "#DCE9FD"),
         ok: pick("--gg-ok", dark ? "#3DD68C" : "#059669"),
     };
-    skinCacheAt = now;
-    return skinCache;
+    // 节点有自定义颜色时整块控件跟着色相走：改节点颜色，参数背景立即同步。
+    const tint = color ? nodeColorTint(color, mode) : null;
+    const value = tint ? { ...base, ...tint } : base;
+    if (skinCacheByKey.size > 64) {
+        skinCacheByKey.clear();
+    }
+    skinCacheByKey.set(key, { at: now, value });
+    return value;
 }
 
 // 可皮肤化的控件：canvas 自绘、单行、无 DOM 元素。多行文本 / 图像预览 /
@@ -192,7 +244,7 @@ export function paintCapsuleBase(ctx, x, y, w, h, showText, emphasize = false, n
         ctx.restore();
         return;
     }
-    const C = skin();
+    const C = skin(node);
     ctx.save();
     ctx.font = TEXT_FONT;
     ctx.save();
@@ -225,7 +277,7 @@ function drawSkinned(ctx, node, widget, column, showText, hovered) {
     if (!isWidgetSkinEnabled(node) || !skinnable(widget)) {
         return false;
     }
-    const C = skin();
+    const C = skin(node);
     const type = String(widget.type ?? "").toLowerCase();
     // 列矩形两侧各带一个 margin（SIDE），形状本体只占中间那段 need：
     //   rect.x = cursor - SIDE, rect.w = need + SIDE*2, cursor += need + colGap
@@ -1761,7 +1813,7 @@ export function applyRowLayout(node) {
             for (const header of state.headers ?? []) {
                 ctx.save();
                 ctx.font = TEXT_FONT;
-                const colors = isWidgetSkinEnabled(this) ? skin() : widgetBaseColors();
+                const colors = isWidgetSkinEnabled(this) ? skin(this) : widgetBaseColors();
                 ctx.fillStyle = colors.muted;
                 ctx.textAlign = "left";
                 ctx.textBaseline = "middle";

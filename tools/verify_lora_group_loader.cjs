@@ -732,6 +732,72 @@ const isOwnModuleError = (text) => OWN_MODULE.test(String(text));
   check('再点一次能切回启用', onState.loraValues[0].enable === true,
     onState.loraValues[0]);
 
+  // ---------------------------------------------------------------- H 空槽自动收回 / 组改名
+  // 与「GG LoRA自定义加载」一致：名称选 None 的空槽自动收掉，后面的槽位前移。
+  await seedGroups([{
+    id: 1, name: 'LoRA组1',
+    loras: [
+      { enable: true, name: 'COMPACT_A.safetensors', strength: 0.8 },
+      { enable: false, name: 'COMPACT_B.safetensors', strength: 1.2 },
+    ],
+  }]);
+  // loadGraphData 会重建节点实例；readState 负责把 window.__ggNode 指向
+  // 真正挂在图上的那一个，否则后面会操作到已经脱离画布的旧对象（假 FAIL）。
+  state = await readState();
+  await page.evaluate(() => {
+    const n = window.__ggNode;
+    const w = n.widgets.find((x) => x.name === 'LoRA1名称');
+    if (!w) return;
+    w.value = 'None';
+    // 真实下拉选中后会走控件 callback，这里按同一入口触发。
+    w.callback?.('None', w, n);
+    window.app.canvas.draw(true, true);
+  });
+  await sleep(320);
+  const compacted = await readState();
+  check('选到 None 后空槽自动收回（2 行变 1 行，后一行前移）',
+    Number(compacted.visibleCount) === 1
+      && compacted.loraValues[0].name === 'COMPACT_B.safetensors'
+      && Number(compacted.loraValues[0].strength) === 1.2
+      && compacted.loraValues[0].enable === false
+      && compacted.loraValues[1].name === 'None',
+    compacted.loraValues);
+  check('收回后的组数据同步写进 properties（切组 / 读档不会带回空槽）',
+    compacted.groups[0]?.loras?.length === 1
+      && compacted.groups[0].loras[0].name === 'COMPACT_B.safetensors',
+    compacted.groups[0]?.loras);
+  check('收回空槽后节点高度同步贴合，不残留一行空白',
+    compacted.size[1] < state.size[1],
+    { before: state.size, after: compacted.size });
+
+  // 右键组标签改名：覆盖 canvas.prompt，模拟用户输入后回车。
+  await page.evaluate(() => {
+    window.__ggPromptCalls = [];
+    window.app.canvas.prompt = (title, value, callback) => {
+      window.__ggPromptCalls.push([title, value]);
+      callback('风景组');
+    };
+  });
+  state = await readState();
+  const renameTab = state.geometry.tabs[0];
+  const [renameX, renameY] = await toScreen(
+    [renameTab.x + renameTab.w / 2, renameTab.y + renameTab.h / 2]);
+  await page.mouse.click(renameX, renameY, { button: 'right' });
+  await sleep(300);
+  const renamed = await readState();
+  const promptCalls = await page.evaluate(() => window.__ggPromptCalls);
+  check('右键组标签弹出「组名称」并用输入值改写 properties',
+    promptCalls.length === 1 && promptCalls[0][0] === '组名称'
+      && promptCalls[0][1] === 'LoRA组1'
+      && renamed.groupNames[0] === '风景组',
+    { promptCalls, names: renamed.groupNames });
+  const contextMenuShown = await page.evaluate(() => {
+    const el = document.querySelector('.litecontextmenu');
+    return !!el && el.offsetParent !== null;
+  });
+  check('右键组标签不会同时弹出画布 / 节点的原生右键菜单',
+    contextMenuShown === false, { contextMenuShown });
+
   // ---------------------------------------------------------------- I 异常与资源
   check('全程无页面脚本异常（外部扩展启动噪音单独归类）',
     errors.length === 0, errors.slice(0, 6));

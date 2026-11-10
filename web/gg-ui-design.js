@@ -138,6 +138,29 @@ const NAMED_COLORS = {
   silver: [192, 192, 192],
 };
 
+function hslToRgb(hue, saturation, lightness) {
+  const h = (((Number(hue) % 360) + 360) % 360) / 360;
+  const s = Math.min(1, Math.max(0, Number(saturation) || 0));
+  const l = Math.min(1, Math.max(0, Number(lightness) || 0));
+  if (s === 0) {
+    const value = Math.round(l * 255);
+    return [value, value, value];
+  }
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const channel = (t) => {
+    let x = t;
+    if (x < 0) x += 1;
+    if (x > 1) x -= 1;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  };
+  return [channel(h + 1 / 3), channel(h), channel(h - 1 / 3)]
+    .map((value) => Math.round(value * 255));
+}
+
 export function parseCssColor(value) {
   const text = String(value || "").trim().toLowerCase();
   if (!text) return null;
@@ -153,6 +176,16 @@ export function parseCssColor(value) {
     const parts = rgb[1].split(/[,\s/]+/u).filter(Boolean).slice(0, 3).map(Number);
     if (parts.length === 3 && parts.every((part) => Number.isFinite(part))) return parts;
   }
+  // ComfyUI 会把节点颜色按主题重新计算后再画（light 主题 nodeLightness=0.5），
+  // 得到的是 hsla(...)；只认 hex/rgb 会把这类颜色直接判成「未设颜色」。
+  const hsl = text.match(/^hsla?\(([^)]+)\)$/u);
+  if (hsl) {
+    const parts = hsl[1].split(/[,\s/]+/u).filter(Boolean).slice(0, 3)
+      .map((part) => Number.parseFloat(part));
+    if (parts.length === 3 && parts.every((part) => Number.isFinite(part))) {
+      return hslToRgb(parts[0], parts[1] / 100, parts[2] / 100);
+    }
+  }
   return null;
 }
 
@@ -162,6 +195,67 @@ export function relativeLuminance([r, g, b]) {
     return scaled <= 0.03928 ? scaled / 12.92 : ((scaled + 0.055) / 1.055) ** 2.4;
   };
   return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+/** 按 t（0~1）把 a 混向 b；用于从节点色派生控件底色，保留色相只调明度。 */
+export function mixColor(a, b, t) {
+  const from = a || [0, 0, 0];
+  const to = b || [0, 0, 0];
+  const ratio = Math.min(1, Math.max(0, Number(t) || 0));
+  return [0, 1, 2].map((index) => Math.round(
+    from[index] * (1 - ratio) + to[index] * ratio,
+  ));
+}
+
+export function rgbToHex(rgb) {
+  const [r, g, b] = rgb || [0, 0, 0];
+  return `#${[r, g, b].map((value) => Math.min(255, Math.max(0, Math.round(value)))
+    .toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * 从节点自定义颜色派生一套控件皮肤：保留节点色相，只调整明度保证控件可读。
+ * 节点色为空 / `transparent` / 无法解析时返回 null，调用方回退到主题调色板。
+ * 走深底还是浅底由节点自身明度决定，不跟宿主主题——深色节点在浅色主题里
+ * 也应该是一块同色相的深控件，否则「改了节点颜色、参数还是另一套配色」。
+ */
+export function nodeColorTint(color, mode = "dark") {
+  const base = parseCssColor(color);
+  if (!base) return null;
+  const palette = PALETTES[mode === "light" ? "light" : "dark"];
+  const white = [255, 255, 255];
+  const black = [0, 0, 0];
+  const mix = (target, ratio) => mixColor(base, target, ratio);
+  const darkControls = relativeLuminance(base) < 0.45;
+  if (darkControls) {
+    return {
+      field: rgbToHex(mix(black, 0.42)),
+      labelBg: rgbToHex(mix(black, 0.28)),
+      btn: rgbToHex(mix(black, 0.30)),
+      btnHover: rgbToHex(mix(white, 0.08)),
+      divider: rgbToHex(mix(white, 0.22)),
+      ink: rgbToHex(mix(white, 0.92)),
+      muted: rgbToHex(mix(white, 0.62)),
+      faint: rgbToHex(mix(white, 0.42)),
+      pickedBg: rgbToHex(mixColor(parseCssColor(palette.pickedBg), base, 0.28)),
+      shadow: "rgba(0,0,0,0.55)",
+      highlight: "rgba(255,255,255,0.10)",
+    };
+  }
+  return {
+    // 浅色节点不要冲成近白：保留 45% 节点色，控件才看得出「跟着节点」。
+    field: rgbToHex(mix(white, 0.55)),
+    labelBg: rgbToHex(mix(white, 0.42)),
+    btn: rgbToHex(mix(white, 0.45)),
+    btnHover: rgbToHex(mix(white, 0.32)),
+    divider: rgbToHex(mix(black, 0.22)),
+    ink: rgbToHex(mix(black, 0.85)),
+    muted: rgbToHex(mix(black, 0.60)),
+    faint: rgbToHex(mix(black, 0.42)),
+    pickedBg: rgbToHex(mixColor(parseCssColor(palette.pickedBg), white, 0.25)),
+    shadow: "rgba(28,40,62,0.24)",
+    highlight: "rgba(255,255,255,0.85)",
+  };
 }
 
 export function detectHostTheme() {

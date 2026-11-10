@@ -1,5 +1,5 @@
 import { app } from "../../scripts/app.js";
-import { registerRowLayout, refreshRowLayout, paintCapsuleBase, widgetBaseColors } from "./gg-widget-rows.js";
+import { registerRowLayout, refreshRowLayout, paintCapsuleBase, widgetBaseColors, skinColorsFor } from "./gg-widget-rows.js";
 import { isWidgetSkinEnabled } from "./gg-skin-scope.js";
 
 // ==================================================================
@@ -94,10 +94,9 @@ function markDirty(node) {
 }
 
 // ------------------------------------------------------------------
-// 主题色：与 gg-widget-rows.js 的 --gg-* 令牌同源，明暗主题都能读。
+// 主题色：与 gg-widget-rows.js 共用同一套皮肤取色（含节点自定义颜色），
+// 节点改色后组标签 / 名称格 / 启用格跟着同步，不再固定成深色。
 // ------------------------------------------------------------------
-let themeCache = { at: 0, value: null };
-
 function canvasIsDark() {
     const raw = String(app.canvas?.clear_background_color ?? "");
     const match = raw.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/);
@@ -105,14 +104,6 @@ function canvasIsDark() {
         return true;
     }
     return 0.299 * Number(match[1]) + 0.587 * Number(match[2]) + 0.114 * Number(match[3]) < 128;
-}
-
-function cssVar(name, fallback) {
-    try {
-        return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
-    } catch {
-        return fallback;
-    }
 }
 
 function theme(node, widget) {
@@ -124,26 +115,18 @@ function theme(node, widget) {
             btnHover: colors.field, pickedBg: colors.field, danger: colors.ink,
         };
     }
-    const now = Date.now();
-    if (themeCache.value && now - themeCache.at < 1000) {
-        return themeCache.value;
-    }
-    const dark = canvasIsDark();
-    themeCache = {
-        at: now,
-        value: {
-            dark,
-            ink: cssVar("--gg-ink", dark ? "#EEF2F8" : "#16202E"),
-            muted: cssVar("--gg-muted", dark ? "#97A3B6" : "#4A5A72"),
-            divider: cssVar("--gg-divider", dark ? "#262F3D" : "#DDE5F0"),
-            accent: cssVar("--gg-accent", dark ? "#4C8DFF" : "#2563EB"),
-            btn: cssVar("--gg-btn", dark ? "#222C3E" : "#EEF2F8"),
-            btnHover: cssVar("--gg-btn-hover", dark ? "#2C384C" : "#E1E8F4"),
-            pickedBg: cssVar("--gg-picked-bg", dark ? "#1B3466" : "#DCE9FD"),
-            danger: "#E05555",
-        },
+    const skin = skinColorsFor(node);
+    return {
+        dark: canvasIsDark(),
+        ink: skin.ink,
+        muted: skin.muted,
+        divider: skin.divider,
+        accent: skin.accent,
+        btn: skin.btn,
+        btnHover: skin.btnHover,
+        pickedBg: skin.pickedBg,
+        danger: "#E05555",
     };
-    return themeCache.value;
 }
 
 // ------------------------------------------------------------------
@@ -262,6 +245,33 @@ function saveCurrentGroup(node) {
     const loras = snapshotSlots(node);
     groups[index] = { ...groups[index], loras: loras.length ? loras : [emptyLora()] };
     writeGroups(node, groups);
+}
+
+// 选到 None 的空槽自动收掉：与「GG LoRA自定义加载」同一行为。
+// 启用状态跟着槽位一起前移，最后写回当前组，切组 / 读档都不会把空槽带回来。
+function compactSlots(node) {
+    const active = [];
+    for (let index = 1; index <= MAX_LORAS; index += 1) {
+        const { enable, name, strength } = getPair(node, index);
+        const loraName = String(name?.value ?? "None");
+        if (loraName === "None") {
+            continue;
+        }
+        active.push({
+            enable: enable ? Boolean(enable.value) : true,
+            name: loraName,
+            strength: strength?.value ?? 1.0,
+        });
+    }
+    for (let index = 1; index <= MAX_LORAS; index += 1) {
+        const slot = active[index - 1];
+        writeWidget(node, `LoRA${index}${NAME_SUFFIX}`, slot?.name ?? "None");
+        writeWidget(node, `LoRA${index}${STRENGTH_SUFFIX}`, slot ? slot.strength : 1.0);
+        writeWidget(node, `LoRA${index}${ENABLE_SUFFIX}`, slot ? slot.enable : true);
+    }
+    setVisibleCount(node, active.length);
+    updateSlotVisibility(node);
+    saveCurrentGroup(node);
 }
 
 function applyGroup(node, group) {
@@ -1145,9 +1155,15 @@ function installSlotCallbacks(node) {
             const original = widget.callback;
             widget.callback = function (value, ...args) {
                 original?.call(this, value, ...args);
+                const isName = String(this.name ?? "").endsWith(NAME_SUFFIX);
                 // 换了模型名就回到「左右省略」的初始态，别留着上一条的平移量。
-                if (String(this.name ?? "").endsWith(NAME_SUFFIX)) {
+                if (isName) {
                     this._ggNameScroll = 0;
+                }
+                // 选到 None 直接收掉这一行，和「GG LoRA自定义加载」一致。
+                if (isName && value === "None") {
+                    compactSlots(node);
+                    return;
                 }
                 refreshNode(node);
             };
@@ -1349,7 +1365,85 @@ function scrollBy(node, delta) {
     markDirty(node);
 }
 
+// ------------------------------------------------------------------
+// 组重命名：右键组标签（或键盘菜单键）弹出改名输入框。
+// 右键同时也要挡住画布 / 节点的原生右键菜单，所以 pointerdown 与
+// contextmenu 都拦，指针按下时置一个短窗口给紧随其后的 contextmenu。
+// ------------------------------------------------------------------
+let suppressContextMenuUntil = 0;
+
+function locateGroupTab(event) {
+    const pos = eventToGraph(event);
+    if (!pos) {
+        return null;
+    }
+    for (const node of groupNodes()) {
+        const lx = pos[0] - node.pos[0];
+        const ly = pos[1] - node.pos[1];
+        const hit = hitGroupBar(node, lx, ly);
+        if (hit && (hit.kind === "group-select" || hit.kind === "group-delete")) {
+            return { node, index: hit.index };
+        }
+    }
+    return null;
+}
+
+function renameGroup(node, index, event) {
+    if (!node) {
+        return;
+    }
+    // 先把当前控件写回旧组：用户可能刚改完还没切组，直接序列化会丢这次编辑。
+    saveCurrentGroup(node);
+    const groups = readGroups(node);
+    const group = groups[index];
+    if (!group) {
+        return;
+    }
+    const apply = (text) => {
+        const name = String(text ?? "").trim().slice(0, 24);
+        if (!name) {
+            return;
+        }
+        group.name = name;
+        writeGroups(node, groups);
+        markDirty(node);
+    };
+    if (typeof app.canvas?.prompt === "function") {
+        app.canvas.prompt("组名称", group.name, apply, event);
+    } else {
+        const text = globalThis.prompt?.("组名称", group.name);
+        if (text != null) {
+            apply(text);
+        }
+    }
+}
+
+function onContextMenu(event) {
+    if (Date.now() < suppressContextMenuUntil) {
+        event.stopImmediatePropagation();
+        event.preventDefault();
+        return;
+    }
+    const hit = locateGroupTab(event);
+    if (!hit) {
+        return;
+    }
+    event.stopImmediatePropagation();
+    event.preventDefault();
+    renameGroup(hit.node, hit.index, event);
+}
+
 function onPointerDown(event) {
+    if (event.button === 2) {
+        const hit = locateGroupTab(event);
+        if (hit) {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+            suppressContextMenuUntil = Date.now() + 500;
+            renameGroup(hit.node, hit.index, event);
+        }
+        return;
+    }
     if (event.button !== 0) {
         return;
     }
@@ -1528,6 +1622,7 @@ function installPointerHandlers() {
     }
     canvas._ggLoraGroupPointerInstalled = true;
     canvas.addEventListener("pointerdown", onPointerDown, true);
+    canvas.addEventListener("contextmenu", onContextMenu, true);
     canvas.addEventListener("wheel", onWheel, true);
     window.addEventListener("pointermove", onPointerMove, true);
     window.addEventListener("pointerup", onPointerUp, true);

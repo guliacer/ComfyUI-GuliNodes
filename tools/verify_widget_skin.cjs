@@ -3,7 +3,8 @@
 //   ② 每个胶囊都带投影（fill 时 shadowBlur > 0 且 shadowColor 非透明）；
 //   ③ 参数名「提示区」有独立底色块（labelBg 填充），与右侧实际取值区分；
 //   ④ 皮肤同步到所有节点：没登记行布局的 GG 节点 / 第三方节点也吃到同一套；
-//   ⑤ 换肤不动尺寸、不动命中区、不误伤 DOM 面板与多行文本。
+//   ⑤ 换肤不动尺寸、不动命中区、不误伤 DOM 面板与多行文本；
+//   ⑥ 控件底色跟随节点自定义颜色（深色节点深底浅字、浅色节点浅底深字）。
 // 运行：NODE_PATH=C:/Users/Admin/.workbuddy/binaries/node/workspace/node_modules \
 //       node tools/verify_widget_skin.cjs
 //
@@ -55,7 +56,17 @@ function check(name, ok, detail = "") {
     // 在任何页面脚本之前挂钩 canvas，记录每次 fill 的投影与填充色。
     await page.addInitScript(() => {
         window.__ggSkinFills = [];
+        window.__ggSkinTexts = [];
         const proto = CanvasRenderingContext2D.prototype;
+        const originalText = proto.fillText;
+        proto.fillText = function (...args) {
+            try {
+                window.__ggSkinTexts.push(String(this.fillStyle || "").toLowerCase());
+            } catch {
+                // 探针本身不能影响绘制
+            }
+            return originalText.apply(this, args);
+        };
         const original = proto.fill;
         proto.fill = function (...args) {
             try {
@@ -211,6 +222,80 @@ function check(name, ok, detail = "") {
     check("换肤不改任何节点尺寸", sizeChanged.length === 0, sizeChanged.join(" | "));
     check("官方命中区仍返回正确控件", report.hitName === "sampler_name", `hit=${report.hitName}`);
     check("无页面异常", pageErrors.length === 0, JSON.stringify(pageErrors));
+
+    // 节点自定义颜色：控件底要跟着节点「实际渲染出来的颜色」走，而不是固定深蓝。
+    // 浅色主题会先把节点色按 nodeLightness 调亮再画（#353 → hsla(120,25%,76.7%)），
+    // 探针必须同时覆盖浅色 / 深色两种 nodeLightness，才能抓住「控件像蒙了一层黑」。
+    const colorSkin = await page.evaluate(async () => {
+        const app = window.app;
+        const node = (app.graph._nodes ?? []).find((item) => item?.comfyClass === "GGPromptOptimizer")
+            ?? (app.graph._nodes ?? []).find((item) => item?.comfyClass === "KSampler");
+        if (!node) return null;
+        const originalLightness = window.LiteGraph?.nodeLightness;
+        const toRgb = (color) => {
+            const ctx = document.createElement("canvas").getContext("2d");
+            ctx.fillStyle = color;
+            const normalized = String(ctx.fillStyle);
+            if (normalized.startsWith("#")) {
+                return [1, 3, 5].map((index) => parseInt(normalized.slice(index, index + 2), 16));
+            }
+            const match = normalized.match(/rgba?\(([^)]+)\)/);
+            if (match) {
+                return match[1].split(/[,\s/]+/).filter(Boolean).slice(0, 3).map(Number);
+            }
+            return [0, 0, 0];
+        };
+        const sample = async (color) => {
+            node.bgcolor = color;
+            node.color = color;
+            window.__ggSkinFills = [];
+            window.__ggSkinTexts = [];
+            app.canvas.draw(true, true);
+            await new Promise((resolve) => setTimeout(resolve, 120));
+            return {
+                rendered: toRgb(node.renderingBgColor),
+                fields: [...new Set(window.__ggSkinFills
+                    .filter((fill) => fill.shadowDrop && fill.blur >= 6)
+                    .map((fill) => fill.fillStyle)
+                    .filter((value) => /^#[0-9a-f]{6}$/.test(value)))],
+                texts: [...new Set(window.__ggSkinTexts
+                    .filter((value) => /^#[0-9a-f]{6}$/.test(value)))],
+            };
+        };
+        const light = {
+            brown: await sample("#6b3f3f"),
+            teal: await sample("#2f5d6b"),
+            cream: await sample("#e8d9b0"),
+        };
+        if (window.LiteGraph) window.LiteGraph.nodeLightness = 0;
+        const dark = {
+            brown: await sample("#6b3f3f"),
+            teal: await sample("#2f5d6b"),
+        };
+        if (window.LiteGraph) window.LiteGraph.nodeLightness = originalLightness;
+        return { light, dark, originalLightness };
+    });
+    const hexRgb = (hex) => [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16));
+    const lum = ([r, g, b]) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    const isBrownHue = ([r, g, b]) => r >= g + 4 && r >= b + 4;
+    const isTealHue = ([r, g, b]) => b >= r + 4 && g >= r + 3;
+    const lighterThanNode = (sample, hueTest) => sample.fields
+        .map(hexRgb)
+        .some((rgb) => hueTest(rgb) && lum(rgb) > lum(sample.rendered) + 0.05);
+    const darkerThanNode = (sample, hueTest) => sample.fields
+        .map(hexRgb)
+        .some((rgb) => hueTest(rgb) && lum(rgb) < lum(sample.rendered) - 0.03);
+    check("浅色节点的控件底是更浅的同色相（不再像蒙了一层黑）",
+        colorSkin?.light?.brown && lighterThanNode(colorSkin.light.brown, isBrownHue)
+          && lighterThanNode(colorSkin.light.teal, isTealHue),
+        `brown=${JSON.stringify(colorSkin?.light?.brown?.rendered)} fields=${(colorSkin?.light?.brown?.fields ?? []).slice(0, 6)}`);
+    check("深色节点的控件底是更深的同色相（保留节点色相）",
+        colorSkin?.dark?.brown && darkerThanNode(colorSkin.dark.brown, isBrownHue)
+          && darkerThanNode(colorSkin.dark.teal, isTealHue),
+        `brown=${JSON.stringify(colorSkin?.dark?.brown?.rendered)} fields=${(colorSkin?.dark?.brown?.fields ?? []).slice(0, 6)}`);
+    check("浅色节点文字自动转深色保证可读",
+        colorSkin?.light?.cream?.texts.some((hex) => lum(hexRgb(hex)) < 0.35),
+        `texts=${(colorSkin?.light?.cream?.texts ?? []).slice(0, 8)}`);
 
     await page.evaluate((graph) => {
         window.app.graph.clear();
