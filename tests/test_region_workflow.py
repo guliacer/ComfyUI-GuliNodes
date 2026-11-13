@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / "examples" / "workflows" / "GG-人像背景分区编辑_Qwen2.1_Turbo.json"
+API_WORKFLOW = ROOT / "examples" / "workflows" / "GG-人像背景分区编辑_Qwen2.1_Turbo.api.json"
 
 
 class RegionWorkflowContractTests(unittest.TestCase):
@@ -180,6 +181,9 @@ class RegionWorkflowContractTests(unittest.TestCase):
             encoded = roles[region + "_condition"]
             self.assertEqual(self.source(encoded, "正向提示词", links), (final["id"], 0))
             self.assertEqual(encoded["widgets_values_named"]["分辨率"], 0)
+            self.assertNotIn("CLIP名称", encoded.get("widgets_values_named", {}))
+            self.assertEqual(self.source(encoded, "clip", links), (roles["clip"]["id"], 0))
+            self.assertEqual(self.source(encoded, "vae", links), (roles["vae"]["id"], 0))
             self.assertEqual(self.source(encoded, "图像.图像1", links), (roles[region + "_crop"]["id"], 1))
 
     def test_save_is_png_and_no_credentials_are_embedded(self):
@@ -196,12 +200,64 @@ class RegionWorkflowContractTests(unittest.TestCase):
         _, _, roles, _ = self.load_graph()
         expected = {
             "unet": ("unet_name", r"qwen\qwen_image_2.1_turbo_int8_convrot.safetensors"),
+            "clip": ("clip_name", r"qwen\qwen3vl_8b_int8_convrot.safetensors"),
             "vae": ("vae_name", r"qwen\qwen_image_2.1_vae_bf16.safetensors"),
         }
         for role, (key, value) in expected.items():
             self.assertEqual(roles[role]["widgets_values_named"][key].replace("/", "\\"), value)
+        self.assertEqual(roles["clip"]["widgets_values_named"]["type"], "qwen_image")
         for region in ("background", "person"):
-            self.assertEqual(roles[region + "_condition"]["widgets_values_named"]["CLIP名称"].replace("/", "\\"), r"qwen\qwen3vl_8b_int8_convrot.safetensors")
+            self.assertNotIn("CLIP名称", roles[region + "_condition"].get("widgets_values_named", {}))
+
+    def test_api_workflow_uses_split_native_model_loaders(self):
+        api = json.loads(API_WORKFLOW.read_text(encoding="utf-8"))
+        self.assertEqual(api["7"]["class_type"], "CLIPLoader")
+        self.assertEqual(api["7"]["inputs"]["type"], "qwen_image")
+        self.assertEqual(api["7"]["inputs"]["clip_name"].replace("/", "\\"), r"qwen\qwen3vl_8b_int8_convrot.safetensors")
+        self.assertEqual(api["5"]["class_type"], "VAELoader")
+        for node_id in ("15", "35"):
+            inputs = api[node_id]["inputs"]
+            self.assertEqual(inputs["clip"], ["7", 0])
+            self.assertEqual(inputs["vae"], ["5", 0])
+            self.assertNotIn("CLIP名称", inputs)
+            self.assertNotIn("CLIP类型", inputs)
+            self.assertNotIn("VAE名称", inputs)
+
+
+    def test_enhancer_layout_uses_external_clip_ports(self):
+        _, _, roles, _ = self.load_graph()
+        valid_unload = {"自动", "保持加载", "运行后自动卸载", "运行前后自动卸载"}
+        for region in ("background", "person"):
+            node = roles[region + "_enhance"]
+            self.assertEqual(node["type"], "GGPromptEnhancer")
+            self.assertEqual(len(node.get("widgets_values") or []), 17)
+            named = node.get("widgets_values_named") or {}
+            for key in ("文生图PE模型", "图生图PE模型", "生成后自动卸载模型"):
+                self.assertNotIn(key, named)
+            self.assertIn(named.get("卸载策略"), valid_unload)
+            self.assertIn("透明背景", named)
+            self.assertIn("增强方向", named)
+            for name in ("文生图PE模型", "图生图PE模型"):
+                slot = next((item for item in node.get("inputs") or [] if item.get("name") == name), None)
+                self.assertIsNotNone(slot, "增强节点缺少外接 CLIP 输入 " + name)
+                self.assertEqual(slot.get("type"), "CLIP")
+                self.assertEqual(slot.get("shape"), 7)
+                self.assertNotIn("widget", slot)
+            props = node.get("properties") or {}
+            self.assertNotIn("文生图PE模型", str(props))
+            self.assertNotIn("图生图PE模型", str(props))
+
+    def test_api_enhancer_uses_split_model_inputs(self):
+        api = json.loads(API_WORKFLOW.read_text(encoding="utf-8"))
+        valid_unload = {"自动", "保持加载", "运行后自动卸载", "运行前后自动卸载"}
+        for node_id in ("12", "32"):
+            inputs = api[node_id]["inputs"]
+            for key in ("文生图PE模型", "图生图PE模型", "生成后自动卸载模型"):
+                self.assertNotIn(key, inputs)
+            self.assertIn(inputs.get("卸载策略"), valid_unload)
+            self.assertIn("透明背景", inputs)
+            self.assertIn("增强方向", inputs)
+            self.assertIsInstance(inputs["透明背景"], bool)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
+import { watchNodeState } from "./gg-nodes2.js";
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { ensureGGDesign, applySurface } from "./gg-ui-design.js";
 import { refitAfterContentChange } from "./gg-node-autofit.js";
+import { measurePanelHeight, nextWidgetHeight, lockPanelChildren } from "./gg-panel-fit.js";
 import {
     CROP_RATIO_PRESETS, CUSTOM_RATIO, MIN_SELECTION,
     parseRatioText, transformedBounds, clampRect, fitCenteredRect,
@@ -11,9 +13,11 @@ import {
 
 const NODE_NAMES = new Set(["GGImageLoad"]);
 const IMAGE_WIDGET = "图像";
+const OFFICIAL_IMAGE_WIDGET = "image";
 const MASK_WIDGET = "遮罩文件";
 const PREVIEW_WIDGET = "gg_image_loader_preview";
 const ACTIONS_HEIGHT = 34;
+const MIN_IMAGE_HEIGHT = 80;
 
 function isTarget(node) {
     return NODE_NAMES.has(node?.comfyClass) || NODE_NAMES.has(node?.type);
@@ -21,6 +25,28 @@ function isTarget(node) {
 
 function getWidget(node, name) {
     return node?.widgets?.find((widget) => widget?.name === name) || null;
+}
+
+function widgetStringValue(value) {
+    if (typeof value === "string") return value;
+    if (value && typeof value === "object" && typeof value.filename === "string") {
+        const subfolder = value.subfolder ? `${value.subfolder}/` : "";
+        const type = value.type ? ` [${value.type}]` : "";
+        return `${subfolder}${value.filename}${type}`;
+    }
+    return "";
+}
+
+function parseImageWidgetValue(value) {
+    const text = widgetStringValue(value).trim();
+    if (!text) return null;
+    const annotation = text.match(/\s+\[(input|output|temp)\]\s*$/i);
+    const type = annotation ? annotation[1].toLowerCase() : "input";
+    const filenameWithPath = (annotation ? text.slice(0, annotation.index) : text).trim().replace(/\\/g, "/");
+    const parts = filenameWithPath.split("/");
+    const filename = parts.pop();
+    if (!filename) return null;
+    return { filename, subfolder: parts.filter(Boolean).join("/"), type };
 }
 
 function setWidgetValue(widget, value) {
@@ -70,42 +96,101 @@ function viewUrl(item) {
     return api.apiURL(`/view?filename=${encodeURIComponent(filename)}&type=${encodeURIComponent(item.type || "input")}&subfolder=${encodeURIComponent(item.subfolder || "")}${app.getRandParam?.() || ""}`);
 }
 
+function ensureOfficialImageWidget(node) {
+    const actual = getWidget(node, IMAGE_WIDGET);
+    let widget = getWidget(node, OFFICIAL_IMAGE_WIDGET);
+    if (!widget && typeof node?.addWidget === "function") {
+        widget = node.addWidget("text", OFFICIAL_IMAGE_WIDGET, widgetStringValue(actual?.value), () => {}, { serialize: false });
+    }
+    if (!widget) return null;
+
+    if (!widget._ggLoaderImageCompat) {
+        const originalCallback = widget.callback;
+        widget.callback = function (value, ...args) {
+            const result = originalCallback?.apply(this, [value, ...args]);
+            const text = widgetStringValue(value);
+            const target = getWidget(node, IMAGE_WIDGET);
+            if (target && text && widgetStringValue(target.value) !== text) {
+                // 官方编辑结果的 Alpha 已包含新蒙版，旧手选遮罩不能继续覆盖它。
+                setWidgetValue(getWidget(node, MASK_WIDGET), "");
+                setWidgetValue(target, text);
+                node.graph?.change?.();
+            }
+            if (text) {
+                node.properties ??= {};
+                node.properties[OFFICIAL_IMAGE_WIDGET] = text;
+            }
+            syncSourcePreview(node);
+            return result;
+        };
+        widget._ggLoaderImageCompat = true;
+    }
+
+    widget.serialize = false;
+    widget.serializeValue = () => undefined;
+    if (widget.options) widget.options.serialize = false;
+    widget.hidden = true;
+    widget.computeSize = () => [0, 0];
+    widget.computeLayoutSize = () => ({ minWidth: 0, minHeight: 0, maxHeight: 0 });
+    widget.computedHeight = 0;
+
+    const current = widgetStringValue(actual?.value);
+    if (current && widgetStringValue(widget.value) !== current) widget.value = current;
+    if (current) {
+        node.properties ??= {};
+        node.properties[OFFICIAL_IMAGE_WIDGET] = current;
+    }
+    return widget;
+}
+
 function createPreview(node) {
     const host = document.createElement("div");
     host.className = "gg-image-loader-preview gg-surface";
     ensureGGDesign();
     applySurface(host);
-    Object.assign(host.style, { width: "100%", boxSizing: "border-box", padding: "6px", display: "flex", flexDirection: "column", gap: "6px", overflow: "hidden" });
+    Object.assign(host.style, { width: "100%", height: "100%", minHeight: "0", boxSizing: "border-box", padding: "6px", display: "flex", flexDirection: "column", gap: "6px", overflow: "hidden" });
 
     const actions = document.createElement("div");
     actions.className = "gg-image-loader-actions";
     actions.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;flex:0 0 auto;";
     host.appendChild(actions);
 
+    const viewport = document.createElement("div");
+    viewport.className = "gg-image-loader-viewport";
+    viewport.style.cssText = `position:relative;min-width:0;min-height:${MIN_IMAGE_HEIGHT}px;overflow:hidden;border-radius:6px;background:var(--gg-field);`;
+    host.appendChild(viewport);
+
     const image = document.createElement("img");
     image.alt = "图像预览";
-    image.style.cssText = "display:block;width:100%;max-height:360px;object-fit:contain;border-radius:6px;background:var(--gg-field);flex:0 0 auto;";
-    host.appendChild(image);
+    image.style.cssText = "position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:contain;";
+    viewport.appendChild(image);
 
     const size = document.createElement("div");
     size.className = "gg-image-loader-size";
-    size.style.cssText = "text-align:center;color:var(--gg-muted);font-size:12px;flex:0 0 auto;";
+    size.style.cssText = "text-align:center;color:var(--gg-muted);font-size:12px;line-height:16px;min-height:16px;flex:0 0 auto;";
     host.appendChild(size);
 
-    const widget = node.addDOMWidget?.(PREVIEW_WIDGET, "gg_image_loader_preview", host, { serialize: false, hideOnZoom: false });
+    lockPanelChildren(host);
+    // 操作栏与尺寸行固定，只有预览区分配节点剩余高度；图片本身不参与撑高。
+    viewport.style.flex = "1 1 0";
+    const panel = { host, actions, viewport, image, size, node, widget: null };
+    const minimumHeight = () => nextWidgetHeight(panel,
+        measurePanelHeight(host) || (actions.offsetHeight || ACTIONS_HEIGHT) + MIN_IMAGE_HEIGHT + 40);
+    const widget = node.addDOMWidget?.(PREVIEW_WIDGET, "gg_image_loader_preview", host, {
+        serialize: false,
+        hideOnZoom: false,
+        getMinHeight: minimumHeight,
+    });
     if (widget) {
         // addDOMWidget 不会把 options.serialize 落到 widget 上；不显式声明就会被
         // 写进 widgets_values，读档时把图像/遮罩两个控件的值挤错位。
         widget.serialize = false;
         if (widget.options) widget.options.serialize = false;
-        widget.computeSize = () => {
-            const width = node.size?.[0] || 300;
-            const buttons = actions.offsetHeight || ACTIONS_HEIGHT;
-            const imageHeight = image.naturalHeight ? Math.min(360, image.clientHeight || 220) : 80;
-            return [width, buttons + imageHeight + 24];
-        };
+        // 不覆写 computeSize：宿主优先把它当作固定高度，只有原生
+        // computeLayoutSize 才会在拖大、缩小和读档时重分配可用空间。
+        panel.widget = widget;
     }
-    return { host, actions, image, size, widget, node };
+    return panel;
 }
 
 function actionButton(label, handler) {
@@ -117,7 +202,7 @@ function actionButton(label, handler) {
     for (const type of ["pointerdown", "mousedown", "dblclick"]) {
         button.addEventListener(type, (event) => event.stopPropagation());
     }
-    button.addEventListener("click", (event) => { event.stopPropagation(); Promise.resolve(handler()).catch((error) => { console.error("[GGImageLoad] 操作失败", error); alert(error?.message || "图像操作失败。"); }); });
+    button.addEventListener("click", (event) => { event.stopPropagation(); Promise.resolve().then(handler).catch((error) => { console.error("[GGImageLoad] 操作失败", error); alert(error?.message || "图像操作失败。"); }); });
     return button;
 }
 
@@ -126,6 +211,10 @@ function updatePreview(panel, item, width, height) {
     const url = viewUrl(item);
     if (!url) return;
     if (width && height) panel.size.textContent = `${width} × ${height}`;
+    panel.node.previewMediaType = "image";
+    panel.node.imageIndex = 0;
+    // 官方编辑器通过文件引用读图；常驻 imgs 会触发宿主再创建 canvas 预览控件。
+    panel.node.images = [{ filename: item.filename || item.name, subfolder: item.subfolder || "", type: item.type || "input" }];
     panel.image.onload = () => {
         const naturalWidth = panel.image.naturalWidth;
         const naturalHeight = panel.image.naturalHeight;
@@ -160,10 +249,31 @@ async function uploadMain(node, panel, file) {
     node.setDirtyCanvas?.(true, true);
 }
 
-async function uploadMask(node, file) {
-    const uploaded = await uploadFile(file);
-    setWidgetValue(getWidget(node, MASK_WIDGET), uploadedName(uploaded));
-    node.setDirtyCanvas?.(true, true);
+async function openOfficialMaskEditor(node) {
+    syncSourcePreview(node);
+    const image = node?._ggImageLoaderPanel?.image;
+    if (!image?.getAttribute("src")) throw new Error("请先选择图像，再打开蒙版编辑器。");
+    try { await image.decode?.(); }
+    catch { throw new Error("图像尚未加载成功，请重新选择图像后再打开蒙版编辑器。"); }
+    if (!image.naturalWidth) throw new Error("图像尚未加载成功，请重新选择图像后再打开蒙版编辑器。");
+    node.imageIndex = 0;
+    node.previewMediaType = "image";
+
+    // 复用官方节点菜单入口；它直接传节点，不占用全局 clipspace 返回目标。
+    const options = [];
+    node.getExtraMenuOptions?.(app.canvas, options);
+    const editor = options.find(option => /Open in MaskEditor/.test(option?.content ?? ""));
+    if (typeof editor?.callback === "function") return editor.callback();
+
+    // 旧版前端仍通过 clipspace 提供编辑器。
+    const ComfyApp = app?.constructor;
+    if (typeof ComfyApp?.open_maskeditor !== "function") {
+        throw new Error("当前 ComfyUI 前端没有可用的官方蒙版编辑器，请更新前端后重试。");
+    }
+    node.imgs = [image];
+    ComfyApp.copyToClipspace?.(node);
+    ComfyApp.clipspace_return_node = node;
+    ComfyApp.open_maskeditor();
 }
 
 function canvasBlob(canvas) {
@@ -494,11 +604,96 @@ function cropImage(node, panel) {
     original.src = source;
 }
 
+
+function suppressNativePreview(node) {
+    if (!node._ggImageLoaderPanel?.widget) return;
+    // 与官方 ImageCrop / Painter 一样禁止原生输出预览；输入图面板仍负责显示。
+    node.hideOutputImages = true;
+    for (const widget of node.widgets ?? []) {
+        if (widget.name !== "$$canvas-image-preview") continue;
+        widget.hidden = true;
+        widget.serialize = false;
+        widget.computeSize = () => [0, 0];
+        widget.computeLayoutSize = () => ({ minWidth: 0, minHeight: 0, maxHeight: 0 });
+        widget.computedHeight = 0;
+    }
+}
+
+function syncSourcePreview(node) {
+    const value = widgetStringValue(getWidget(node, IMAGE_WIDGET)?.value);
+    const compat = getWidget(node, OFFICIAL_IMAGE_WIDGET);
+    if (compat && widgetStringValue(compat.value) !== value) compat.value = value;
+    node.properties ??= {};
+    node.properties[OFFICIAL_IMAGE_WIDGET] = value;
+    const item = parseImageWidgetValue(value);
+    if (!item) {
+        node._ggLoaderImageName = "";
+        node._ggImageLoaderPanel?.image?.removeAttribute("src");
+        if (node._ggImageLoaderPanel) node._ggImageLoaderPanel.size.textContent = "";
+        node.imgs = undefined;
+        node.images = undefined;
+        node.previewMediaType = undefined;
+        return;
+    }
+    const panel = node._ggImageLoaderPanel;
+    if (value === node._ggLoaderImageName && panel?.image?.src) return;
+    node._ggLoaderImageName = value;
+    updatePreview(panel, item, 0, 0);
+}
+
+function installPreviewSync(node) {
+    suppressNativePreview(node);
+    ensureOfficialImageWidget(node);
+    if (!node._ggLoaderPreviewGuard) {
+        const addCustom = node.addCustomWidget;
+        node.addCustomWidget = function (...args) {
+            const widget = addCustom.apply(this, args);
+            suppressNativePreview(this);
+            return widget;
+        };
+        const executed = node.onExecuted;
+        node.onExecuted = function (output, ...args) {
+            const result = executed?.call(this, output, ...args);
+            suppressNativePreview(this);
+            return result;
+        };
+        node._ggLoaderPreviewGuard = true;
+    }
+    if (!node._ggLoaderWidgetChangedGuard) {
+        const widgetChanged = node.onWidgetChanged;
+        node.onWidgetChanged = function (name, value, ...args) {
+            const result = widgetChanged?.call(this, name, value, ...args);
+            if (name === IMAGE_WIDGET || name === OFFICIAL_IMAGE_WIDGET) syncSourcePreview(this);
+            return result;
+        };
+        node._ggLoaderWidgetChangedGuard = true;
+    }
+    const imageWidget = getWidget(node, IMAGE_WIDGET);
+    if (imageWidget && !imageWidget._ggLoaderPreviewCallback) {
+        const callback = imageWidget.callback;
+        imageWidget.callback = function (...args) {
+            const result = callback?.apply(this, args);
+            syncSourcePreview(node);
+            return result;
+        };
+        imageWidget._ggLoaderPreviewCallback = true;
+    }
+    watchNodeState(node, "image-loader", enabled => {
+        if (!enabled) return;
+        suppressNativePreview(node);
+        syncSourcePreview(node);
+    });
+}
+
 function setupNode(node) {
     if (!isTarget(node)) return;
     // 装过一次就不再重建。判据只看 widget 是否存在 —— 不能用 host.isConnected：
     // addDOMWidget 之后 host 要到下一帧才挂进文档，首帧必然是 false。
-    if (node._ggImageLoaderInstalled && node._ggImageLoaderPanel?.widget) return;
+    if (node._ggImageLoaderInstalled && node.widgets?.includes(node._ggImageLoaderPanel?.widget)) {
+        installPreviewSync(node);
+        syncSourcePreview(node);
+        return;
+    }
 
     try {
         ensureGGDesign();
@@ -511,21 +706,17 @@ function setupNode(node) {
             return;
         }
         node._ggImageLoaderPanel = panel;
-        // 按钮放在 DOM 面板里，不往 node.widgets 里插控件、也不重排 widgets：
-        // widgets_values 是按控件下标存的位置数组，插入或换序会让读档错位。
+        installPreviewSync(node);
+        // 按钮放在 DOM 面板里；内部 image 桥接只追加且不序列化，保留原有输入下标。
         panel.actions.replaceChildren(
             actionButton("粘贴", () => pasteImage(node, panel)),
-            actionButton("蒙版", () => new Promise((resolve, reject) => chooseFile("image/png,image/jpeg,image/webp", (file) => uploadMask(node, file).then(resolve, reject)))),
+            actionButton("蒙版", () => openOfficialMaskEditor(node)),
             actionButton("裁剪", () => cropImage(node, panel)),
             actionButton("选择文件上传", () => new Promise((resolve, reject) => chooseFile("image/*", (file) => uploadMain(node, panel, file).then(resolve, reject)))),
         );
         refitAfterContentChange(node);
-        const imageWidget = getWidget(node, IMAGE_WIDGET);
-        if (imageWidget?.value) {
-            const value = String(imageWidget.value);
-            const parts = value.split("/");
-            updatePreview(panel, { filename: parts.pop(), subfolder: parts.join("/"), type: "input" }, 0, 0);
-        }
+        node._ggLoaderImageName = null;
+        syncSourcePreview(node);
         node._ggImageLoaderInstalled = true;
         node.setDirtyCanvas?.(true, true);
     } catch (error) {
@@ -551,6 +742,10 @@ function ensureMounted(node) {
 
 app.registerExtension({
     name: "ComfyUI.GGNodes.ImageLoader",
+    beforeRegisterNodeDef(nodeType, nodeData) {
+        // 在 Vue 首次读取缓存输出前声明，避免读旧工作流时先出现第二张预览。
+        if (NODE_NAMES.has(nodeData.name)) nodeType.prototype.hideOutputImages = true;
+    },
     nodeCreated(node) { setTimeout(() => setupNode(node), 0); },
     loadedGraphNode(node) { setTimeout(() => setupNode(node), 0); },
     // 读档完成后再兜一次：DOM 定位层此时才就绪，面板没挂上就在这里补齐

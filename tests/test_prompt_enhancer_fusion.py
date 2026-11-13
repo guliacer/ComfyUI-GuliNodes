@@ -17,6 +17,7 @@ from guli_nodes import prompt_enhancer as pe
 
 # 纯文本通道（API / 本地LLM）：正文 + 一行 RATIO 尾注。
 LLM_TEXT = "一位年轻女性站在海边，85mm 浅景深，柔和逆光。\nRATIO: 2:3"
+EN_TEXT = "A young woman stands by the sea in soft backlight with shallow depth of field.\nRATIO: 2:3"
 # JSON 通道（本地PE）：官方 PE 权重的原生协议。
 PE_JSON = '{"rewritten_prompt": "一位年轻女性站在海边，85mm 浅景深，柔和逆光。", "wh_ratio": "2:3"}'
 EDIT_JSON = '{"rewritten_prompt": "把背景换成透明", "wh_ratio": "", "ratio_follow": "<image1>"}'
@@ -34,8 +35,8 @@ def enhance(**overrides):
         api_key="",
         api_base_url="",
         model="",
-        pe_t2i_model="PE-T2I.safetensors",
-        pe_i2i_model="PE-I2I.safetensors",
+        pe_t2i_clip=object(),
+        pe_i2i_clip=object(),
         llm_t2i_model="PE-T2I.gguf",
         llm_i2i_model="PE-I2I.gguf",
         mmproj_model="PE-I2I.mmproj.gguf",
@@ -75,7 +76,7 @@ class 自动任务判定测试(unittest.TestCase):
         with patch.object(pe, "_request_local_llm", return_value=LLM_TEXT) as call:
             pe._enhance(**enhance(images=IMAGES, language="中文"))
         self.assertIn("用中文写", call.call_args.kwargs["user_prompt"])
-        with patch.object(pe, "_request_local_llm", return_value=LLM_TEXT) as call:
+        with patch.object(pe, "_request_local_llm", return_value=EN_TEXT) as call:
             pe._enhance(**enhance(images=IMAGES, language="英文"))
         self.assertIn("in English", call.call_args.kwargs["user_prompt"])
         # 自动 + 没有用户文本：落到节点默认中文，不能像以前那样飘成英文
@@ -130,9 +131,34 @@ class 双通道输出测试(unittest.TestCase):
         self.assertEqual(data["ratio_follow"], "<image1>")
 
     def test_JSON通道不要求RATIO尾注(self):
+        clip = object()
         with patch.object(pe, "_request_official_pe", return_value=PE_JSON) as call:
-            pe._enhance(**enhance(prompt="海边女孩", method=pe.METHOD_PE))
+            pe._enhance(**enhance(prompt="海边女孩", method=pe.METHOD_PE, pe_t2i_clip=clip))
         self.assertNotIn("RATIO", call.call_args.kwargs["user_prompt"])
+        self.assertIs(call.call_args.kwargs["clip"], clip)
+
+    def test_PE按任务选外接CLIP并允许单路回退(self):
+        t2i_clip, i2i_clip = object(), object()
+        with patch.object(pe, "_request_official_pe", return_value=PE_JSON) as call:
+            pe._enhance(**enhance(
+                prompt="换背景", images=IMAGES, method=pe.METHOD_PE,
+                pe_t2i_clip=t2i_clip, pe_i2i_clip=i2i_clip,
+            ))
+        self.assertIs(call.call_args.kwargs["clip"], i2i_clip)
+
+        with patch.object(pe, "_request_official_pe", return_value=PE_JSON) as call:
+            pe._enhance(**enhance(
+                prompt="换背景", images=IMAGES, method=pe.METHOD_PE,
+                pe_t2i_clip=t2i_clip, pe_i2i_clip=None,
+            ))
+        self.assertIs(call.call_args.kwargs["clip"], t2i_clip)
+
+    def test_PE未连接CLIP给出接线提示(self):
+        with self.assertRaisesRegex(ValueError, "CLIPLoader"):
+            pe._enhance(**enhance(
+                prompt="海边女孩", method=pe.METHOD_PE,
+                pe_t2i_clip=None, pe_i2i_clip=None,
+            ))
 
     def test_JSON被截断时退回原文(self):
         with patch.object(pe, "_request_official_pe", return_value="一位女性，背景是白色的"):
@@ -225,6 +251,14 @@ class 卸载策略测试(unittest.TestCase):
             pe._enhance(**enhance(prompt="海边女孩", unload=pe.UNLOAD_BEFORE_AFTER))
         before.assert_called_once()
         unload.assert_called()
+
+    def test_PE不卸载上游CLIP也不执行本地LLM清理(self):
+        with patch.object(pe, "_request_official_pe", return_value=PE_JSON), \
+                patch.object(pe, "_release_models_before_run") as before, \
+                patch.object(pe._LocalLLMStorage, "unload") as unload:
+            pe._enhance(**enhance(prompt="海边女孩", method=pe.METHOD_PE, unload=pe.UNLOAD_BEFORE_AFTER))
+        before.assert_not_called()
+        unload.assert_not_called()
 
     def test_失败也会释放(self):
         with patch.object(pe, "_request_local_llm", side_effect=RuntimeError("炸了")), \
@@ -335,36 +369,152 @@ class 输出语言测试(unittest.TestCase):
             pe._enhance(**enhance(prompt="a girl by the sea", method=pe.METHOD_PE, language="英文"))
         self.assertIn("in English", call.call_args.kwargs["user_prompt"])
 
-    def test_纯文本通道不重复加语言提示(self):
-        with patch.object(pe, "_request_local_llm", return_value=LLM_TEXT) as call:
-            pe._enhance(**enhance(prompt="海边女孩"))
-        self.assertNotIn("请用中文写", call.call_args.kwargs["user_prompt"])
+    def test_本地LLM各任务末尾明确语言并保留画面原文(self):
+        tasks = (
+            (pe.MODE_T2I, None, False),
+            (pe.MODE_I2I, IMAGES, False),
+            (pe.MODE_AUTO, None, False),
+            (pe.MODE_AUTO, IMAGES, False),
+            (pe.MODE_AUTO, IMAGES, True),
+        )
+        languages = (
+            ("英文", '给招牌写上“春日限定”，保持原有构图', "英文"),
+            ("中文", 'Add the exact sign text "Spring Sale", preserving the composition', "中文"),
+            ("自动", '给招牌写上“春日限定”', "中文"),
+            ("自动", 'Add the exact sign text "Spring Sale"', "英文"),
+        )
+        for mode, images, reverse in tasks:
+            for language, prompt, expected in languages:
+                prompt = "" if reverse else prompt
+                expected = "中文" if reverse and language == "自动" else expected
+                with self.subTest(mode=mode, reverse=reverse, language=language, prompt=prompt):
+                    reply = EN_TEXT if expected == "英文" else LLM_TEXT
+                    with patch.object(pe, "_request_local_llm", return_value=reply) as call:
+                        pe._enhance(**enhance(prompt=prompt, task_mode=mode, images=images,
+                                            language=language, direction="写实人像"))
+                    request = call.call_args.kwargs
+                    guard = request["user_prompt"].rsplit("\n\n", 1)[-1]
+                    self.assertIn(prompt, request["user_prompt"])
+                    if expected == "英文":
+                        self.assertIn("Write all descriptive prose in English", guard)
+                        self.assertIn("regardless of the language of the user request", guard)
+                        self.assertIn("visible text", guard)
+                        self.assertIn("exactly as supplied", guard)
+                        self.assertNotIn("不要写英文", guard)
+                    else:
+                        self.assertIn("全部用中文写", guard)
+                        self.assertIn("不跟随用户需求", guard)
+                        self.assertIn("画面中的文字", guard)
+                        self.assertIn("保持原文", guard)
+                        self.assertNotIn("不要翻译", guard)
+                    self.assertIn("RATIO", guard)
+                    self.assertEqual(request["text_only"], images is None)
+
+    def test_节点入口将英文设置传给本地LLM(self):
+        with patch.object(pe, "_request_local_llm", return_value=EN_TEXT) as call:
+            pe._run({pe.P_PROMPT: "海边女孩", pe.P_LANG: "英文",
+                     pe.P_METHOD: pe.METHOD_LLM, pe.P_LLM_T2I: "PE-T2I.gguf",
+                     pe.P_UNLOAD: pe.UNLOAD_KEEP})
+        self.assertIn("Write all descriptive prose in English", call.call_args.kwargs["user_prompt"])
+
+
+class 本地语言校正测试(unittest.TestCase):
+    def test_语言判断排除画面文字与少量专名(self):
+        cases = (
+            ("把人像调成明亮柔和的晴天影调，保持五官和原有构图不变。", "英文", True),
+            ('"把人像调成明亮柔和的晴天影调，保持五官和原有构图不变。"', "英文", True),
+            (EN_TEXT, "中文", True),
+            (EN_TEXT, "英文", False),
+            (LLM_TEXT, "中文", False),
+            ('A clean poster with the exact title "春日限定欢迎光临" at the top and no other text.', "英文", False),
+            ('A clean poster with the exact title “春日限定欢迎光临” at the top and no other text.', "英文", False),
+            ('A clean poster with the exact title \'春日限定欢迎光临\' at the top and no other text.', "英文", False),
+            ('A clean product photograph of 华为 headphones on a wooden table with natural soft lighting.', "英文", False),
+            ('简洁的海报使用柔和的奶油色背景，标题为“Spring Sale”，其它位置不出现文字。', "中文", False),
+        )
+        for text, language, expected in cases:
+            with self.subTest(text=text, language=language):
+                self.assertEqual(pe._needs_language_correction(text, language), expected)
+
+    def test_正确语言含中文画面文字不额外调用(self):
+        raw = 'A clean poster with the exact title "春日限定欢迎光临" at the top and no other text.\nRATIO: 3:4'
+        with patch.object(pe, "_request_local_llm", return_value=raw) as call:
+            text, _, _ = pe._enhance(**enhance(prompt="制作海报", language="英文"))
+        self.assertEqual(call.call_count, 1)
+        self.assertIn('"春日限定欢迎光临"', text)
+
+    def test_纠正复用当前模型且保留画面文字和比例(self):
+        raw = pe._json_payload('把人像调成明亮柔和的晴天影调，保持五官与构图不变，标题“春日限定”保持原文。', "3:4", "<image1>")
+        translated = 'Give the portrait a bright sunny color grade, preserving the face, composition and title GG_KEEP_LITERAL_0_END.\nRATIO: 1:1'
+        with patch.object(pe, "_request_local_llm", side_effect=[raw, translated]) as call:
+            text, payload, reverse = pe._enhance(**enhance(prompt="人像提亮，保留标题", images=IMAGES, language="英文"))
+        first, second = (x.kwargs for x in call.call_args_list)
+        for key in ("model_name", "mmproj_name", "text_only", "context_length", "max_output_tokens"):
+            self.assertEqual(first[key], second[key])
+        self.assertTrue(first["image_base64_list"])
+        self.assertEqual(second["image_base64_list"], [])
+        self.assertIn("GG_KEEP_LITERAL_0_END", second["user_prompt"])
+        self.assertNotIn("春日限定", second["user_prompt"])
+        self.assertNotIn("Edit Prompt Enhancer", second["system_prompt"])
+        self.assertIn("“春日限定”", text)
+        self.assertNotIn("GG_KEEP_LITERAL", text)
+        self.assertFalse(reverse)
+        self.assertEqual(json.loads(payload), {"rewritten_prompt": text, "wh_ratio": "3:4", "ratio_follow": "<image1>"})
+
+    def test_自动反推用中文校正英文输出(self):
+        with patch.object(pe, "_request_local_llm", side_effect=[EN_TEXT, LLM_TEXT]) as call:
+            text, _, reverse = pe._enhance(**enhance(images=IMAGES, language="自动"))
+        self.assertTrue(reverse)
+        self.assertIn("年轻女性", text)
+        self.assertIn("完整翻译成简体中文", call.call_args.kwargs["user_prompt"])
+        self.assertEqual(call.call_count, 2)
+
+    def test_校正仍错语种就报错并按策略卸载(self):
+        with patch.object(pe, "_request_local_llm", return_value=LLM_TEXT) as call, \
+             patch.object(pe._LocalLLMStorage, "unload") as llm_unload:
+            with self.assertRaisesRegex(ValueError, "仍未使用英文"):
+                pe._enhance(**enhance(prompt="海边女孩", language="英文", unload=pe.UNLOAD_AFTER))
+        self.assertEqual(call.call_count, 2)
+        llm_unload.assert_called_once()
+
+    def test_校正丢失画面文字时不静默通过(self):
+        raw = '把人像调成明亮柔和的晴天影调，并保留标题“春日限定”的位置和样式。'
+        with patch.object(pe, "_request_local_llm", side_effect=[raw, EN_TEXT]) as call:
+            with self.assertRaisesRegex(ValueError, "未保留画面文字"):
+                pe._enhance(**enhance(prompt="保留标题", language="英文"))
+        self.assertEqual(call.call_count, 2)
+
+    def test_多个原文标记和已有同名文字互不冲突(self):
+        raw = "保留这张海报上的所有标题和标签，不能改变位置与字体：" + "，".join(f'“文字{i}”' for i in range(12)) + "，保留 GG_KEEP_LITERAL_0_END。"
+        reply = "Keep every heading and label in its original position and typeface: " + ", ".join(f"_GG_KEEP_LITERAL_{i}_END" for i in range(12)) + ". Keep GG_KEEP_LITERAL_0_END unchanged."
+        with patch.object(pe, "_request_local_llm", side_effect=[raw, reply]):
+            text, _, _ = pe._enhance(**enhance(prompt="保留所有标题", language="英文"))
+        for i in range(12):
+            self.assertIn(f'“文字{i}”', text)
+        self.assertIn("GG_KEEP_LITERAL_0_END", text)
+        self.assertNotIn("_GG_KEEP_LITERAL_", text)
 
 
 class 参数布局测试(unittest.TestCase):
-    # 控件值按下标存盘。老工作流 0..8 的位置一个都不能动（下标 8 原是「主模型」，
-    # 现在由「文生图LLM模型」接手，值天然对齐）；新控件只能插在下标 9，
-    # 后面的 mmproj / 输入提示词等整体后移一位，由前端 configure 迁移补值。
-    旧前缀 = [
-        "任务模式", "输出语言", "增强方式", "api_key", "api_base_url", "model",
-        "文生图PE模型", "图生图PE模型", "文生图LLM模型",
-    ]
     新顺序 = [
-        *旧前缀,
+        "任务模式", "输出语言", "增强方式", "api_key", "api_base_url", "model",
+        "文生图LLM模型",
         "图生图LLM模型", "mmproj", "上下文长度", "最大生成token", "seed",
         "卸载策略", "输入提示词", "透明背景", "增强方向",
     ]
 
     def test_新旧前端参数顺序一致(self):
         self.assertEqual(list(pe._legacy_required()), self.新顺序)
-        self.assertEqual([item.id for item in pe._v3_inputs()][:18], self.新顺序)
+        actual = [item.id for item in pe._v3_inputs() if item.id not in (pe.P_PE_T2I, pe.P_PE_I2I, pe.IMAGE_PREFIX)]
+        self.assertEqual(actual, self.新顺序)
 
-    def test_新控件插在老主模型之后且旧值位置不变(self):
-        names = list(pe._legacy_required())
-        self.assertEqual(names[:9], self.旧前缀)
-        self.assertEqual(names[9], "图生图LLM模型")
-        self.assertEqual(names[10], "mmproj")  # 老下标 9，靠迁移补一位推过来
-        self.assertEqual(names[15], "输入提示词")  # 老下标 14
+    def test_PE模型选择改为两个外接CLIP输入(self):
+        node = pe.NODE_CLASS_MAPPINGS[pe.NODE_ID]
+        ids = [item.id for item in node.define_schema().inputs]
+        self.assertIn(pe.P_PE_T2I, ids)
+        self.assertIn(pe.P_PE_I2I, ids)
+        self.assertNotIn(pe.P_PE_T2I, pe._legacy_required())
+        self.assertNotIn(pe.P_PE_I2I, pe._legacy_required())
 
     def test_新控件排在多行输入之后(self):
         names = list(pe._legacy_required())
@@ -389,11 +539,6 @@ class 参数布局测试(unittest.TestCase):
 
 
 class 默认值测试(unittest.TestCase):
-    def test_按记号挑PE模型而不是字母序第一个(self):
-        options = ["clip_l.safetensors", "qwen\\qwen3.5_9b_pe_t2i.int8.safetensors", "x_pe_t2i_old.safetensors"]
-        self.assertEqual(pe._preferred_model(options, "pe_t2i"), options[1])
-        self.assertEqual(pe._preferred_model(options, "mmproj", "pe_i2i"), options[0])
-
     def test_有PE权重时默认本地PE(self):
         self.assertEqual(pe._default_method(["a.safetensors"]), pe.METHOD_PE)
         self.assertEqual(pe._default_method([pe.MISSING_PE]), pe.METHOD_API)
@@ -517,7 +662,7 @@ class 本地LLM双模型测试(unittest.TestCase):
         self.assertLess(keys.index(pe.P_MMPROJ), keys.index(pe.P_PROMPT))
         self.assertLess(keys.index(pe.P_PROMPT), keys.index(pe.P_TRANSPARENT))
         self.assertLess(keys.index(pe.P_TRANSPARENT), keys.index(pe.P_DIRECTION))
-        self.assertEqual(len(keys), 18)
+        self.assertEqual(len(keys), 16)
 
 
 if __name__ == "__main__":

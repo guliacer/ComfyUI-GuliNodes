@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import numpy as np
@@ -71,6 +72,73 @@ class ImageLoaderTests(unittest.TestCase):
         mask = self.mod._resolve_mask("missing.png", "", image, 2, 3)
         self.assertEqual(float(mask.max()), 0.0)
         self.assertEqual(tuple(mask.shape), (2, 3))
+
+    def test_execution_has_no_native_preview_or_temporary_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGB", (6, 4), (80, 120, 160)).save(root / "photo.png")
+            for legacy in (False, True):
+                with self.subTest(legacy=legacy):
+                    mod = load_module(legacy)
+                    with patch.object(mod.folder_paths, "input_directory", directory), patch.object(
+                        mod.folder_paths, "get_temp_directory", side_effect=AssertionError("不应再生成第二张预览")
+                    ):
+                        result = mod.GGImageLoad().load_image("photo.png") if legacy else mod.GGImageLoad.execute("photo.png")
+                    if legacy:
+                        self.assertIsInstance(result, tuple)
+                        images, masks = result
+                    else:
+                        self.assertIsNone(result.ui)
+                        images, masks = result.result
+                    self.assertEqual(tuple(images.shape), (1, 4, 6, 3))
+                    self.assertEqual(tuple(masks.shape), (1, 4, 6))
+                    self.assertAlmostEqual(float(images[0, 0, 0, 0]), 80 / 255, places=6)
+                    self.assertEqual(float(masks.max()), 0.0)
+
+    def test_official_editor_annotation_validation_and_alpha_roundtrip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "clipspace").mkdir()
+            rgba = np.empty((4, 6, 4), dtype=np.uint8)
+            rgba[..., :3] = [80, 120, 160]
+            rgba[..., 3] = 255
+            rgba[1:3, 2:4, 3] = 0
+            rgba[0, 0, 3] = 128
+            filename = "clipspace/clipspace-painted-masked-123456.png"
+            Image.fromarray(rgba).save(root / filename)
+            value = filename + " [input]"
+            for legacy in (False, True):
+                with self.subTest(legacy=legacy):
+                    mod = load_module(legacy)
+                    with patch.object(mod.folder_paths, "input_directory", directory):
+                        cls = mod.GGImageLoad
+                        validate = cls.VALIDATE_INPUTS if legacy else cls.validate_inputs
+                        self.assertIs(validate(value), True)
+                        self.assertIn("图像文件不存在", validate("missing.png [input]"))
+                        self.assertIn("遮罩文件不存在", validate(value, "missing-mask.png"))
+                        result = cls().load_image(value) if legacy else cls.execute(value)
+                        images, masks = result if legacy else result.result
+                        expected = 1 - rgba[..., 3].astype(np.float32) / 255
+                        np.testing.assert_allclose(masks[0].numpy(), expected)
+                        np.testing.assert_allclose(images[0].numpy(), rgba[..., :3] / 255, atol=1e-7)
+
+    def test_sidecar_keeps_priority_and_invalidates_cached_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            Image.new("RGBA", (6, 4), (80, 120, 160, 0)).save(root / "photo.png")
+            sidecar = root / "photo_mask.png"
+            Image.new("L", (6, 4), 80).save(sidecar)
+            with patch.object(self.mod.folder_paths, "input_directory", directory):
+                before = self.mod.GGImageLoad.fingerprint_inputs("photo.png")
+                _, masks, _, _ = self.mod._read_image("photo.png")
+                self.assertAlmostEqual(float(masks.mean()), 80 / 255, places=6)
+                Image.new("L", (6, 4), 180).save(sidecar)
+                self.assertNotEqual(before, self.mod.GGImageLoad.fingerprint_inputs("photo.png"))
+
+    def test_mask_combo_defaults_to_no_explicit_mask(self):
+        legacy = load_module(legacy=True)
+        self.assertEqual(legacy.GGImageLoad.INPUT_TYPES()["optional"]["遮罩文件"][0][0], "")
+        self.assertEqual(self.mod.GGImageLoad.define_schema().inputs[1].options[0], "")
 
     def test_legacy_and_v3_definitions_exist(self):
         legacy = load_module(legacy=True)

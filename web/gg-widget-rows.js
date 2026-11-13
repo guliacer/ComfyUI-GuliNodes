@@ -1,3 +1,4 @@
+import { isNodes2, watchNodeState, fitNodes2Content } from "./gg-nodes2.js";
 import { app } from "../../scripts/app.js";
 import { paletteVars, detectHostTheme, nodeColorTint, parseCssColor } from "./gg-ui-design.js";
 import { isWidgetSkinEnabled, onWidgetSkinScopeChange } from "./gg-skin-scope.js";
@@ -1081,6 +1082,7 @@ function shrinkToWidth(node, state, allow) {
 }
 
 function reflow(node) {
+    if (isNodes2()) return;
     const state = node[ENGINE_KEY];
     if (!state) {
         return;
@@ -1380,6 +1382,7 @@ function isSizeLike(value) {
 }
 
 function applyHeight(node, state) {
+    if (isNodes2()) return;
     if (state.applying || !isSizeLike(node.size)) {
         return;
     }
@@ -1616,6 +1619,7 @@ export function applyRowLayout(node) {
     // 这里包在实例上，原函数（prototype 上 autofit 的那层）照常调用。
     const originalOnResize = node.onResize;
     node.onResize = function (...args) {
+        if (isNodes2()) return originalOnResize?.apply(this, args);
         const canvas = app?.canvas || globalThis.LGraphCanvas?.active_canvas;
         if (canvas?.resizing_node === this && isSizeLike(this.size)) {
             this[MANUAL_WIDTH_FLAG] = Number(this.size[0]) || 0;
@@ -1681,6 +1685,7 @@ export function applyRowLayout(node) {
     // 控件签名 + 节点宽度一起判变化：打字 / 换下拉会改签名，拉宽只改宽度，
     // 两者都要让行布局重算一次。多入口共用，返回「这次是否真的重排了」。
     syncLayoutWidth = (self) => {
+        if (isNodes2()) return false;
         // applyHeight 写 node.size 会回调 onResize，reflow 里的 shrinkToWidth
         // 也可能再写一次；两把闸挡住「尺寸→布局→尺寸」的递归。
         if (state.applying || state.syncing || !isSizeLike(self.size)) {
@@ -1717,6 +1722,7 @@ export function applyRowLayout(node) {
     if (typeof originalComputeSize === "function") {
         node.computeSize = function (out) {
             const size = originalComputeSize.call(this, out);
+            if (isNodes2()) return size;
             if (!state.rows.length) {
                 captureStart(this);
                 reflow(this);
@@ -1748,6 +1754,7 @@ export function applyRowLayout(node) {
     }
 
     node.drawWidgets = function (ctx, options = {}) {
+        if (isNodes2()) return originalDrawWidgets?.call(this, ctx, options);
         if (!this.widgets) {
             return;
         }
@@ -1862,6 +1869,7 @@ export function applyRowLayout(node) {
     };
 
     node.getWidgetOnPos = function (x, y, includeDisabled = false) {
+        if (isNodes2()) return originalGetWidgetOnPos?.call(this, x, y, includeDisabled);
         const { widgets, pos, size } = this;
         if (!widgets?.length) {
             return undefined;
@@ -1907,6 +1915,14 @@ export function applyRowLayout(node) {
         };
     }
 
+    watchNodeState(node, "row-layout", (enabled, changed) => {
+        if (!changed) return;
+        for (const widget of node.widgets ?? []) delete widget._ggCol;
+        state.rows = [];
+        state.drawnKey = null;
+        state.drawnWidth = null;
+        if (!enabled) refreshRowLayout(node);
+    });
     return state;
 }
 
@@ -1917,6 +1933,7 @@ export function syncRowLayout(node) {
 }
 
 export function refreshRowLayout(node) {
+    if (isNodes2()) { fitNodes2Content(node); return; }
     const state = node?.[ENGINE_KEY];
     if (!state) {
         return;

@@ -1,4 +1,9 @@
 import { app } from "../../scripts/app.js";
+import {
+  connectLoaderToInput,
+  createLoaderNode,
+  findCompatibleLoader,
+} from "./gg-loader-migration.js";
 
 const NODE_TYPE = "GGPromptOptimizer";
 const IMAGE_PREFIX = "图像";
@@ -88,9 +93,129 @@ function handleConnectionChange(node, type, index, connected) {
   node.setDirtyCanvas?.(true, true);
 }
 
+const LEGACY_MODELS_PROPERTY = "_ggLegacyPromptOptimizerModelsV1";
+const LEGACY_MODEL_INPUTS = ["CLIP名称", "CLIP类型", "VAE名称"];
+
+function normalizeLegacyModel(value) {
+  const model = String(value ?? "").trim();
+  return !model || model.startsWith("（") ? "" : model;
+}
+
+function migrateWidgetValues(info) {
+  const values = Array.isArray(info?.widgets_values) ? info.widgets_values : null;
+  const named = info?.widgets_values_named;
+  const inputs = Array.isArray(info?.inputs) ? info.inputs : [];
+  const oldNamed = named && LEGACY_MODEL_INPUTS.some((name) => name in named);
+  const oldInputs = inputs.some((input) => LEGACY_MODEL_INPUTS.includes(input?.name));
+  const oldValues = values && values.length >= 6
+    && /\.safetensors$/i.test(String(values[0] ?? ""))
+    && /\.safetensors$/i.test(String(values[2] ?? ""));
+  if (!values || (!oldNamed && !oldInputs && !oldValues)) return;
+
+  const legacyModels = {
+    clip: normalizeLegacyModel(named?.["CLIP名称"] ?? values[0]),
+    clipType: String(named?.["CLIP类型"] ?? values[1] ?? "").trim(),
+    vae: normalizeLegacyModel(named?.["VAE名称"] ?? values[2]),
+  };
+  if (legacyModels.clip || legacyModels.vae) {
+    info.properties = info.properties && typeof info.properties === "object" ? info.properties : {};
+    info.properties[LEGACY_MODELS_PROPERTY] = legacyModels;
+  }
+
+  const positive = String(named?.["正向提示词"] ?? values[4] ?? "");
+  const negative = String(named?.["负向提示词"] ?? values[5] ?? "");
+  const resolution = Number(named?.["分辨率"] ?? values[3] ?? 1024);
+  info.widgets_values = [positive, negative, Number.isFinite(resolution) ? resolution : 1024];
+  if (named && typeof named === "object") {
+    for (const name of LEGACY_MODEL_INPUTS) delete named[name];
+    named["正向提示词"] = positive;
+    named["负向提示词"] = negative;
+    named["分辨率"] = Number.isFinite(resolution) ? resolution : 1024;
+  }
+
+  // 旧版把模型选择器也镜像成输入项；保留会让新节点多出一条无法生效的端口。
+  info.inputs = inputs.filter((input) => !LEGACY_MODEL_INPUTS.includes(input?.name));
+  const connectable = info.properties?.ue_properties?.widget_ue_connectable;
+  if (connectable && typeof connectable === "object") {
+    for (const name of LEGACY_MODEL_INPUTS) delete connectable[name];
+  }
+}
+
+function migrateLegacyLoaders(node) {
+  const properties = node?.properties;
+  const legacy = properties?.[LEGACY_MODELS_PROPERTY];
+  if (!legacy || typeof legacy !== "object") return false;
+  const graph = node.graph || globalThis.app?.graph;
+  if (!graph || typeof graph.add !== "function") return false;
+
+  const x = Number(node.pos?.[0] || 0) - 380;
+  const y = Number(node.pos?.[1] || 0);
+  const clipModel = normalizeLegacyModel(legacy.clip);
+  const vaeModel = normalizeLegacyModel(legacy.vae);
+  const clipType = String(legacy.clipType || "qwen_image").trim() || "qwen_image";
+  const specs = [
+    {
+      model: clipModel,
+      nodeType: "CLIPLoader",
+      inputName: "clip",
+      values: { clip_name: clipModel, type: clipType },
+      title: "CLIP（提示词优化迁移）",
+      position: [x, y - 110],
+    },
+    {
+      model: vaeModel,
+      nodeType: "VAELoader",
+      inputName: "vae",
+      values: { vae_name: vaeModel },
+      title: "VAE（提示词优化迁移）",
+      position: [x, y + 120],
+    },
+  ];
+  const byKey = new Map();
+  let complete = true;
+  for (const spec of specs) {
+    if (!spec.model) continue;
+    const input = (node.inputs || []).find((item) => item?.name === spec.inputName);
+    if (!input) {
+      complete = false;
+      continue;
+    }
+    if (input.link != null) continue;
+
+    const key = JSON.stringify([spec.nodeType, spec.values]);
+    let loader = byKey.get(key) || findCompatibleLoader(graph, spec.nodeType, spec.values);
+    let created = false;
+    if (!loader) {
+      loader = createLoaderNode(graph, spec.nodeType, {
+        values: spec.values,
+        title: spec.title,
+        position: spec.position,
+      });
+      if (!loader) {
+        complete = false;
+        continue;
+      }
+      created = true;
+    }
+    if (!connectLoaderToInput(loader, node, spec.inputName)) {
+      if (created) graph.remove?.(loader);
+      complete = false;
+      continue;
+    }
+    byKey.set(key, loader);
+  }
+
+  if (complete) {
+    delete properties[LEGACY_MODELS_PROPERTY];
+    graph.setDirtyCanvas?.(true, true);
+  }
+  return complete;
+}
+
 function setupNode(node) {
   if (node?.comfyClass !== NODE_TYPE && node?.type !== NODE_TYPE) return;
   updateReferenceWidgetVisibility(node);
+  migrateLegacyLoaders(node);
   // Newer ComfyUI versions manage this schema with native Autogrow. The
   // fallback below is only for legacy node definitions without that support.
   if (hasNativeAutogrow(node)) return;
@@ -98,13 +223,10 @@ function setupNode(node) {
 }
 
 // ---------------------------------------------------------------------------
-// 参考图相关参数只在接入了参考图时生效
-// （guli_nodes/prompt_optimizer.py → _encode_qwen_image21：VAE 与 分辨率 都只在
-// 遍历 _ordered_images(images) 时被读取，没有参考图时两者都不会被用到）。
-// 因此未接入参考图时把「VAE名称」「分辨率」隐藏，接入后自动恢复。
+// 分辨率只在接入参考图时生效；VAE 是外接模型端口，保持原生端口显示。
 // ---------------------------------------------------------------------------
 
-const REFERENCE_ONLY_WIDGETS = ["VAE名称", "分辨率"];
+const REFERENCE_ONLY_WIDGETS = ["分辨率"];
 const REFERENCE_HIDDEN_TAG = "ggHiddenPromptOptimizer";
 const referenceWidgetState = {};
 
@@ -133,7 +255,7 @@ function toggleReferenceWidget(node, widget, show) {
 }
 
 function refreshReferenceNodeSize(node) {
-  // 对齐官方 Qwen 文本编码节点：完全不接管高度。切换「VAE名称」「分辨率」显隐时
+  // 对齐官方 Qwen 文本编码节点：完全不接管高度。切换参考图专属的「分辨率」显隐时
   // 只把宽度补足到能容纳控件，高度原样保留，交给原生布局与用户自由拉伸/压低
   // （多行框随节点缩放滚动）。绝不写高度，避免任何「只增不减」的棘轮。
   if (typeof node.computeSize === "function" && typeof node.setSize === "function") {
@@ -170,6 +292,13 @@ app.registerExtension({
       handleConnectionChange(this, ...args);
       updateReferenceWidgetVisibility(this);
       return result;
+    };
+
+    const originalConfigure = nodeType.prototype.configure;
+    nodeType.prototype.configure = function (...args) {
+      // 旧存档必须在下发控件值前改布局，否则模型文件名会灌进提示词框。
+      migrateWidgetValues(args?.[0]);
+      return originalConfigure?.apply(this, args);
     };
 
     const originalOnConfigure = nodeType.prototype.onConfigure;

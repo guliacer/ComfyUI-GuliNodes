@@ -1,3 +1,5 @@
+import json
+
 import comfy.sd
 import comfy.utils
 import folder_paths
@@ -148,12 +150,8 @@ class GGLoRACustomLoader(LoRAStackerBase):
 class GGLoRAGroupLoader(GGLoRACustomLoader):
     """LoRA 组加载：画布上维护多组 LoRA，选中哪组就只加载哪组。
 
-    组配置（每组名称 + 若干条 启用/名称/强度）由前端存在
-    ``node.properties["ggLoraGroups"]`` 里，随 UI 工作流 JSON 一起保存；
-    后端不需要接收整份配置，也不必在 Python 侧声明「组数 × 每组 LoRA 数」
-    个控件（那会把 widgets_values 撑成几百个槽位，且组数一变就全错位）。
-    切换组时前端已经把目标组的值写进 LoRA1..N 这套控件，所以执行逻辑与
-    GGLoRACustomLoader 完全一致，只取当前显示的那一份。
+    组配置随 UI 工作流保存，提交时一并传给后端。未连接组选择时沿用
+    画布当前组；连接后即使选择其他组，也能在执行时加载对应的 LoRA。
 
     「当前组」这个隐藏控件唯一的作用是参与 IS_CHANGED 的哈希：两组 LoRA
     值碰巧相同时，切换组也必须重新执行，不能吃到上一组的缓存。
@@ -169,12 +167,55 @@ class GGLoRAGroupLoader(GGLoRACustomLoader):
             "INT",
             {"default": 1, "min": 1, "max": cls.MAX_GROUPS, "step": 1},
         )
+        # 追加在全部旧控件之后，保持老工作流的位置数组及连线顺序。
+        spec["optional"]["选择组"] = ("STRING", {"default": ""})
+        spec["optional"]["组数据"] = ("STRING", {"default": ""})
         return spec
 
     FUNCTION = "load_group"
 
-    def load_group(self, 模型: object, LoRA数量: int = 0, 当前组: int = 1, **kwargs) -> tuple:
-        return self.load_loras(模型, LoRA数量, **kwargs)
+    def load_group(
+        self, 模型: object, LoRA数量: int = 0, 当前组: int = 1,
+        选择组: str = "", 组数据: str = "", **kwargs,
+    ) -> tuple:
+        if not 选择组:
+            return self.load_loras(模型, LoRA数量, **kwargs)
+
+        try:
+            groups = json.loads(组数据)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("LoRA 组数据无效，请重新打开工作流并检查组配置。") from exc
+        if not isinstance(groups, list) or not groups or not all(isinstance(group, dict) for group in groups):
+            raise ValueError("LoRA 组数据为空或格式错误，请检查组配置。")
+
+        # 下拉值含位置和组名，重名时也能准确选择；外部 STRING 节点可直接给唯一组名。
+        choices = [f"{index + 1}. {group.get('name') or f'LoRA组{index + 1}'}"
+                   for index, group in enumerate(groups)]
+        choice = str(选择组).strip()
+        if choice in choices:
+            index = choices.index(choice)
+        else:
+            matches = [i for i, group in enumerate(groups) if str(group.get("name", "")) == choice]
+            if len(matches) != 1:
+                raise ValueError(f"选择的 LoRA 组「{choice}」不存在或名称重复，请从组选择列表中重新选择。")
+            index = matches[0]
+
+        # 当前编辑组的控件可能接了真实上游输入，保留 ComfyUI 已解析的值。
+        if index == int(当前组) - 1:
+            return self.load_loras(模型, LoRA数量, **kwargs)
+
+        loras = groups[index].get("loras", [])
+        if not isinstance(loras, list):
+            raise ValueError("所选 LoRA 组的内容格式错误，请检查该组的 LoRA 配置。")
+        loras = loras[:self.MAX_LORAS]
+        group_inputs = {}
+        for slot, lora in enumerate(loras, 1):
+            if not isinstance(lora, dict):
+                raise ValueError(f"所选 LoRA 组的第 {slot} 条配置无效，请重新设置该 LoRA。")
+            group_inputs[f"LoRA{slot}名称"] = lora.get("name", "None")
+            group_inputs[f"LoRA{slot}强度"] = lora.get("strength", 1.0)
+            group_inputs[f"LoRA{slot}启用"] = lora.get("enable", True)
+        return self.load_loras(模型, len(loras), **group_inputs)
 
 
 NODE_CLASS_MAPPINGS = {

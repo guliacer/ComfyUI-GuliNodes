@@ -24,6 +24,7 @@ _NODE_MODULES = (
     "numeric_tools",
     "title_node",
     "group_controller",
+    "flow_tools",
     "seed_tools",
     "clipboard",
     "prompt_optimizer",

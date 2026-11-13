@@ -1,3 +1,4 @@
+import { isNodes2, isUserResizingNode, fitNodes2Content } from "./gg-nodes2.js";
 import { app } from "../../scripts/app.js";
 import "./gg-widget-input-layout.js";
 
@@ -221,6 +222,11 @@ function hasMultilineTextWidget(node) {
 }
 
 function fitNode(node, options = {}) {
+    // Vue owns content measurement and user resize; canvas estimates fight it.
+    if (isNodes2()) {
+        if (isGuliNode(node)) fitNodes2Content(node);
+        return;
+    }
     if (!isGuliNode(node) || !node.size) {
         return;
     }
@@ -278,7 +284,11 @@ function fitNode(node, options = {}) {
     // 下限要用「手动尺寸」而不是「当前尺寸」：前端 ComboWidget 换了选项会直接把 node.size
     // 写成内容高度（绕开所有扩展逻辑），这时 current 已经被改小了，拿它当下限等于认账。
     const floorWidth = Math.max(currentWidth, Number(manual?.[0]) || 0);
-    const floorHeight = Math.max(currentHeight, Number(manual?.[1]) || 0);
+    // 条件控件读档时会先全量撑高；内容归一化后，N张按用户副本恢复高度，
+    // 不把这段临时膨胀当成新的下限。可见内容需要更多空间时仍可正常撑高。
+    const floorHeight = options.restoreUserHeight && manual
+        ? Number(manual[1]) || currentHeight
+        : Math.max(currentHeight, Number(manual?.[1]) || 0);
     // 宽度：用户手动拖过就用他留的值（允许比内容窄——截断是他自己的选择，
     // 再拖宽随时可以），只在内容里含 DOM 面板时保住最小可用宽度。
     // 之前 max(floor, minimumWidth) 会把用户拖窄的节点在下次值变化时顶回内容宽。
@@ -371,7 +381,7 @@ app.registerExtension({
         const originalComputeSize = nodeType.prototype.computeSize;
         nodeType.prototype.computeSize = function (...args) {
             const size = originalComputeSize?.apply(this, args) ?? [this.size?.[0] ?? MIN_NODE_WIDTH, this.size?.[1] ?? MIN_NODE_HEIGHT];
-            if (!isGuliNode(this) || hasMultilineTextWidget(this)) {
+            if (isNodes2() || !isGuliNode(this) || hasMultilineTextWidget(this)) {
                 // 含多行文本框的节点交回原生尺寸，保持可自由压低高度。
                 return size;
             }
@@ -387,7 +397,7 @@ app.registerExtension({
             // ComfyUI 与其它扩展的布局也会走 onResize，把那些值记成手动尺寸，节点就再也收不回去了。
             const canvas = app?.canvas || globalThis.LGraphCanvas?.active_canvas;
             const liveSize = readNodeSize(this);
-            if (canvas?.resizing_node === this && liveSize) {
+            if (isUserResizingNode(this) && liveSize) {
                 this[MANUAL_SIZE_FLAG] = [Math.round(Number(liveSize[0]) || 0), Math.round(Number(liveSize[1]) || 0)];
                 // 持久化副本：读档时节点对象是新建的，内存标记要靠 properties 带回来。
                 try {
@@ -452,6 +462,6 @@ app.registerExtension({
 // 必须同步跑 fitNode，不能走 scheduleFit：那个队列合并 allowShrink 时是「只降不升」
 // （有一路说不许缩，整批就不许缩），而加载路径正好排着一路 allowShrink:false，
 // 异步派发会被它盖掉、高度收不回来。
-export function refitAfterContentChange(node) {
-    fitNode(node, { allowShrink: true });
+export function refitAfterContentChange(node, options = {}) {
+    fitNode(node, { allowShrink: true, restoreUserHeight: options.restoreUserHeight === true });
 }

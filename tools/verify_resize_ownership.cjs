@@ -18,7 +18,8 @@ const CLASSES = [
   'GGImageComparer2',
 ];
 // 高度由内容精确贴合管理的节点（功能语义，不是死锁）：只断言宽度与值变化。
-const HEIGHT_OWNED_BY_CONTENT = new Set(['GGImageComparer4', 'GGLoRACustomLoader']);
+// N张 的手动高度也必须验：只比宽度会漏掉读档后的高度膨胀。
+const HEIGHT_OWNED_BY_CONTENT = new Set(['GGLoRACustomLoader']);
 
 (async () => {
   const browser = await chromium.launch({

@@ -21,7 +21,7 @@ const CLASSES = [
   'GGImageMergeMask', 'GGImageObfuscate', 'GGImageStyleReference', 'GGImageSuperResolution',
   'GGImageTransform', 'GGInteger', 'GGMaskCheck', 'GGMaskCrop', 'GGMemoryCleanup',
   'GGPromptEnhancer', 'GGPromptOptimizer', 'GGRegionEditPrepare', 'GGSaveImage', 'GGSeedGenerator',
-  'GGSimpleMath', 'GGTextConcat', 'GGTextFileLoad', 'GGVAE解码', 'GGVideoCompress', 'GGVideoLoad',
+  'GGSimpleMath', 'GGTextConcat', 'GGTextFileLoad', 'GGVideoCompress', 'GGVideoLoad',
   'GGVideoLoadByPath', 'GGWebAIReverseText', 'GGZImageSampler', 'GGCLIPText', 'GG提示词优化',
   'GG图像反推',
 ];

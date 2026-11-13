@@ -1,3 +1,4 @@
+import { isNodes2, watchNodeState } from "./gg-nodes2.js";
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
 import { applySurface, ensureGGDesign, detectHostTheme, PALETTES } from "./gg-ui-design.js";
@@ -283,6 +284,12 @@ function setHiddenState(node, hidden) {
     if (next) node.properties[STATE_PROPERTY] = true;
     else delete node.properties[STATE_PROPERTY];
 
+    if (isNodes2()) {
+        syncVueTitle(node);
+        node.graph?.change?.();
+        node.setDirtyCanvas?.(true, true);
+        return;
+    }
     if (next) {
         markHiddenLayoutPending(node);
         applyHiddenNodeSize(node);
@@ -403,7 +410,7 @@ function releaseCollapsedWidth(node) {
 
 function syncCollapsedWidth(node) {
     if (!node) return;
-    if (isNodeCollapsed(node)) forceCollapsedWidth(node);
+    if (collapseFeatureEnabled && isNodeCollapsed(node)) forceCollapsedWidth(node);
     else releaseCollapsedWidth(node);
 }
 
@@ -1559,6 +1566,7 @@ function drawNativeButtonDivider(node, ctx) {
 
 function refreshNode(node) {
     if (!node) return;
+    if (isNodes2()) { syncVueTitle(node); return; }
     // 统一折叠宽度：无论节点是被我们的按钮、原生双击还是加载工作流带入折叠状态，
     // 都在这里对齐 getter（折叠装、展开撤），确保所有折叠节点等宽。
     syncCollapsedWidth(node);
@@ -1637,6 +1645,8 @@ function drawNodeWithPortToggle(node, draw) {
 }
 
 function drawNodeWithPortButton(node, ctx, draw) {
+    if (isNodes2()) return draw();
+    syncCollapsedWidth(node);
     if (!node || node._ggPortListDrawingInProgress === true) return draw();
 
     // Depending on the ComfyUI version, canvas.drawNode may call node.draw
@@ -1706,9 +1716,76 @@ function scheduleCanvasDrawingPatch() {
     canvasPatchTimer = globalThis.setTimeout(tick, 0);
 }
 
+
+function syncVueTitle(node, enabled = isNodes2()) {
+    syncCollapsedWidth(node);
+    const element = document.querySelector('.lg-node[data-node-id="' + CSS.escape(String(node.id)) + '"]');
+    if (!element) return;
+    if (!enabled) {
+        element.classList.remove("gg-vue-ports-hidden", "gg-vue-collapse-width");
+        element.querySelector(".gg-vue-title-actions")?.remove();
+        return;
+    }
+    element.classList.toggle("gg-vue-ports-hidden", featureEnabled && readHiddenState(node));
+    element.classList.toggle("gg-vue-collapse-width", collapseFeatureEnabled && isNodeCollapsed(node));
+    element.style.setProperty("--gg-collapsed-width", collapseFixedWidth + "px");
+    const header = element.querySelector(".lg-node-header > div");
+    if (!header) return;
+    let actions = header.querySelector(".gg-vue-title-actions");
+    if (!actions) {
+        ensureGGDesign();
+        actions = document.createElement("span");
+        actions.className = "gg-surface gg-vue-title-actions";
+        applySurface(actions);
+        Object.assign(actions.style, { display: "inline-flex", gap: "3px", flex: "0 0 auto" });
+        const add = (name, icon, action) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "gg-icon-btn";
+            button.dataset.ggAction = name;
+            button.innerHTML = ggIcon(icon, 13);
+            Object.assign(button.style, { width: "20px", height: "20px", padding: "2px" });
+            button.addEventListener("pointerdown", event => event.stopPropagation());
+            button.addEventListener("dblclick", event => event.stopPropagation());
+            button.addEventListener("click", event => {
+                event.stopPropagation();
+                action();
+                syncVueTitle(node);
+            });
+            actions.append(button);
+        };
+        add("ports", "eye", () => setHiddenState(node, !readHiddenState(node)));
+        add("pin", "pin", () => setNodePinned(node, !isNodePinned(node)));
+        header.append(actions);
+    }
+    const ports = actions.querySelector('[data-gg-action="ports"]');
+    ports.style.display = featureEnabled && nodeHasPorts(node) && !isNodeCollapsed(node) ? "" : "none";
+    ports.title = readHiddenState(node) ? "显示端口列表" : "隐藏端口列表";
+    ports.setAttribute("aria-label", ports.title);
+    ports.setAttribute("aria-pressed", String(readHiddenState(node)));
+    const pin = actions.querySelector('[data-gg-action="pin"]');
+    pin.style.display = pinFeatureEnabled ? "" : "none";
+    pin.title = isNodePinned(node) ? "取消置顶" : "置顶节点";
+    pin.setAttribute("aria-label", pin.title);
+    pin.setAttribute("aria-pressed", String(isNodePinned(node)));
+}
+
+function installVueTitle(node) {
+    if (!document.getElementById("gg-vue-title-style")) {
+        const style = document.createElement("style");
+        style.id = "gg-vue-title-style";
+        // Visibility preserves the native link anchors and never mutates slots.
+        style.textContent = ".gg-vue-ports-hidden .lg-slot{visibility:hidden;pointer-events:none}" +
+          ".lg-node.gg-vue-collapse-width{--node-width:var(--gg-collapsed-width)!important;--min-node-width:var(--gg-collapsed-width)!important}";
+        document.head.append(style);
+    }
+    watchNodeState(node, "title-actions", enabled => syncVueTitle(node, enabled));
+}
+
 function installNode(node) {
     if (!node || node._ggPortListToggleInstalled) return;
     node._ggPortListToggleInstalled = true;
+    installVueTitle(node);
     node._ggPortListHidden = readHiddenState(node);
     cachePortState(node);
 
@@ -1726,6 +1803,7 @@ function installNode(node) {
     const originalOnResize = node.onResize;
     if (typeof originalOnResize === "function" && !originalOnResize[NODE_RESIZE_PATCHED]) {
         const wrappedOnResize = function (...args) {
+            if (isNodes2()) return originalOnResize.apply(this, args);
             const canvas = app.canvas || globalThis.LGraphCanvas?.active_canvas;
             const userResizing = !this._ggPortListApplyingSize && canvas?.resizing_node === this;
             if (userResizing) {
@@ -1774,6 +1852,7 @@ function installNode(node) {
         node._ggPortListOriginalComputeSize = originalComputeSize;
         const wrappedComputeSize = function (...args) {
             const computed = originalComputeSize.apply(this, args);
+            if (isNodes2()) return computed;
             const canvas = app.canvas || globalThis.LGraphCanvas?.active_canvas;
             const resizing = canvas?.resizing_node === this
                 || this._ggPortListUserResizeGesture === true;

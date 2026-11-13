@@ -70,45 +70,45 @@
     "inputs": {
       "LoRA数量": 1,
       "LoRA1名称": "qwen\\编辑\\Qwen2.1 一致性无偏移_GH_V1.0.safetensors",
-      "LoRA1强度": 1.0,
+      "LoRA1强度": 1,
       "LoRA2名称": "None",
-      "LoRA2强度": 1.0,
+      "LoRA2强度": 1,
       "LoRA3名称": "None",
-      "LoRA3强度": 1.0,
+      "LoRA3强度": 1,
       "LoRA4名称": "None",
-      "LoRA4强度": 1.0,
+      "LoRA4强度": 1,
       "LoRA5名称": "None",
-      "LoRA5强度": 1.0,
+      "LoRA5强度": 1,
       "LoRA6名称": "None",
-      "LoRA6强度": 1.0,
+      "LoRA6强度": 1,
       "LoRA7名称": "None",
-      "LoRA7强度": 1.0,
+      "LoRA7强度": 1,
       "LoRA8名称": "None",
-      "LoRA8强度": 1.0,
+      "LoRA8强度": 1,
       "LoRA9名称": "None",
-      "LoRA9强度": 1.0,
+      "LoRA9强度": 1,
       "LoRA10名称": "None",
-      "LoRA10强度": 1.0,
+      "LoRA10强度": 1,
       "LoRA11名称": "None",
-      "LoRA11强度": 1.0,
+      "LoRA11强度": 1,
       "LoRA12名称": "None",
-      "LoRA12强度": 1.0,
+      "LoRA12强度": 1,
       "LoRA13名称": "None",
-      "LoRA13强度": 1.0,
+      "LoRA13强度": 1,
       "LoRA14名称": "None",
-      "LoRA14强度": 1.0,
+      "LoRA14强度": 1,
       "LoRA15名称": "None",
-      "LoRA15强度": 1.0,
+      "LoRA15强度": 1,
       "LoRA16名称": "None",
-      "LoRA16强度": 1.0,
+      "LoRA16强度": 1,
       "LoRA17名称": "None",
-      "LoRA17强度": 1.0,
+      "LoRA17强度": 1,
       "LoRA18名称": "None",
-      "LoRA18强度": 1.0,
+      "LoRA18强度": 1,
       "LoRA19名称": "None",
-      "LoRA19强度": 1.0,
+      "LoRA19强度": 1,
       "LoRA20名称": "None",
-      "LoRA20强度": 1.0,
+      "LoRA20强度": 1,
       "模型": [
         "4",
         0
@@ -116,6 +116,17 @@
     },
     "_meta": {
       "title": "一致性 LoRA（可设强度 0 禁用）"
+    }
+  },
+  "7": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen\\qwen3vl_8b_int8_convrot.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "_meta": {
+      "title": "Qwen Image 文本编码器"
     }
   },
   "10": {
@@ -170,15 +181,12 @@
       "api_key": "",
       "api_base_url": "https://api.deepseek.com",
       "model": "deepseek-flash",
-      "文生图PE模型": "clip_l.safetensors",
-      "图生图PE模型": "clip_l.safetensors",
       "文生图LLM模型": "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
       "图生图LLM模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
       "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
       "上下文长度": 8192,
       "最大生成token": 2048,
       "seed": 12345,
-      "生成后自动卸载模型": true,
       "输入提示词": [
         "10",
         2
@@ -186,7 +194,10 @@
       "图片.图片1": [
         "10",
         0
-      ]
+      ],
+      "卸载策略": "运行后自动卸载",
+      "透明背景": false,
+      "增强方向": "默认"
     },
     "_meta": {
       "title": "可选 AI：单独优化背景请求"
@@ -250,9 +261,6 @@
   "15": {
     "class_type": "GGPromptOptimizer",
     "inputs": {
-      "CLIP名称": "qwen\\qwen3vl_8b_int8_convrot.safetensors",
-      "CLIP类型": "qwen_image",
-      "VAE名称": "qwen\\qwen_image_2.1_vae_bf16.safetensors",
       "分辨率": 0,
       "正向提示词": [
         "14",
@@ -262,6 +270,14 @@
       "图像.图像1": [
         "11",
         1
+      ],
+      "clip": [
+        "7",
+        0
+      ],
+      "vae": [
+        "5",
+        0
       ]
     },
     "_meta": {
@@ -305,7 +321,7 @@
     "inputs": {
       "seed": 246813579,
       "steps": 9,
-      "cfg": 1.0,
+      "cfg": 1,
       "sampler_name": "euler",
       "scheduler": "simple",
       "denoise": 0.95,
@@ -351,7 +367,7 @@
     "inputs": {
       "遮罩扩展": 4,
       "遮罩羽化": 5,
-      "颜色还原": 1.0,
+      "颜色还原": 1,
       "接缝": [
         "11",
         0
@@ -445,15 +461,12 @@
       "api_key": "",
       "api_base_url": "https://api.deepseek.com",
       "model": "deepseek-flash",
-      "文生图PE模型": "clip_l.safetensors",
-      "图生图PE模型": "clip_l.safetensors",
       "文生图LLM模型": "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
       "图生图LLM模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
       "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
       "上下文长度": 8192,
       "最大生成token": 2048,
       "seed": 12345,
-      "生成后自动卸载模型": true,
       "输入提示词": [
         "30",
         2
@@ -461,7 +474,10 @@
       "图片.图片1": [
         "30",
         0
-      ]
+      ],
+      "卸载策略": "运行后自动卸载",
+      "透明背景": false,
+      "增强方向": "默认"
     },
     "_meta": {
       "title": "可选 AI：单独优化人像请求"
@@ -525,9 +541,6 @@
   "35": {
     "class_type": "GGPromptOptimizer",
     "inputs": {
-      "CLIP名称": "qwen\\qwen3vl_8b_int8_convrot.safetensors",
-      "CLIP类型": "qwen_image",
-      "VAE名称": "qwen\\qwen_image_2.1_vae_bf16.safetensors",
       "分辨率": 0,
       "正向提示词": [
         "34",
@@ -537,6 +550,14 @@
       "图像.图像1": [
         "31",
         1
+      ],
+      "clip": [
+        "7",
+        0
+      ],
+      "vae": [
+        "5",
+        0
       ]
     },
     "_meta": {
@@ -580,7 +601,7 @@
     "inputs": {
       "seed": 246813580,
       "steps": 9,
-      "cfg": 1.0,
+      "cfg": 1,
       "sampler_name": "euler",
       "scheduler": "simple",
       "denoise": 0.95,
@@ -626,7 +647,7 @@
     "inputs": {
       "遮罩扩展": 4,
       "遮罩羽化": 5,
-      "颜色还原": 1.0,
+      "颜色还原": 1,
       "接缝": [
         "31",
         0

@@ -2,7 +2,7 @@
   "id": "ff2efab8-a663-4b23-8f94-64c05ed16101",
   "revision": 0,
   "last_node_id": 79,
-  "last_link_id": 120,
+  "last_link_id": 124,
   "nodes": [
     {
       "id": 1,
@@ -557,7 +557,9 @@
             17,
             25,
             50,
-            58
+            58,
+            122,
+            124
           ]
         }
       ],
@@ -1166,6 +1168,82 @@
       }
     },
     {
+      "id": 7,
+      "type": "CLIPLoader",
+      "title": "Qwen Image 文本编码器",
+      "pos": [
+        510,
+        635
+      ],
+      "size": [
+        390,
+        105
+      ],
+      "flags": {},
+      "order": 57,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip_name",
+          "type": "COMBO",
+          "widget": {
+            "name": "clip_name"
+          },
+          "link": null
+        },
+        {
+          "name": "type",
+          "type": "COMBO",
+          "widget": {
+            "name": "type"
+          },
+          "link": null
+        },
+        {
+          "name": "device",
+          "type": "COMBO",
+          "widget": {
+            "name": "device"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            121,
+            123
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "CLIPLoader",
+        "gg_region_role": "clip",
+        "cnr_id": "comfy-core",
+        "ue_properties": {
+          "widget_ue_connectable": {
+            "clip_name": true,
+            "type": true,
+            "device": true
+          },
+          "version": "7.8",
+          "input_ue_unconnectable": {}
+        }
+      },
+      "widgets_values": [
+        "qwen\\qwen3vl_8b_int8_convrot.safetensors",
+        "qwen_image",
+        "default"
+      ],
+      "widgets_values_named": {
+        "clip_name": "qwen\\qwen3vl_8b_int8_convrot.safetensors",
+        "type": "qwen_image",
+        "device": "default"
+      }
+    },
+    {
       "id": 10,
       "type": "GGRegionEditPrepare",
       "pos": [
@@ -1509,20 +1587,16 @@
         {
           "localized_name": "文生图PE模型",
           "name": "文生图PE模型",
-          "type": "COMBO",
-          "widget": {
-            "name": "文生图PE模型"
-          },
-          "link": null
+          "type": "CLIP",
+          "link": null,
+          "shape": 7
         },
         {
           "localized_name": "图生图PE模型",
           "name": "图生图PE模型",
-          "type": "COMBO",
-          "widget": {
-            "name": "图生图PE模型"
-          },
-          "link": null
+          "type": "CLIP",
+          "link": null,
+          "shape": 7
         },
         {
           "localized_name": "文生图LLM模型",
@@ -1579,11 +1653,11 @@
           "link": null
         },
         {
-          "localized_name": "生成后自动卸载模型",
-          "name": "生成后自动卸载模型",
-          "type": "BOOLEAN",
+          "localized_name": "卸载策略",
+          "name": "卸载策略",
+          "type": "COMBO",
           "widget": {
-            "name": "生成后自动卸载模型"
+            "name": "卸载策略"
           },
           "link": null
         },
@@ -1638,15 +1712,12 @@
             "api_key": true,
             "api_base_url": true,
             "model": true,
-            "文生图PE模型": true,
-            "图生图PE模型": true,
             "文生图LLM模型": true,
             "图生图LLM模型": true,
             "mmproj": true,
             "上下文长度": true,
             "最大生成token": true,
             "seed": true,
-            "生成后自动卸载模型": true,
             "输入提示词": true,
             "卸载策略": true,
             "透明背景": true,
@@ -1663,8 +1734,6 @@
         "",
         "https://api.deepseek.com",
         "deepseek-flash",
-        "clip_l.safetensors",
-        "clip_l.safetensors",
         "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
@@ -1684,8 +1753,6 @@
         "api_key": "",
         "api_base_url": "https://api.deepseek.com",
         "model": "deepseek-flash",
-        "文生图PE模型": "clip_l.safetensors",
-        "图生图PE模型": "clip_l.safetensors",
         "文生图LLM模型": "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
         "图生图LLM模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
@@ -2100,57 +2167,11 @@
       "mode": 0,
       "inputs": [
         {
-          "localized_name": "图像1",
-          "name": "图像.图像1",
-          "shape": 7,
-          "type": "IMAGE",
-          "link": 15
+          "name": "clip",
+          "type": "CLIP",
+          "link": 121
         },
         {
-          "localized_name": "图像2",
-          "name": "图像.图像2",
-          "shape": 7,
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "localized_name": "CLIP名称",
-          "name": "CLIP名称",
-          "type": "COMBO",
-          "widget": {
-            "name": "CLIP名称"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "CLIP类型",
-          "name": "CLIP类型",
-          "type": "COMBO",
-          "widget": {
-            "name": "CLIP类型"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "VAE名称",
-          "name": "VAE名称",
-          "type": "COMBO",
-          "widget": {
-            "name": "VAE名称"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "分辨率",
-          "name": "分辨率",
-          "type": "INT",
-          "widget": {
-            "name": "分辨率"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "正向提示词",
           "name": "正向提示词",
           "type": "STRING",
           "widget": {
@@ -2159,13 +2180,38 @@
           "link": 14
         },
         {
-          "localized_name": "负向提示词",
           "name": "负向提示词",
           "type": "STRING",
           "widget": {
             "name": "负向提示词"
           },
           "link": null
+        },
+        {
+          "name": "分辨率",
+          "type": "INT",
+          "widget": {
+            "name": "分辨率"
+          },
+          "link": null
+        },
+        {
+          "name": "图像.图像1",
+          "type": "IMAGE",
+          "shape": 7,
+          "link": 15
+        },
+        {
+          "name": "图像.图像2",
+          "type": "IMAGE",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "shape": 7,
+          "link": 122
         }
       ],
       "outputs": [
@@ -2193,32 +2239,23 @@
         "cnr_id": "comfyui-gulinodes",
         "ue_properties": {
           "widget_ue_connectable": {
-            "CLIP名称": true,
-            "CLIP类型": true,
-            "VAE名称": true,
-            "分辨率": true,
             "正向提示词": true,
-            "负向提示词": true
+            "负向提示词": true,
+            "分辨率": true
           },
           "version": "7.8",
           "input_ue_unconnectable": {}
         }
       },
       "widgets_values": [
-        "qwen\\qwen3vl_8b_int8_convrot.safetensors",
-        "qwen_image",
-        "qwen\\qwen_image_2.1_vae_bf16.safetensors",
-        0,
         "",
-        ""
+        "",
+        0
       ],
       "widgets_values_named": {
-        "CLIP名称": "qwen\\qwen3vl_8b_int8_convrot.safetensors",
-        "CLIP类型": "qwen_image",
-        "VAE名称": "qwen\\qwen_image_2.1_vae_bf16.safetensors",
-        "分辨率": 0,
         "正向提示词": "",
-        "负向提示词": ""
+        "负向提示词": "",
+        "分辨率": 0
       }
     },
     {
@@ -2890,20 +2927,16 @@
         {
           "localized_name": "文生图PE模型",
           "name": "文生图PE模型",
-          "type": "COMBO",
-          "widget": {
-            "name": "文生图PE模型"
-          },
-          "link": null
+          "type": "CLIP",
+          "link": null,
+          "shape": 7
         },
         {
           "localized_name": "图生图PE模型",
           "name": "图生图PE模型",
-          "type": "COMBO",
-          "widget": {
-            "name": "图生图PE模型"
-          },
-          "link": null
+          "type": "CLIP",
+          "link": null,
+          "shape": 7
         },
         {
           "localized_name": "文生图LLM模型",
@@ -2960,11 +2993,11 @@
           "link": null
         },
         {
-          "localized_name": "生成后自动卸载模型",
-          "name": "生成后自动卸载模型",
-          "type": "BOOLEAN",
+          "localized_name": "卸载策略",
+          "name": "卸载策略",
+          "type": "COMBO",
           "widget": {
-            "name": "生成后自动卸载模型"
+            "name": "卸载策略"
           },
           "link": null
         },
@@ -3019,15 +3052,12 @@
             "api_key": true,
             "api_base_url": true,
             "model": true,
-            "文生图PE模型": true,
-            "图生图PE模型": true,
             "文生图LLM模型": true,
             "图生图LLM模型": true,
             "mmproj": true,
             "上下文长度": true,
             "最大生成token": true,
             "seed": true,
-            "生成后自动卸载模型": true,
             "输入提示词": true,
             "卸载策略": true,
             "透明背景": true,
@@ -3044,8 +3074,6 @@
         "",
         "https://api.deepseek.com",
         "deepseek-flash",
-        "clip_l.safetensors",
-        "clip_l.safetensors",
         "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
@@ -3065,8 +3093,6 @@
         "api_key": "",
         "api_base_url": "https://api.deepseek.com",
         "model": "deepseek-flash",
-        "文生图PE模型": "clip_l.safetensors",
-        "图生图PE模型": "clip_l.safetensors",
         "文生图LLM模型": "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf",
         "图生图LLM模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf",
         "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf",
@@ -3481,57 +3507,11 @@
       "mode": 0,
       "inputs": [
         {
-          "localized_name": "图像1",
-          "name": "图像.图像1",
-          "shape": 7,
-          "type": "IMAGE",
-          "link": 48
+          "name": "clip",
+          "type": "CLIP",
+          "link": 123
         },
         {
-          "localized_name": "图像2",
-          "name": "图像.图像2",
-          "shape": 7,
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "localized_name": "CLIP名称",
-          "name": "CLIP名称",
-          "type": "COMBO",
-          "widget": {
-            "name": "CLIP名称"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "CLIP类型",
-          "name": "CLIP类型",
-          "type": "COMBO",
-          "widget": {
-            "name": "CLIP类型"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "VAE名称",
-          "name": "VAE名称",
-          "type": "COMBO",
-          "widget": {
-            "name": "VAE名称"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "分辨率",
-          "name": "分辨率",
-          "type": "INT",
-          "widget": {
-            "name": "分辨率"
-          },
-          "link": null
-        },
-        {
-          "localized_name": "正向提示词",
           "name": "正向提示词",
           "type": "STRING",
           "widget": {
@@ -3540,13 +3520,38 @@
           "link": 47
         },
         {
-          "localized_name": "负向提示词",
           "name": "负向提示词",
           "type": "STRING",
           "widget": {
             "name": "负向提示词"
           },
           "link": null
+        },
+        {
+          "name": "分辨率",
+          "type": "INT",
+          "widget": {
+            "name": "分辨率"
+          },
+          "link": null
+        },
+        {
+          "name": "图像.图像1",
+          "type": "IMAGE",
+          "shape": 7,
+          "link": 48
+        },
+        {
+          "name": "图像.图像2",
+          "type": "IMAGE",
+          "shape": 7,
+          "link": null
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "shape": 7,
+          "link": 124
         }
       ],
       "outputs": [
@@ -3572,32 +3577,23 @@
         "cnr_id": "comfyui-gulinodes",
         "ue_properties": {
           "widget_ue_connectable": {
-            "CLIP名称": true,
-            "CLIP类型": true,
-            "VAE名称": true,
-            "分辨率": true,
             "正向提示词": true,
-            "负向提示词": true
+            "负向提示词": true,
+            "分辨率": true
           },
           "version": "7.8",
           "input_ue_unconnectable": {}
         }
       },
       "widgets_values": [
-        "qwen\\qwen3vl_8b_int8_convrot.safetensors",
-        "qwen_image",
-        "qwen\\qwen_image_2.1_vae_bf16.safetensors",
-        0,
         "",
-        ""
+        "",
+        0
       ],
       "widgets_values_named": {
-        "CLIP名称": "qwen\\qwen3vl_8b_int8_convrot.safetensors",
-        "CLIP类型": "qwen_image",
-        "VAE名称": "qwen\\qwen_image_2.1_vae_bf16.safetensors",
-        "分辨率": 0,
         "正向提示词": "",
-        "负向提示词": ""
+        "负向提示词": "",
+        "分辨率": 0
       }
     },
     {
@@ -5982,7 +5978,7 @@
       11,
       1,
       15,
-      0,
+      4,
       "IMAGE"
     ],
     [
@@ -6014,7 +6010,7 @@
       31,
       1,
       35,
-      0,
+      4,
       "IMAGE"
     ],
     [
@@ -6030,7 +6026,7 @@
       14,
       0,
       15,
-      6,
+      1,
       "STRING"
     ],
     [
@@ -6046,8 +6042,40 @@
       34,
       0,
       35,
-      6,
+      1,
       "STRING"
+    ],
+    [
+      121,
+      7,
+      0,
+      15,
+      0,
+      "CLIP"
+    ],
+    [
+      122,
+      5,
+      0,
+      15,
+      6,
+      "VAE"
+    ],
+    [
+      123,
+      7,
+      0,
+      35,
+      0,
+      "CLIP"
+    ],
+    [
+      124,
+      5,
+      0,
+      35,
+      6,
+      "VAE"
     ]
   ],
   "groups": [

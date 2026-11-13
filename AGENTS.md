@@ -15,7 +15,7 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 
 后端模块按能力划分，**完整清单以 `guli_nodes/__init__.py` 的 `_NODE_MODULES` 为准**（不要在本文件里维护副本，容易过期）：
 
-- 尺寸与潜空间：`aspect_ratio.py`｜图像：`image_tools.py`｜视频：`video_tools.py`｜VAE 缓存与显存清理：`model_loaders.py`
+- 尺寸与潜空间：`aspect_ratio.py`｜图像：`image_tools.py`｜视频：`video_tools.py`｜模型与显存清理：`model_loaders.py`
 - 文本与输入：`text_tools.py`、`clipboard.py`、`prompt_optimizer.py`、`prompt_lighting.py`、`prompt_library.py`、`key_tools.py`
 - 模型与采样：`lora_tools.py`、`zimage_sampler.py`、`seed_tools.py`
 - 其它：`numeric_tools.py`、`title_node.py`、`web_ai_tools.py`、`taprelay.py`
@@ -28,10 +28,19 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 
 新增前端扩展：放在 `web/`，`app.registerExtension({ name: "ComfyUI.GGNodes.<功能>" })`，设置项统一用 `GuliNodes.*` 前缀。前端文件清单直接看 `web/` 目录。
 
+### 模型加载与处理职责（强制）
+
+- 编码、条件构造、解码和图像处理节点只消费上游类型化模型输入。CLIP / VAE 必须分别使用 `CLIP` / `VAE` 输入；模型文件选择、加载、设备放置和缓存归 ComfyUI 原生 Loader 或独立 Loader 节点管理。
+- 不得在处理节点里添加 CLIP / VAE 文件名下拉框、调用 `comfy.sd.load_clip` / `comfy.sd.load_vae`，或建立私有模型缓存；不得把 Loader 与文本编码、条件构造、Latent 编解码重新合并成一个节点。优先桥接原生 `CLIPLoader` / `VAELoader`，保留类型化连线。
+- 新增节点或重写已有能力前，先搜索 `load_clip`、`load_vae` 及模块级模型缓存。发现已有融合节点时，按「加载节点输出模型 → 处理节点输入模型」拆分，并同步旧工作流迁移、README、使用指南和工作流生成脚本。
+- ComfyUI 没有兼容原生类型的专用后端（例如隔离进程的 GGUF 推理）不应伪装成 CLIP / VAE；确需本地模型功能时，明确后端边界。后续若同一专用后端被多个节点复用，再抽成独立 Loader 与专用类型，不复制加载缓存。
+- 模型生命周期测试至少覆盖：处理节点不自行加载 / 缓存模型、未接模型时报中文接线提示、外接模型被原样用于运算，以及现有工作流的节点 ID / 输出顺序保持稳定。CLIP / VAE 拆分防回归测试统一维护在 `tests/test_model_loader_separation.py`。
+- 拆分或重构模型职责后必须做一次全仓静态审计：检索旧控件名（`CLIP名称` / `CLIP类型` / `VAE名称` / `生成后自动卸载模型`）和旧私有缓存描述（`GuliNodes VAE 缓存` / `VAE 缓存编码` / `VAE 缓存解码`），并同步更新 README、使用指南、示例工作流、生成器与探针脚本。仅为旧工作流保留的兼容字段必须在 tooltip 与文档里注明「不生效 / 不再持有缓存」，不得描述成仍在使用的模型缓存。`tests/test_model_loader_separation.py` 会对用户文档执行这组静态扫描。
+
 ## 二、动手前：新功能设计自检（强制）
 
 **适用范围**：新增节点、新增前端扩展、给已有节点加参数/选项/输出、重写已有能力。
-**先过一遍下面 6 项并把结论说出来，再动代码。** 最常见的返工不是写错，而是「做出来了但本来不该做」或「做重了」。
+**先过一遍下面 8 项并把结论说出来，再动代码。** 最常见的返工不是写错，而是「做出来了但本来不该做」或「做重了」。
 
 1. **必要性**——已有节点换个用法能不能覆盖？是用户明确要求，还是「顺手加的」（顺手加的不做）？ComfyUI 原生或社区插件已经有这个能力吗？有就优先做桥接（见「六」「七」）。只有极少数场景用得上的参数，考虑不落地。
 2. **闭环**——后端 `execute`、前端交互、错误信息、文档四处都跟上了吗？空输入 / 未连接 / 0 或负数 / 超范围 / 维度不匹配 / 缺外部依赖都想过吗？错误信息是中文且能说清「哪错了 + 怎么改」吗？新参数进旧工作流会不会回退默认，默认值是否与旧行为一致？
@@ -39,6 +48,20 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 4. **中文参数**——显示名、参数名、选项值、输出名、分类、提示与错误信息一律中文（技术专名除外，见「三」）。
 5. **可简化**——参数越少越好：一个选择器能推导出来的不要暴露两个输入；上游能算出来的不要在本节点重复提供；选择器让某些输入失效时按「四」隐藏掉；默认值要能「不填也能用」；近似参数合并。
 6. **收尾**——同步 README 与 `pyproject.toml`（见「八」），补齐致谢。**版本号不要动**，改动写进「未发布」小节并顺手更正旧条目。
+7. **尺寸归属**——先回答「这个节点的高度/宽度谁说了算」，再写代码。默认规则是**用户拖过的尺寸只增不减**：
+   - 自动贴合（行布局 `applyHeight`、面板 `resolveNodeHeight`、`computeSize` 覆写、`lockRowLayoutHeight`、预览贴合）一律取 `max(内容高度, 手动/存档基线)`；手动基线只在 `app.canvas.resizing_node === node` 时记录，读档从 `onConfigure(info).size` 认领，不能在首帧 `computeSize` 上量（那时隐藏控件还没收掉，会量出 1100+）。
+   - 只有两种收缩是允许的，且必须在注释与文档里写明理由：① 按槽位精确贴合的 LoRA 类节点；② 新建节点按内容收一次（`shrinkToFit` 这类开关只在 `nodeCreated` 传 `true`）。
+   - **禁止在读档、执行回包、预览加载、切换参数等「非用户拖动」路径上把节点设成精确内容高度**——`GG 文本拼接`（改字后缩回最小）与 `GG 视频保存`（读档/执行后缩回最小）都是这个错误。
+   - 设计完成后必须验证：跑 `tools/probe_size_shrink.cjs`，或给该节点补一条 `tools/verify_<节点>_height.cjs`，覆盖「拉高 → 触发该节点的重排路径 → 读档」三步，高度都不许掉；同时要断言「用户自己往下拖仍然能变小」，避免把节点焊死。
+8. **多路输入要自动新增**——节点接收「同类可互换、数量不定」的多路输入（分支选择、多源合并、批量对比等）时，默认按下面这套做，**不要固定摆满端口或给固定候选下拉**：
+   - 输入用 `io.Autogrow`（`TemplatePrefix` / `TemplateNames`，`min=1`，上限按场景定），接线后自动长出下一路。参考实现：`guli_nodes/flow_tools.py`（GG 选择）、原生 `BranchNode` / `And` / `Or`。
+   - 类型跟随上游：输入输出共用 `io.MatchType.Template`，不要写死 `"*"` 或单一类型，由第一路连接决定具体类型。
+   - 选择器只列已连接项：优先官方分支选择控件（`extra_dict={"widgetType": "COMFY_BRANCH_SELECTOR"}`，且 Autogrow 组名必须是 `autogrow`）；自建下拉用前端 `widget.options.values = () => 已连接项`。**不要**把「输入1~输入20」这类固定候选直接摊给用户。
+   - 自动跟随：前端扩展在连线变化 / 读档时把下拉值校准到第一路已连接项（见 `web/gg-switch-branch.js`）；后端在选中项为空或已断开时同样回退到第一路，并给中文提示。
+   - 惰性执行：多路互斥只跑一路时，输入要 `lazy=True` 且 `check_lazy_status` 只请求选中项；Autogrow 的惰性键是 `autogrow.<子输入名>`，惰性回调里值会被包成 `(值, 键)`，不要用 `is None` 判断是否已求值。
+   - **不要用 `io.Array` 把「已连接名称列表」传给执行器**：当前 ComfyUI 校验会把 list 当连线解析并抛 `KeyError`（官方 `BranchNode` 走 API 同样触发）。名称要么由前端写进 STRING 控件，要么由后端从 Autogrow 键推导。
+   - 只有「各路类型不同且必须同时存在」或「固定语义槽位」（LoRA 槽、宽高参数等）才保留固定端口。
+   - 主动检查：新增或重写节点时顺手扫一遍同类固定槽端口（含旧节点），符合上述条件的直接按这套改掉并同步文档，不要等用户提出再返工。
 
 **结论指向「不做」或「改成改已有节点」时，这就是正确结果，不要因为已经动手了就硬推下去。**
 
@@ -105,6 +128,7 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - **切换控件显隐时,`type` 必须先于 `hidden` 写**:隐藏时先写 `hidden = true` 再把 `type` 换成隐藏类型;显示时先把 `type` 恢复成真实类型再写 `hidden = false`。前端 `hidden` 的 setter 只在当前 `type` **不是** legacy 隐藏类型时才把值写回控件原始选项(名字含 `hidden` 的 `ggHiddenXxx` 都会被判定为隐藏类型);顺序写反时 `type` 一变、控件类被重新套用,可见性会从旧值重新派生,表现为「该显示的控件不显示,要再操作一次才出现」。仓库内所有显隐 helper 一律按此顺序。
 - **原型上的安装标记不能和实例标记同名**。`nodeType.prototype._xInstalled = true` 之后，实例里读 `node._xInstalled` 会顺着原型链拿到 `true`，于是「每个节点装一次」的逻辑被整段跳过，而且**不报错、测试台里也看不出来**（`GG 文本拼接` 的控件回调包装曾因此完全没生效，表现为「填了第一个框却不增行」）。原型用 `_xProtoPatched`、实例用 `_xWrapped` 这类不同名字，测试台要走 `beforeRegisterNodeDef` 建原型再实例化，否则测不到。
 - **不要只靠 `widget.callback` 感知文本改动**。新版前端（Vue 渲染的文本控件）改字时不一定回调 `widget.callback`，只挂回调会出现「输入了但界面不响应」。做法是回调 + 节点绘制钩子双保险：在 `onDrawForeground` 里比对一次状态，用「上次结果」做缓存，数量没变时只花一次比较，不算高频重绘。
+- **文本框字数角标只在 `web/gg-text-counter.js` 维护**：只扫 GuliNodes 节点的多行 `TEXTAREA`（单行输入框、API Key、文件名不统计），角标挂在宿主 `.dom-widget` 父容器里绝对定位，不要在每个节点里各写一份。统计口径是去掉空白后的 Unicode 码点数，验证见 `tools/verify_text_counter.cjs`。
 - **面板类 DOM 控件的高度一律走 `web/gg-panel-fit.js`**（`measurePanelHeight` / `nextWidgetHeight` / `lockPanelChildren` / `scheduleRefit`），不要自己读 `host.scrollHeight` 定高。面板高度是「量内容 → 交给节点定高 → 前端再按它给面板定高」的闭环，在受限状态下量到的是被挤压后的值，会被当成正确值锁死；而且前端分配的高度比 `computeSize` 请求的少约 16px，不补就裁掉面板底部。`GG 镜头打光提示词` 的 72 个光效曾整块消失（光效区被压成 0 高、顶栏还写着「共 72 种」），就是这两件事叠在一起。**判断「面板有没有被裁」只看 `host.scrollHeight` 与 `host.parentElement.offsetHeight`**：面板容器的高度是跟着**内容**走的（≈ `computeSize` − 16），不是跟着节点高度走，所以 `node.size[1] - wrapper.offsetHeight` 不是固定的「节点 chrome」——内容变矮时 wrapper 立刻缩、节点还没缩，算出来的差额会跟着膨胀，`height = 自然高度 + 差额` 恒等于当前高度，`fitNode` 从此永远提前返回、节点再也缩不回去（这个改法试过，已回退）。
 - **面板宽度只能跟着节点走，不许有独立的最小宽度**。面板比节点宽时，它不会把节点撑大，只会从右边戳出去（`GG 提示词库` 曾把「面板最小宽度 380」当默认宽度用，节点拖到 240 时面板还是 352，溢出 112px）。做法是 `panelWidth = nodeWidth - 内边距`，最小值只加在**节点**上；`computeSize` / `onResize` / 重贴合三处都要按同一个口径算，否则换个入口又冒出来。
 - **栅格按条数平均分布，别固定列数**。固定 3 列时 4 条排成 3 + 1，最后一行孤零零一个、右边空一大片。先按可用宽度算出最多能放几列 `maxCols`，再按 `ceil(count / ceil(count / maxCols))` 反推列数：3 条 → 1 行 3 列、4 条 → 2 行 2 列、5 条 → 3 + 2。列数要跟着宽度重算（宽度变了要重新 `gridTemplateColumns`），并且栅格项必须 `min-width: 0`，否则卡片不会低于内容宽度、整列被撑出去。卡片上的操作按钮用绝对定位浮在右端，别当 flex 兄弟——隐藏时它照样占宽度，三列下名字会被挤成省略号。
@@ -119,8 +143,11 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - **「基础 / 高级」这类显示模式只改显示**：不得清除已选项、不得改变输出内容。被模式藏起来的项若已被选中，必须保持可见可取消，否则会出现「标题写着已选 2、列表里却找不到是哪两项」；分组计数也要跟着写成「6 / 8 项」，与眼前的按钮对得上。模式与主题属于用户偏好，跟着工作流存进 `properties`；折叠 / 滚动位置才是纯浏览状态，不存。
 - **判断「控件是否已接线」必须看 `input.link != null`，不能只看 `node.inputs` 里有没有同名条目**。新版前端会把**每一个控件**都镜像成一条 `node.inputs` 条目（`widget: { name }`、`link: null`），只按名字匹配等于把所有控件都当成端口：`GG 文本拼接` 曾因此一次性把 20 个文本框全放出来（每个都被判定为「已接线、必须可见」）。测试台必须专门造一组「全部镜像 + 全部 `link: null`」的节点来覆盖这条，否则桩里没有镜像条目，测不出这个 bug。
 - **已接线槽位的控件显隐归前端，我们只交还类型与尺寸，不碰 `hidden`**。实测前端对已接线控件只改 `hidden`（接线置 `true`、`removeLink` 置 `false`），**从不改 `type`**。我们若连 `hidden` 一起改，就是和前端抢同一个开关：要么接线后空框冒出来，要么断开后 `type` 还停在 `ggHiddenXxx`、前端把 `hidden` 放开也渲染不出高度。做法是「还原 `type` / `computeSize` + 清掉自己的隐藏标记 + 留一个『已交还』标记」，断开后若看到该标记且 `hidden` 仍为真就补一次——因为前端只有 `removeLink` 这条路会自己放开，`disconnectOutput` 不会。**这个标记要在「看到接线」时无条件写上，不能只在「我们曾经藏过它」时才写**：接线前它本来可见的控件我们没有隐藏标记，一旦漏写，`disconnectOutput` 断开后控件就永远藏着、而我们以为它已经显示了。这类改动**必须让 `onConnectionsChange` 走强制重算**，否则「可见数量没变、缓存命中」会让交还逻辑整段跳过。
+- **被前端藏起来的「已接线控件」要补一条带名字的标记行**。前端对已接线控件只留一个端口点，而隐藏的控件行仍按原高度参与排版：`GGPromptEnhancer` 的多行文本区实测保留 318px，节点中间一大块空白，端口点也没有任何文字，用户看不出线连在哪。做法：把隐藏控件收成一行（同时写 `computeSize` 与 `computedHeight`，然后必须调 `node.arrange()` 才会重排）、在该行画「控件名 ← 上游输入」；断开时由扩展自己放开 `hidden`（部分断开路径前端不会放开），并用一帧延迟把接线前的节点高度还原——引擎在断开这一帧可能已按「没有多行文本区」把节点收矮，当场设回去会被它再收一次。自动重排期间的 `setSize` 要用 `_ggEnhancerApplying` 闸住，不能记进用户高度记忆。验收跑 `tools/verify_prompt_enhancer_wired_rows.cjs`（12 项）。
 - **自动增长的槽位，接线也要算「在用」**。只按文本框内容计数时，把第一个槽位转成输入端口并接线之后，节点上就只剩一个端口、一个能打字的框都没有（`GG 文本拼接` 用户实测报的缺陷）。但也不能「有连线就参与计数」——那会隔着空位接线时把前面的空框一起撑出来。正确口径是**只在可见范围末尾顺延**：先按内容算出范围，若范围正好停在一个已接线的槽位上就往后挪，直到落到未接线的槽位；隔着空位接第 3 个槽位时范围仍停在 1。接线槽位控件里的残留文字是死数据，一律不参与计数。
 - **改连线的源槽位只能走 `link.origin_slot = 新槽位` 这个 setter**。新版前端的 Link 是带 `_state` 的代理对象，这个 setter 会同步 `_state.originSlot` 和两端的 `output.links` / `input.link`。绕过它去手写 `link._state.originSlot`、或自己把 `output.links` 清空重挂（`GG 简单数学表达式` 的旧连线迁移栽过），三处状态立刻对不上，**连线在下一帧被整条删掉**。同理不要用 `removeOutput` 退役端口——它内部 `disconnectOutput`，会把该槽位的连线一并断掉；只清尾部未接线的槽位才安全。
+- **视频保存这类「预览决定高度」的节点，只在新建时按内容收一次，其余路径只增不减**。`GGVideoSave` 的预览贴合原来在读档、执行回包、`loadedmetadata` 三条路径上都按内容精确设置高度，用户拉高 / 工作流里存的高度每次都被收回最小高度。做法：`lockPreviewInsideNode(node, shrinkToFit)` 只在 `nodeCreated` 传 `true`，`loadedGraphNode` / `onExecuted` / `loadedmetadata` 一律 `max(当前高度, 内容高度)`；用户自己往下拖仍走 `onResize` 的下限钳制，不会被锁死。验收跑 `tools/verify_video_save_height.cjs`，全仓排查用 `tools/probe_size_shrink.cjs`。
+- **`GG 文本拼接` 的高度只增不减，首帧不能量 `computeSize`**。槽位按内容自动长出来，若每次改字都重新贴合，用户拉高的尺寸会被一路收回最小高度（用户实测报的缺陷）。规则：① 首帧布局会把 20 个槽位全算进 `computeSize`（实测 1100+），必须等隐藏槽位真正收掉后再量——`ready` 门控 + 120 / 320 / 800ms 三轮重试；② 取 `max(自然高度, 手动基线)`，手动基线只在 `app.canvas.resizing_node === node` 时记录；③ 读档用 `onConfigure` 的 `info.size[1]` 当基线，settle 期间以它为下限、结束后锁死；④ 延迟重试必须无条件走 `fitNode`：`syncSlots` 的可见数量缓存命中时 `changed` 为 false，强制同步不补这一下，高度就永远停在首帧的 1100+。验收跑 `tools/verify_text_concat_height.cjs`。
 - **老存档的 `widgets_values` 比当前控件数短时，要在原始 `configure` 之前补齐**。新版前端按控件数重建 `node.inputs` 里的控件镜像条目，长度对不上就会把连线的 `target_slot` 打乱，**整条连线在 configure 阶段就被丢掉**（`GG 简单数学表达式` 从 2 条表达式扩到 10 条时实测）。做法：patch `nodeType.prototype.configure`，在调原始 `configure` 之前把 `info.widgets_values` 补到当前控件数（前缀保留用户原值，后面补默认值），同时记下「这是老存档」以便做槽位迁移。
 - **别用「`serialize()` 后改字段」拼旧工作流夹具**。`widgets_values` 长度、`outputs` 数组、`links` 元组互相牵制，改一处就变成不自洽的混搭格式，测出来的是夹具问题不是产品逻辑（`GG 简单数学表达式` 的旧连线迁移用这种方式反复假失败）。正确做法：用真实连线建图，再把「旧状态」（旧输出名、老存档标记）直接注入节点对象，驱动真实的同步路径。
 - **控件显隐 / 端口增删之后必须显式收一次高度**。`gg-node-autofit.js` 在「打开工作流」路径上是 `allowShrink: false`（用户拉出来的宽高要留住），内容变小后没人收，节点就留着全可见时撑出来的空白（`GG 图像对比 N张` 实测 800~990 高、下面一大片空白）。统一入口是 `refitAfterContentChange(node)`（导出自 `gg-node-autofit.js`）——**必须走它内部的同步 `fitNode`，不要用 `scheduleFit` 异步派发**：那个队列合并 `allowShrink` 时是「只降不升」（有一路说不许缩，整批就不许缩），而加载路径正好排着一路 `allowShrink:false`，异步会被它盖掉、高度收不回来。用户手动拖过的节点（`_ggAutoFitManualSize`）仍只增不减，这条保护在 `fitNode` 内部。
@@ -134,8 +161,8 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - **布尔控件的列宽口径是 46 不是 60**：`BooleanWidget` 不走 `drawTruncatingText`，`drawLabel` 从 x=30 画、`drawValue` 右对齐到 `width-40`，所以 `requiredWidth()` 用 `BOOL_CHROME = 46`（文本 / 下拉 / 数值仍是 `TEXT_CHROME = 60`），标签-数值空白实测 6px 而不是 20px。`verify_all_rows.cjs` / `verify_dynamic_rows.cjs` 的口径要按 `type === "toggle"` 分别取 46 / 60。窄宽时 flow 节点在 `drawWidgets` 绘制期临时设 `LiteGraph.truncateWidgetValuesFirst = true` 保住标签，**必须在 `finally` 还原**：那是 LiteGraph 全局策略，常开会改掉其它节点的截断行为。改这块跑 `tools/verify_compress_save_layout.cjs`（21 项，含真实鼠标拖拽与读档）和 `tools/shot_compress_save.cjs` 截图核对。
 
 - **提示词增强的本地LLM 与本地PE 一样按任务分模型，分界线是「要不要送图」**。`_enhance()` 用 `bool(ref_frames)` 选 `llm_i2i_model / llm_t2i_model`，不要用 `task_mode == MODE_I2I`：自动模式反推返回 `MODE_T2I + reverse=True` 但必须看图，得走 I2I 模型 + mmproj；文生图不送图，走 T2I 模型并强制 `mmproj_name = NO_MMPROJ`，否则加载视觉 chat 模板又慢又不对。默认模型按文件名 t2i / i2i 记号挑且必须排除 mmproj；mmproj 只认与 I2I 模型公共前缀 ≥12 的配套文件，凑不上就保持「无」。
-- **给 `GGPromptEnhancer` 加控件只能插在下标 9 之后，并同步前端 configure 迁移**。它的 `widgets_values` 是位置数组（18 个声明控件 + `control_after_generate` = 19 位），`输入提示词` 在 15 位；插在前面会把老存档的提示词错位到别的控件上。新增控件后必须 patch `nodeType.prototype.configure`，在**原始 configure 之前**补值（前端按控件数重建 `node.inputs` 镜像，长度对不上会在 configure 阶段丢连线）；后端 `_run` 同时保留 `P_LLM_LEGACY = "主模型"` 兼容旧 API 提交。验证要跑 `tools/verify_prompt_enhancer_llm_split.cjs`（含 18/17 位老存档与真实连线读档）和 `tools/verify_prompt_enhancer_llm_api.py`（真机提交新字段）。
-- **改 UI 工作流里节点的 `inputs` 数组，必须同步平移 `links` 的槽位下标**。`GGPromptEnhancer` 把「主模型」拆成两项时，顶层 `links` 是 `[id, src, ss, dst, ds, type]`（`ds` 在下标 4），`definitions.subgraphs[].links` 是 `{id, target_id, target_slot, ...}` 对象数组；插入点之后所有目标槽位 +1，否则「输入提示词」「seed」的连线会指向错误控件（读档丢线）。子图节点不在顶层 `nodes` 里：静态检查要递归 `definitions.subgraphs`，真机检查要遍历 `app.graph._subgraphs`（**是 Map，不是普通对象**）而不是只扫 `graph._nodes`。改完跑 `tests/test_region_workflow.py` 的双向一致断言 + `tools/verify_example_llm_models.cjs` + `tools/sync_example_llm_models.py --check`。仓库老示例还有 **16 位**存档（下标 13 是旧前端存的布尔 `control_after_generate`，尾部缺「透明背景」「增强方向」），`migrateWidgetValues()` 要单独处理，不能只覆盖 18/17 位。**反向的坑同样要挡**：`widgets_values_named` 若已含拆开的双模型，说明是新版存档、只是少了前端自动加的 `control_after_generate`（骨架工具生成的 18 位便是），此时只能补下标 14 的 `"fixed"`，不能按老主模型再插一格；用 18 位老存档做迁移测试时必须删掉 `widgets_values_named`，否则 named 保护会让断言假 PASS。
+- **`GGPromptEnhancer` 的本地PE 模型只能来自外接 `CLIP` 端口，不得再出现 PE 文件名控件**。现行 `widgets_values` 是 17 位位置数组（16 个声明控件 + 前端自动加的 `control_after_generate`）：0 任务模式、1 输出语言、2 增强方式、3 api_key、4 api_base_url、5 model、6 文生图LLM模型、7 图生图LLM模型、8 mmproj、9 上下文长度、10 最大生成token、11 seed、12 `control_after_generate`、13 卸载策略、14 输入提示词、15 透明背景、16 增强方向。`文生图PE模型` / `图生图PE模型` 是 `optional` 的 `CLIP` 输入（`shape: 7`、无 `widget`），由上游 `CLIPLoader` 供给；老存档的 PE 文件控件值只用于建 Loader，随后删除，不参与新数组。新增控件优先追加末尾；必须插在 `输入提示词` 之前时，要同时 patch `nodeType.prototype.configure`，在原始 configure 之前补值并迁移老数组（16 / 18 / 19 位都要覆盖）。后端保留 `P_LLM_LEGACY` 仅用于旧 API 提交兼容。验证跑 `tools/verify_prompt_enhancer_llm_split.cjs` 和 `tools/verify_prompt_enhancer_llm_api.py`。
+- **`GGPromptOptimizer` 拆分后是 8 槽 → 7 槽，改 UI 工作流的 `inputs` 时必须按映射平移 `links` 的目标槽位**：old 0 `图像.图像1` → new 4、old 4 `分辨率` → new 3、old 5 `正向提示词` → new 1、old 6 `负向提示词` → new 2、old 7 `图像.图像2` → new 5；new 0 `clip` 接 `CLIPLoader`、new 6 `vae` 接外部 VAE（通常来自子图 `vae` 输入）。顶层 `links` 是 `[id, src, ss, dst, ds, type]`（`ds` 在下标 4），子图 `definitions.subgraphs[].links` 是 `{id, target_id, target_slot, ...}` 对象数组；改 `inputs` 后必须保证 `inputs[slot].link === link.id` 且双向一致，否则读档丢线。`GGPromptEnhancer` 拆 PE 时相反：两个 PE 输入**保留原槽位只改类型**，seed / 输入提示词 / 透明背景 / 增强方向的连线槽位不移动。子图节点不在顶层 `nodes` 里：静态检查递归 `definitions.subgraphs`，真机检查遍历 `app.graph._subgraphs`（是 Map）。示例 API 工作流不得出现 PE 文件字符串。改完跑 `tests/test_region_workflow.py` 的双向一致断言 + `tools/verify_example_llm_models.cjs` + `tools/sync_example_llm_models.py --check`。
 
 - 不要用全局轮询做高频重绘；用 `requestAnimationFrame`、设置变更回调或轻量事件钩子。
 - `MutationObserver` 挂在 `document.body`（尤其 `subtree: true`）时，回调必须防抖 / 节流，且回调里严禁整文档 `querySelectorAll` 或读 `offsetHeight` / `getBoundingClientRect` 等触发强制回流的操作——ComfyUI 前端启动时会疯狂构建 DOM，未节流的重回调会把主线程拖死、工作台白屏卡死（`gg-ui-icons.js` 等多个文件栽过这个模式）。能局部观察就不要观察 `body`，能只处理 `addedNodes` 就不要重扫全文档。
@@ -177,7 +204,7 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 
 - `README.md`：主要能力、节点清单、依赖与兼容、致谢与借鉴说明、更新记录。
 - `pyproject.toml`：`tool.gulinodes.node_count`。
-- 后端注册节点数当前为 **50**（另有 1 个由前端生成：`GG 选项确认`，所以清单是 51 行）。新增前端扩展不计入；只有新增 Python 后端节点才需要改这个数字。
+- 后端注册节点数当前为 **53**（另有 1 个由前端生成：`GG 选项确认`，所以清单是 54 行）。新增前端扩展不计入；只有新增 Python 后端节点才需要改这个数字。
 - 数节点**不能按显示名数**：本机 `custom_nodes` 下还有配套包 `ComfyUI-GuliNodes-Dependencies`，它的显示名同样以 `GG` 开头（`GG 人脸磨皮`、`GG 智能人脸美化`、`GG 色彩匹配`、`GG 提示词优化`、`GG 图像反推`、`GG 反推模型`、`GG 图像风格参考`），按名字做差集会把这 7 个算进本仓库。可靠做法：`import guli_nodes` 后读 `NODE_DISPLAY_NAME_MAPPINGS`，或 `/object_info` 里按 `python_module.startswith('guli_nodes.')` 过滤。
 
 **所有改动一律写进 `README.md`「更新记录」顶部的 `### 未发布` 小节**（没有就新建），不另开小节，也不自己编版本号——写 `v1.1.3`、`v1.2.0` 这类未授权版本号、或顺手改 `pyproject.toml` 的 `version` 都算越权。
@@ -203,6 +230,7 @@ ComfyUI-GuliNodes 是一组面向中文工作流的 ComfyUI 自定义节点 + �
 - 无头测试台本身有两个容易造出**假 FAIL** 的坑：stub 的 2D context 必须跟踪 `translate()`（花瓣是 `translate(x,y)` 后的 `ellipse(0,0)`，不跟踪就一律记成原点）；仿真时长必须长于最长粒子生命周期（否则长寿命粒子还在半路，测出的扩散距离偏小）。另外"逐帧画面不同"只能证明在动、**证明不了随机**——要额外断言同节点同效果的两次全新会话排布不同。现测试台还断言各效果的形态可辨识：花瓣为贝塞尔轮廓（非椭圆）、音符为刻制谱号字形（无 `fillText`、多形态）、爱心存在被箭射中形态、流星方位随机覆盖多数罗盘扇区、浅色主题 ink 占比不过淡。
 - **无头测试台的桩必须复现真实 DOM 的完整 API**，少一个方法就测出「假 FAIL」，而且是崩在桩的缺口上、看起来像产品的 bug。`document.createElement` 返回的对象至少要具备 `style` / `dataset` / `classList`（`add` / `remove` / `contains` / `toggle`）/ `setAttribute` / `getAttribute` / `hasAttribute` / `removeAttribute` / `appendChild` / `addEventListener` / `dispatch`：设计层只要调一次 `applySurface`，缺 `hasAttribute` 就会整个面板崩掉。同理，桩里只造最小 `node.inputs` 会让「镜像条目」这类 bug 完全测不出来。造桩前先问「真实前端还多塞了什么」。
 - **断言必须做反向验证**：故意把关键规则改坏（例如让 `applySurface` 在 auto 模式重新钉属性、让色板退回空串），确认对应断言真的 FAIL，再改回来。一次全绿不可信，报 0 条 FAIL 往往说明断言在空跑。
+- **改节点尺寸逻辑必须跑尺寸专项验证**：`tools/probe_size_shrink.cjs` 全仓扫「拉高 → 触发重排（执行 / 切参数 / 读档）→ 是否回缩」，单节点断言写成 `tools/verify_<节点>_height.cjs`（参考 `verify_text_concat_height.cjs` / `verify_video_save_height.cjs`）。必须同时断言两条：① 手动高度与存档高度在重排、读档后都不掉；② 用户自己往下拖仍然能变小（`canvas.resizing_node === node`），避免为了「不回缩」把节点焊死。
 - **界面类改动要跑两个真实环境工具**：`probe-surfaces.mjs [dark|light]` 盘点页面上所有 `gg-*` 界面的底色 / 文字色 / 亮度 / 对比度（深色主题里任何 `lum > 0.5` 的块会被标成「深色主题里的浅底」），`run-surfaces-live.mjs` 做深浅两套断言（开关四态、菜单、底部工具栏 / 折叠设置弹层 / 密钥面板 / 悬浮工具条 / 剪贴板右键菜单）。改完先盘点、再断言，最后 `shot-surfaces.mjs` 拍图肉眼复核——**「亮着像开着」「深色里一块白」「色板显示纯黑」这三类问题只有眼睛能发现**。
 - **截图类脚本要显式收拾造景**：`pointerdown` 才收起的弹层在脚本里不会自己关（`el.click()` 只派发 click），`opacity: 0` 的悬浮条要 `dispatchEvent(new MouseEvent("mouseenter"))` 才会浮出来。不收拾就会拍出「同一个按钮两种样子」的假象，或者拍到一块空背景。
 - **别依赖宿主或上一次测试留下的状态**：`GuliNodes.enableFloatButtons` 这类开关存在服务端设置里，被关过一次之后，后面每次跑都报「悬浮工具条不存在」——看着像回归，其实是造景没保证。测试台开局把需要的开关显式设成期望值，需要的节点自己 `createNode` 造（别指望「默认工作流里正好有个 CLIPTextEncode」）。同理，`el.dispatchEvent(new MouseEvent("mouseenter"))` 触发不了 CSS `:hover`，要验悬停样式必须用真实鼠标移动（`page.mouse.move`）。

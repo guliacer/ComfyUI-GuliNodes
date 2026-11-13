@@ -1,4 +1,4 @@
-import { app } from "../../scripts/app.js";
+import { isUserResizingNode } from "./gg-nodes2.js";
 
 // 面板类 DOM 控件的公共贴合逻辑（GG 镜头打光提示词、GG 提示词库、GG 密钥输入共用）。
 // 这里只解决「面板高度怎么算、怎么不被挤压、用户拉过的尺寸怎么留住」这三件事，
@@ -91,11 +91,6 @@ export function scheduleRefit(node, fitNode, delay = 90) {
  * @param {object} node 节点
  * @returns {boolean}
  */
-function isUserResizingNode(node) {
-  if (!node) return false;
-  const canvas = app?.canvas || globalThis.LGraphCanvas?.active_canvas;
-  return canvas?.resizing_node === node;
-}
 
 /**
  * 记住用户手动拉过的高度。装一次就够，重复调用直接返回。

@@ -1,3 +1,5 @@
+import { isNodes2, watchNodeState, fitNodes2Content } from "./gg-nodes2.js";
+import { createVuePanel, panelButton, createVueOrderControls } from "./gg-vue-panel.js";
 import { app } from "../../scripts/app.js";
 import { registerRowLayout, refreshRowLayout, paintCapsuleBase, widgetBaseColors, skinColorsFor } from "./gg-widget-rows.js";
 import { isWidgetSkinEnabled } from "./gg-skin-scope.js";
@@ -30,6 +32,8 @@ import { isWidgetSkinEnabled } from "./gg-skin-scope.js";
 const TARGET_CLASS = "GGLoRAGroupLoader";
 const COUNT_WIDGET_NAME = "LoRA数量";
 const GROUP_INDEX_WIDGET = "当前组";
+const GROUP_SELECT_WIDGET = "选择组";
+const GROUP_DATA_WIDGET = "组数据";
 const ADD_LORA_BUTTON = "新增LoRA";
 const HINT_WIDGET = "gg_lora_group_hint";
 const TABS_WIDGET = "gg_lora_group_tabs";
@@ -204,6 +208,90 @@ function persistIndex(node, index) {
     const widget = getWidget(node, GROUP_INDEX_WIDGET);
     if (widget) {
         widget.value = index + 1;
+    }
+    syncGroupSelection(node, true);
+}
+
+// 选项确认显示动态组名；位置前缀也能区分用户自定义的同名组。
+function groupChoices(groups) {
+    return groups.map((group, index) => String(index + 1) + ". " + group.name);
+}
+
+function syncGroupSelection(node, syncSource = false) {
+    const widget = getWidget(node, GROUP_SELECT_WIDGET);
+    if (!widget) return;
+    const groups = readGroups(node);
+    const choice = groupChoices(groups)[currentIndex(node, groups)];
+    widget.value = choice;
+    if (!syncSource || app.configuringGraph) return;
+    const input = findInputForWidget(node, widget);
+    const link = input?.link == null ? null
+        : (node.graph?.getLink?.(input.link) ?? node.graph?.links?.[input.link]);
+    const source = link && node.graph?.getNodeById?.(link.origin_id);
+    if (source?.type !== "GGOptionConfirm") return;
+    const sourceWidget = source.widgets?.find((item) => item.__ggOptionConfirmSlot === link.origin_slot);
+    if (sourceWidget) sourceWidget.value = choice;
+    source.refreshComboInNode?.();
+    source.setDirtyCanvas?.(true, true);
+}
+
+function positionGroupSelection(node, geometry = null) {
+    const input = findInputForWidget(node, getWidget(node, GROUP_SELECT_WIDGET));
+    if (!input) return;
+    input.label = isNodes2() ? GROUP_SELECT_WIDGET : " ";
+    input.alwaysVisible = true;
+    if (isNodes2()) {
+        delete input.pos;
+    } else if (geometry) {
+        const x = (globalThis.LiteGraph?.NODE_SLOT_HEIGHT ?? 20) / 2;
+        const y = geometry.top + geometry.height / 2;
+        if (!input.pos || input.pos[0] !== x || input.pos[1] !== y) input.pos = [x, y];
+    }
+}
+
+function installGroupSelection(node) {
+    const widget = getWidget(node, GROUP_SELECT_WIDGET);
+    if (!widget) return;
+    widget.options ??= {};
+    widget.options.values = () => groupChoices(readGroups(node));
+    if (!widget._ggGroupSelectionBound) {
+        widget._ggGroupSelectionBound = true;
+        const original = widget.callback;
+        widget.callback = function (value, ...args) {
+            const result = original?.call(this, value, ...args);
+            const groups = readGroups(node);
+            const index = groupChoices(groups).indexOf(String(value));
+            if (index >= 0 && index !== currentIndex(node, groups)) switchGroup(node, index);
+            return result;
+        };
+    }
+    let input = findInputForWidget(node, widget);
+    if (!input && typeof node.addInput === "function") {
+        node.addInput(GROUP_SELECT_WIDGET, "STRING", { widget: { name: GROUP_SELECT_WIDGET } });
+        input = findInputForWidget(node, widget);
+    }
+    if (input) input.widget = { name: GROUP_SELECT_WIDGET };
+    // 组标签就是选择器的可见界面，原始字符串控件只承担连线和序列化。
+    widget.hidden = true;
+    widget.type = HIDDEN_TAG + "Selector";
+    widget.computeSize = () => [0, -4];
+    widget.computedHeight = 0;
+    positionGroupSelection(node);
+    syncGroupSelection(node);
+
+    const dataWidget = getWidget(node, GROUP_DATA_WIDGET);
+    if (dataWidget) {
+        if (!dataWidget._ggGroupDataSerializer) {
+            dataWidget._ggGroupDataSerializer = true;
+            dataWidget.serializeValue = () => {
+                const groups = readGroups(node).map((group) => ({ ...group, loras: [...group.loras] }));
+                const index = currentIndex(node, groups);
+                const loras = snapshotSlots(node);
+                groups[index].loras = loras.length ? loras : [emptyLora()];
+                return JSON.stringify(groups);
+            };
+        }
+        toggleWidget(node, dataWidget, false);
     }
 }
 
@@ -436,6 +524,7 @@ function tabsGeometry(node) {
     // 调试/回归共用同一份几何：绘制、命中检测、验证脚本都读它，
     // 不另写一套坐标公式，避免「画在这儿、点在那儿」的假 PASS。
     node._ggGroupGeometry = geometry;
+    positionGroupSelection(node, geometry);
     return geometry;
 }
 
@@ -722,6 +811,8 @@ function drawTabsColumn({ ctx, node, widget, width, y, height, showText }) {
 }
 
 function loraRows(node) {
+    if (isNodes2()) return Array.from({ length: getVisibleCount(node) }, (_, i) =>
+        [ENABLE_SUFFIX, NAME_SUFFIX, STRENGTH_SUFFIX].map(suffix => getWidget(node, "LoRA" + (i + 1) + suffix)));
     const rows = node?._ggRowLayout?.rows ?? [];
     // 提示条 / 组标签条 / 「新增LoRA」按钮都是单控件行，过滤掉只留三列 LoRA 行。
     return rows.filter((row) => Array.isArray(row) && row.length > 1);
@@ -1048,8 +1139,9 @@ function cleanupHiddenSlots(node) {
 }
 
 function refreshNode(node) {
+    if (isNodes2()) fitNodes2Content(node);
     cleanupHiddenSlots(node);
-    if (typeof node.computeSize === "function") {
+    if (!isNodes2() && typeof node.computeSize === "function") {
         const [width, height] = node.computeSize();
         const nextWidth = Math.max(Number(node.size?.[0]) || 0, width);
         if (typeof node.setSize === "function") {
@@ -1193,6 +1285,52 @@ function syncInitialState(node) {
     persistIndex(node, clamp(Math.round(index), 0, groups.length - 1));
 }
 
+
+function setupVueGroups(node) {
+    const panel = createVuePanel(node, "gg_lora_groups_dom", 40);
+    if (!panel) return;
+    const index = node.widgets.indexOf(panel.widget);
+    if (index > 0) node.widgets.unshift(...node.widgets.splice(index, 1));
+    const sync = (enabled, changed) => {
+        positionGroupSelection(node);
+        const legacy = getWidget(node, TABS_WIDGET);
+        if (legacy && legacy.hidden !== enabled) legacy.hidden = enabled;
+        if (!enabled) return;
+        const groups = readGroups(node);
+        const active = currentIndex(node, groups);
+        const key = JSON.stringify([active, groups.map(group => [group.id, group.name])]);
+        if (!changed && panel.stateKey === key) return;
+        panel.stateKey = key;
+        const bar = document.createElement("div");
+        bar.setAttribute("role", "tablist");
+        Object.assign(bar.style, { display: "flex", flexWrap: "wrap", gap: "4px", minWidth: "0" });
+        groups.forEach((group, i) => {
+            const tab = panelButton(group.name, () => { switchGroup(node, i); sync(true, true); });
+            tab.setAttribute("role", "tab");
+            tab.setAttribute("aria-selected", String(i === active));
+            tab.title = "双击重命名";
+            tab.style.maxWidth = "100%";
+            tab.style.overflow = "hidden";
+            tab.style.textOverflow = "ellipsis";
+            tab.style.whiteSpace = "nowrap";
+            tab.addEventListener("dblclick", event => { event.stopPropagation(); renameGroup(node, i, event); });
+            bar.append(tab);
+        });
+        const add = panelButton("＋", () => { addGroup(node); sync(true, true); });
+        add.setAttribute("aria-label", "新增 LoRA 组");
+        add.disabled = groups.length >= MAX_GROUPS;
+        const rename = panelButton("改名", event => renameGroup(node, active, event));
+        rename.setAttribute("aria-label", "重命名当前 LoRA 组");
+        const remove = panelButton("删除组", () => { deleteGroup(node, active); sync(true, true); });
+        remove.disabled = groups.length <= 1;
+        bar.append(add, rename, remove);
+        panel.host.replaceChildren(bar);
+        panel.fit();
+    };
+    watchNodeState(node, "lora-groups", sync);
+    sync(isNodes2(), true);
+}
+
 function setupNode(node) {
     if (!node || node.comfyClass !== TARGET_CLASS) {
         return;
@@ -1201,12 +1339,15 @@ function setupNode(node) {
         return;
     }
     installCustomWidgets(node);
+    installGroupSelection(node);
+    setupVueGroups(node);
     // 兼容旧会话里已经挂过提示条的节点：不再画它，也不让它占一行高度。
     const legacyHint = getWidget(node, HINT_WIDGET);
     if (legacyHint) {
         toggleWidget(node, legacyHint, false);
     }
     installAddButton(node);
+    createVueOrderControls(node, () => getVisibleCount(node), (from, to) => reorderLoras(node, from, to));
     installSlotCallbacks(node);
     installStrengthPrecision(node);
     installPointerHandlers();
@@ -1238,6 +1379,7 @@ function groupNodes() {
 }
 
 function locatePointer(event) {
+    if (isNodes2()) return null;
     const pos = eventToGraph(event);
     if (!pos) {
         return null;
@@ -1391,6 +1533,7 @@ function renameGroup(node, index, event) {
         }
         group.name = name;
         writeGroups(node, groups);
+        syncGroupSelection(node, true);
         markDirty(node);
     };
     if (typeof app.canvas?.prompt === "function") {
@@ -1627,18 +1770,44 @@ app.registerExtension({
         if (nodeData.name !== TARGET_CLASS) {
             return;
         }
-        const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
-        nodeType.prototype.onNodeCreated = function () {
-            const result = originalOnNodeCreated?.apply(this, arguments);
-            setTimeout(() => setupNode(this), 0);
-            return result;
-        };
-        const originalOnConfigure = nodeType.prototype.onConfigure;
-        nodeType.prototype.onConfigure = function () {
-            const result = originalOnConfigure?.apply(this, arguments);
-            setTimeout(() => setupNode(this), 0);
-            return result;
-        };
+        // 宿主每次布局都会按隐藏控件的位置重算端口；布局结束后同步端口和命中矩形。
+        const arrangeInputs = nodeType.prototype._arrangeWidgetInputSlots;
+        if (typeof arrangeInputs === "function" && !nodeType.prototype._ggLoraGroupArrangePatched) {
+            nodeType.prototype._ggLoraGroupArrangePatched = true;
+            nodeType.prototype._arrangeWidgetInputSlots = function (...args) {
+                const result = arrangeInputs.apply(this, args);
+                if (!isNodes2()) {
+                    const tabs = getWidget(this, TABS_WIDGET);
+                    const slot = this.inputs?.findIndex((input) => input?.name === GROUP_SELECT_WIDGET) ?? -1;
+                    if (tabs && slot >= 0) {
+                        positionGroupSelection(this, {
+                            top: Number(tabs.y) || 0,
+                            height: Number(tabs.computedHeight) || TABS_H,
+                        });
+                        const input = this._concreteInputs?.[slot] ?? this.inputs[slot];
+                        if (input?.boundingRect) this._measureSlot?.(input, slot, true);
+                    }
+                }
+                return result;
+            };
+        }
+        if (!nodeType.prototype._ggLoraGroupLifecyclePatched) {
+            nodeType.prototype._ggLoraGroupLifecyclePatched = true;
+            const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
+            nodeType.prototype.onNodeCreated = function () {
+                const result = originalOnNodeCreated?.apply(this, arguments);
+                installGroupSelection(this);
+                setTimeout(() => setupNode(this), 0);
+                return result;
+            };
+            const originalOnConfigure = nodeType.prototype.onConfigure;
+            nodeType.prototype.onConfigure = function () {
+                const result = originalOnConfigure?.apply(this, arguments);
+                installGroupSelection(this);
+                setTimeout(() => setupNode(this), 0);
+                return result;
+            };
+        }
     },
 
     nodeCreated(node) {

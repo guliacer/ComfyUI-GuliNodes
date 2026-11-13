@@ -1,3 +1,4 @@
+import { nodes2Drag, isNodes2 } from "./gg-nodes2.js";
 import { app } from "../../scripts/app.js";
 import { ggIcon } from "./gg-ui-icons.js";
 
@@ -66,8 +67,10 @@ function nodeBox(node) {
     const top = (Number(pos[1]) || 0) - th;
     return { left, top, right: left + (Number(size[0]) || 0), bottom: (Number(pos[1]) || 0) + (Number(size[1]) || 0) };
   }
-  const left = Number(b[0]);
-  const top = Number(b[1]);
+  // Vue publishes its measured bounds one frame after pointer movement.
+  // Read the live position for alignment, retaining the measured dimensions.
+  const left = isNodes2() ? Number(node.pos[0]) : Number(b[0]);
+  const top = isNodes2() ? Number(node.pos[1]) - (globalThis.LiteGraph?.NODE_TITLE_HEIGHT || 30) : Number(b[1]);
   return { left, top, right: left + Number(b[2]), bottom: top + Number(b[3]) };
 }
 
@@ -91,6 +94,7 @@ function graphNodes(canvas) {
 // 本 litegraph 版本已废弃 canvas.node_dragged；拖动节点的状态在
 // canvas.isDragging / canvas.state.draggingItems（区别于拖画布 draggingCanvas）。
 function isDraggingNodes(canvas) {
+  if (nodes2Drag()?.moved) return true;
   if (!canvas) return false;
   if (canvas.dragging_canvas === true || canvas.state?.draggingCanvas === true) return false;
   return canvas.isDragging === true || canvas.state?.draggingItems === true;
@@ -112,6 +116,7 @@ function isNodeLike(item) {
 
 function draggedNodes(canvas) {
   const set = new Set();
+  if (nodes2Drag()?.node) set.add(nodes2Drag().node);
   const selected = canvas?.selected_nodes;
   if (selected) {
     for (const key in selected) {
@@ -213,7 +218,7 @@ function applyPendingSnap(canvas) {
   pendingSnap = null;
   if (!dx && !dy) return;
   for (const node of nodes) {
-    if (Array.isArray(node.pos)) {
+    if (isCoordinatePair(node.pos)) {
       node.pos[0] += dx;
       node.pos[1] += dy;
     }
@@ -404,6 +409,23 @@ app.registerExtension({
   async setup() {
     enabled = getSettingValue(SETTING_ID, true) !== false;
     installPatches();
+    document.addEventListener("pointerup", () => {
+      if (!enabled || !nodes2Drag()?.moved) return;
+      computeSnap(app.canvas);
+      const snap = pendingSnap;
+      // The native pointer handler commits its final position after capture.
+      // Save absolute targets and apply them after that commit; the legacy
+      // mouse-up handler must not consume or apply this same delta first.
+      const targets = snap?.nodes.map(node => [node, node.pos[0] + snap.dx, node.pos[1] + snap.dy]);
+      pendingSnap = null;
+      requestAnimationFrame(() => {
+        for (const [node, x, y] of targets ?? []) node.pos = [x, y];
+        pendingSnap = null;
+        clearGuides(app.canvas);
+        app.canvas?.setDirty?.(true, true);
+        app.canvas?.graph?.change?.();
+      });
+    }, true);
     createTopButton();
     let attempts = 0;
     const timer = setInterval(() => {

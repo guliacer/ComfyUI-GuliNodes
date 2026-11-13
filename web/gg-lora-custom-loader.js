@@ -1,3 +1,5 @@
+import { createVueOrderControls } from "./gg-vue-panel.js";
+import { isNodes2, fitNodes2Content } from "./gg-nodes2.js";
 import { app } from "../../scripts/app.js";
 import { registerRowLayout, refreshRowLayout, paintCapsuleBase } from "./gg-widget-rows.js";
 
@@ -31,6 +33,8 @@ const CHECK_BOX = 18;
 const pointerState = { drag: null, press: null };
 
 function loraRows(node) {
+    if (isNodes2()) return Array.from({ length: getVisibleCount(node) }, (_, i) =>
+        [ENABLE_SUFFIX, NAME_SUFFIX, STRENGTH_SUFFIX].map(suffix => getWidget(node, "LoRA" + (i + 1) + suffix)));
   const rows = node?._ggRowLayout?.rows ?? [];
   // 最后一行是「新增LoRA」按钮（单控件行），不参与重排。
   return rows.filter((row) => Array.isArray(row) && row.length > 1);
@@ -384,9 +388,10 @@ function cleanupHiddenSlots(node) {
 }
 
 function refreshNode(node) {
+    if (isNodes2()) fitNodes2Content(node);
     cleanupHiddenSlots(node);
 
-    if (typeof node.computeSize === "function") {
+    if (!isNodes2() && typeof node.computeSize === "function") {
         const [width, height] = node.computeSize();
         const nextWidth = Math.max(Number(node.size?.[0]) || 0, width);
         const nextHeight = height;
@@ -630,6 +635,7 @@ function eventToGraph(event) {
 }
 
 function locatePointer(event) {
+  if (isNodes2()) return null;
   const pos = eventToGraph(event);
   if (!pos) {
     return null;
@@ -812,6 +818,7 @@ function setupNode(node) {
     toggleWidget(node, countWidget, false);
     installSlotCallbacks(node);
     installAddButton(node);
+    createVueOrderControls(node, () => getVisibleCount(node), (from, to) => reorderLoras(node, from, to));
     installStrengthPrecision(node);
     installPointerHandlers();
     updateSlotVisibility(node);

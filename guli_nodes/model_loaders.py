@@ -1,13 +1,7 @@
-from collections import OrderedDict
 import asyncio
 import gc
-import hashlib
-import os
-import threading
 
 import comfy.model_management as mm
-import comfy.sd
-import folder_paths
 import torch
 
 try:
@@ -35,139 +29,8 @@ MEMORY_CLEANUP_DISPLAY_NAME = "GG \u5185\u5b58\u6e05\u7406"
 MEMORY_CLEANUP_ROUTE = "/guli/memory/cleanup"
 _MEMORY_ROUTE_REGISTERED = False
 
-LATENT_INPUT = "Latent"
-IMAGE_INPUT = "\u56fe\u50cf"
-VAE_NAME = "VAE\u540d\u79f0"
-IMAGE_OUTPUT = "\u56fe\u50cf"
-LATENT_OUTPUT = "Latent"
-EMPTY_VAE_MESSAGE = "\uff08\u8bf7\u628aVAE\u6a21\u578b\u653e\u5230 models/vae\uff09"
-VAE_DECODE_NODE_ID = "GGVAE\u89e3\u7801"
-VAE_DECODE_DISPLAY_NAME = "GG VAE\u89e3\u7801"
-VAE_CACHE_LIMIT = 2
-
 MODEL_OUTPUT = "\u6a21\u578b"
 CATEGORY = "GuliNodes/模型"
-
-
-def _resolve_model_file(folder_names: tuple[str, ...], model_file: str) -> str:
-    for folder_name in folder_names:
-        try:
-            model_path = folder_paths.get_full_path(folder_name, model_file)
-        except Exception:
-            model_path = None
-        if model_path and os.path.exists(model_path):
-            return model_path
-
-    for folder_name in folder_names:
-        fallback_path = os.path.join(folder_paths.models_dir, folder_name, model_file)
-        if os.path.exists(fallback_path):
-            return fallback_path
-
-    return ""
-
-
-def _model_file_fingerprint(model_path: str) -> str:
-    if not model_path or not os.path.exists(model_path):
-        return ""
-    try:
-        stat = os.stat(model_path)
-    except OSError:
-        return model_path
-    return f"{model_path}:{stat.st_size}:{stat.st_mtime_ns}"
-
-
-def _get_native_vae_loader_class():
-    try:
-        from nodes import VAELoader
-
-        return VAELoader
-    except Exception:
-        return None
-
-
-def _get_native_vae_decode_class():
-    try:
-        from nodes import VAEDecode
-
-        return VAEDecode
-    except Exception:
-        return None
-
-
-def _list_vae_files() -> list[str]:
-    loader_class = _get_native_vae_loader_class()
-    if loader_class is not None:
-        try:
-            files = loader_class.vae_list(loader_class)
-            if files:
-                return files
-        except Exception:
-            pass
-
-    try:
-        files = folder_paths.get_filename_list("vae")
-    except Exception:
-        files = []
-    if "pixel_space" not in files:
-        files.append("pixel_space")
-    return files or [EMPTY_VAE_MESSAGE]
-
-
-def _vae_file_fingerprint(vae_name: str) -> str:
-    if not vae_name or vae_name == EMPTY_VAE_MESSAGE:
-        return ""
-    if vae_name == "pixel_space":
-        return "pixel_space"
-
-    loader_class = _get_native_vae_loader_class()
-    image_taes = getattr(loader_class, "image_taes", ["taesd", "taesdxl", "taesd3", "taef1", "taef2"])
-    video_taes = getattr(loader_class, "video_taes", ["taehv", "lighttaew2_2", "lighttaew2_1", "lighttaehy1_5", "taeltx_2"])
-
-    if vae_name in image_taes:
-        try:
-            approx_vaes = folder_paths.get_filename_list("vae_approx")
-            encoder = next((name for name in approx_vaes if name.startswith(f"{vae_name}_encoder.")), "")
-            decoder = next((name for name in approx_vaes if name.startswith(f"{vae_name}_decoder.")), "")
-        except Exception:
-            encoder = decoder = ""
-        fingerprints = []
-        for filename in (encoder, decoder):
-            if not filename:
-                continue
-            try:
-                path = folder_paths.get_full_path_or_raise("vae_approx", filename)
-            except Exception:
-                path = _resolve_model_file(("vae_approx",), filename)
-            fingerprints.append(_model_file_fingerprint(path))
-        return "|".join(fingerprints) or vae_name
-
-    folder_name = "vae_approx" if os.path.splitext(vae_name)[0] in video_taes else "vae"
-    try:
-        path = folder_paths.get_full_path_or_raise(folder_name, vae_name)
-    except Exception:
-        path = _resolve_model_file((folder_name,), vae_name)
-    return _model_file_fingerprint(path)
-
-
-def _load_vae_with_native_loader(vae_name: str):
-    loader_class = _get_native_vae_loader_class()
-    if loader_class is None:
-        raise RuntimeError("\u672a\u80fd\u8bfb\u53d6 ComfyUI \u539f\u751f\u52a0\u8f7dVAE\u8282\u70b9\u3002")
-    return loader_class().load_vae(vae_name)[0]
-
-
-def _decode_vae_with_native_node(vae, samples):
-    decode_class = _get_native_vae_decode_class()
-    if decode_class is not None:
-        return decode_class().decode(vae, samples)
-
-    latent = samples["samples"]
-    if latent.is_nested:
-        latent = latent.unbind()[0]
-    images = vae.decode(latent)
-    if len(images.shape) == 5:
-        images = images.reshape(-1, images.shape[-3], images.shape[-2], images.shape[-1])
-    return (images,)
 
 
 def _format_bytes(value) -> str:
@@ -210,13 +73,6 @@ def _run_cleanup_step(name: str, action, messages: list[str], errors: list[str])
             messages.append(f"{name}: {result}")
     except Exception as exc:
         errors.append(f"{name}: {exc}")
-
-
-def _clear_guli_vae_cache() -> int:
-    with GGVaeDecode._cache_lock:
-        count = len(GGVaeDecode._vae_cache)
-        GGVaeDecode._vae_cache.clear()
-    return count
 
 
 def _clear_device_caches(messages: list[str], errors: list[str]) -> None:
@@ -264,7 +120,7 @@ def _execute_memory_cleanup(
             messages.append("\u6e05\u7406\u524d: " + "\uff1b".join(before))
 
     if clear_vae_cache:
-        _run_cleanup_step("GuliNodes VAE\u7f13\u5b58", lambda: f"\u6e05\u9664 {_clear_guli_vae_cache()} \u4e2a", messages, errors)
+        messages.append("VAE由上游加载器管理，本插件不持有私有 VAE 缓存")
 
     if clear_models:
         _run_cleanup_step("\u5378\u8f7dComfyUI\u6a21\u578b", mm.unload_all_models, messages, errors)
@@ -294,7 +150,7 @@ def _execute_memory_cleanup(
 
 
 def cleanup_all_memory() -> str:
-    """Clear device caches, loaded models, Python references, and GuliNodes VAE cache."""
+    """Clear device caches, loaded models, and Python references."""
     return _execute_memory_cleanup(
         clear_cache=True,
         clear_models=True,
@@ -329,67 +185,6 @@ def _register_memory_cleanup_route() -> None:
 _register_memory_cleanup_route()
 
 
-class GGVaeDecode:
-    _vae_cache = OrderedDict()
-    _cache_lock = threading.RLock()
-
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                LATENT_INPUT: ("LATENT", {"tooltip": "\u9700\u8981\u89e3\u7801\u4e3a\u56fe\u50cf\u7684 Latent\u3002"}),
-                VAE_NAME: (_list_vae_files(), {"tooltip": "\u9009\u62e9\u8981\u52a0\u8f7d\u5e76\u7528\u4e8e\u89e3\u7801\u7684 VAE\u3002"}),
-            }
-        }
-
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = (IMAGE_OUTPUT,)
-    FUNCTION = "decode"
-    CATEGORY = "GuliNodes/潜空间"
-    DESCRIPTION = "\u878d\u5408\u52a0\u8f7dVAE\u4e0eVAE\u89e3\u7801\u7684\u4e00\u4f53\u8282\u70b9\uff0cVAE \u6309\u6587\u4ef6\u6307\u7eb9\u7f13\u5b58\uff0cLatent \u53d8\u5316\u65f6\u4e0d\u91cd\u590d\u52a0\u8f7d VAE\u3002"
-
-    @classmethod
-    def _cache_key(cls, vae_name: str) -> tuple[str, str]:
-        return (vae_name, _vae_file_fingerprint(vae_name))
-
-    @classmethod
-    def _get_vae(cls, vae_name: str):
-        if not vae_name or vae_name == EMPTY_VAE_MESSAGE:
-            raise RuntimeError("\u672a\u627e\u5230\u53ef\u7528\u7684 VAE \u6a21\u578b\u3002\u8bf7\u628a\u6a21\u578b\u653e\u5230 ComfyUI/models/vae/ \u540e\u91cd\u542f\u3002")
-
-        key = cls._cache_key(vae_name)
-        with cls._cache_lock:
-            cached_vae = cls._vae_cache.get(key)
-            if cached_vae is not None:
-                cls._vae_cache.move_to_end(key)
-                return cached_vae
-
-        vae = _load_vae_with_native_loader(vae_name)
-
-        with cls._cache_lock:
-            cls._vae_cache[key] = vae
-            cls._vae_cache.move_to_end(key)
-            while len(cls._vae_cache) > VAE_CACHE_LIMIT:
-                cls._vae_cache.popitem(last=False)
-        return vae
-
-    def decode(self, **kwargs) -> tuple:
-        samples = kwargs.get(LATENT_INPUT)
-        vae_name = kwargs.get(VAE_NAME, "")
-        if samples is None:
-            raise RuntimeError("Latent \u8f93\u5165\u65e0\u6548\uff1a\u672a\u68c0\u6d4b\u5230\u9700\u8981\u89e3\u7801\u7684 Latent\u3002")
-        vae = self._get_vae(vae_name)
-        return _decode_vae_with_native_node(vae, samples)
-
-    @classmethod
-    def IS_CHANGED(cls, **kwargs):
-        vae_name = kwargs.get(VAE_NAME, "")
-        m = hashlib.sha256()
-        m.update(str(vae_name).encode("utf-8"))
-        m.update(_vae_file_fingerprint(vae_name).encode("utf-8"))
-        return m.hexdigest()
-
-
 class GGMemoryCleanup:
     @classmethod
     def INPUT_TYPES(cls):
@@ -397,7 +192,7 @@ class GGMemoryCleanup:
             "required": {
                 CLEAR_CACHE_NAME: ("BOOLEAN", {"default": True, "tooltip": "\u6e05\u7406 PyTorch/ComfyUI \u8bbe\u5907\u7f13\u5b58\u3002"}),
                 CLEAR_MODELS_NAME: ("BOOLEAN", {"default": True, "tooltip": "\u5378\u8f7d ComfyUI \u5f53\u524d\u52a0\u8f7d\u7684\u6a21\u578b\u5e76\u6e05\u7406\u6b7b\u4ea1\u5f15\u7528\u3002"}),
-                CLEAR_VAE_CACHE_NAME: ("BOOLEAN", {"default": True, "tooltip": "\u6e05\u7406 GG VAE\u89e3\u7801 \u8282\u70b9\u5185\u90e8\u7f13\u5b58\u7684 VAE\u3002"}),
+                CLEAR_VAE_CACHE_NAME: ("BOOLEAN", {"default": True, "tooltip": "\u517c\u5bb9\u65e7\u5de5\u4f5c\u6d41\uff1bVAE \u7531\u4e0a\u6e38 Loader \u7ba1\u7406\uff0c\u672c\u8282\u70b9\u4e0d\u6301\u6709\u79c1\u6709\u6a21\u578b\u7f13\u5b58\u3002"}),
             },
             "optional": {
                 ANY_NAME: (ANY_INPUT,),
@@ -409,7 +204,7 @@ class GGMemoryCleanup:
     FUNCTION = "cleanup"
     CATEGORY = "GuliNodes/模型"
 
-    DESCRIPTION = "\u5378\u8f7d\u6a21\u578b\u3001\u6e05\u7406\u7f13\u5b58\u3001\u91ca\u653e GuliNodes \u5185\u90e8 VAE \u7f13\u5b58\uff0c\u5e76\u8f93\u51fa\u6e05\u7406\u62a5\u544a\u3002\u53ef\u72ec\u7acb\u89e6\u53d1\uff0c\u4e5f\u53ef\u63a5\u4efb\u610f\u8f93\u5165\u4f5c\u4e3a\u5de5\u4f5c\u6d41\u900f\u4f20\u8282\u70b9\u3002"
+    DESCRIPTION = "\u5378\u8f7d ComfyUI \u6a21\u578b\u3001\u6e05\u7406\u8bbe\u5907\u7f13\u5b58\u5e76\u8f93\u51fa\u62a5\u544a\u3002\u4fdd\u7559\u65e7\u5de5\u4f5c\u6d41\u7684 VAE \u7f13\u5b58\u517c\u5bb9\u5b57\u6bb5\u3002\u53ef\u72ec\u7acb\u89e6\u53d1\uff0c\u4e5f\u53ef\u63a5\u4efb\u610f\u8f93\u5165\u4f5c\u4e3a\u5de5\u4f5c\u6d41\u900f\u4f20\u8282\u70b9\u3002"
 
     def cleanup(self, **kwargs) -> tuple:
         value = kwargs.get(ANY_NAME)
@@ -429,12 +224,10 @@ class GGMemoryCleanup:
 
 
 NODE_CLASS_MAPPINGS = {
-    VAE_DECODE_NODE_ID: GGVaeDecode,
     MEMORY_CLEANUP_NODE_ID: GGMemoryCleanup,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    VAE_DECODE_NODE_ID: VAE_DECODE_DISPLAY_NAME,
     MEMORY_CLEANUP_NODE_ID: MEMORY_CLEANUP_DISPLAY_NAME,
 }
 

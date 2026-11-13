@@ -19,7 +19,7 @@ const CLASSES = [
   'GGInteger', 'GGKeyInput', 'GGLightingPrompt', 'GGLoRACustomLoader', 'GGMaskCheck', 'GGMaskCrop',
   'GGMemoryCleanup', 'GGPreviewImage', 'GGPromptEnhancer', 'GGPromptLibrary', 'GGPromptOptimizer',
   'GGRegionEditPrepare', 'GGSaveImage', 'GGSeedGenerator', 'GGSimpleMath', 'GGTextConcat',
-  'GGTextDisplayCopy', 'GGTextFileLoad', 'GGTitleNode', 'GGVAE解码', 'GGVideoBridgeFromImageAudio',
+  'GGTextDisplayCopy', 'GGTextFileLoad', 'GGTitleNode', 'GGVideoBridgeFromImageAudio',
   'GGVideoCompress', 'GGVideoLoad', 'GGVideoLoadByPath', 'GGVideoSave', 'GGWebAIReverseImage',
   'GGWebAIReverseText', 'GGZImageSampler',
 ];

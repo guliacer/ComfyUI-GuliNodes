@@ -77,21 +77,6 @@ def _resolve_mask(image_path, mask_file, pil_image, height, width):
     return mask
 
 
-def _preview(rgb, mask, prefix="gg_load"):
-    overlay = np.zeros_like(rgb)
-    overlay[..., 0] = 34.0 / 255.0
-    overlay[..., 1] = 197.0 / 255.0
-    overlay[..., 2] = 94.0 / 255.0
-    alpha = mask[..., None] * 0.5
-    result = np.clip(rgb * (1.0 - alpha) + overlay * alpha, 0.0, 1.0)
-    image = Image.fromarray((result * 255.0).astype(np.uint8), "RGB")
-    temp_dir = folder_paths.get_temp_directory()
-    os.makedirs(temp_dir, exist_ok=True)
-    name = f"{prefix}_{os.getpid()}_{hashlib.sha1(image.tobytes()).hexdigest()[:10]}.png"
-    image.save(os.path.join(temp_dir, name), format="PNG")
-    return [{"filename": name, "subfolder": "", "type": "temp"}]
-
-
 def _read_image(image, mask_file=""):
     image_path = folder_paths.get_annotated_filepath(image)
     source = node_helpers.pillow(Image.open, image_path)
@@ -113,7 +98,30 @@ def _read_image(image, mask_file=""):
         raise RuntimeError(f"无法读取图像：{image}")
     images = torch.cat(output_images, dim=0)
     masks = torch.cat(output_masks, dim=0)
-    return images, masks, _preview(output_images[0][0].numpy(), output_masks[0][0].numpy()), width, height
+    return images, masks, width, height
+
+
+def _validate_inputs(image, mask_file=""):
+    # 官方编辑器保存的是带 [input] 标记的文件引用，不应按下拉列表的字面值校验。
+    if not folder_paths.exists_annotated_filepath(image):
+        return f"图像文件不存在：{image}，请重新选择或上传图像。"
+    if mask_file and not folder_paths.exists_annotated_filepath(mask_file):
+        return f"遮罩文件不存在：{mask_file}，请重新选择遮罩或清空此项。"
+    return True
+
+
+def _fingerprint_inputs(image, mask_file=""):
+    try:
+        path = folder_paths.get_annotated_filepath(image)
+        digest = hashlib.sha256(Path(path).read_bytes())
+        mask_path = folder_paths.get_annotated_filepath(mask_file) if mask_file else next(
+            (candidate for candidate in _sidecar_candidates(path) if os.path.isfile(candidate)), None
+        )
+        if mask_path and os.path.isfile(mask_path):
+            digest.update(Path(mask_path).read_bytes())
+        return digest.hexdigest()
+    except Exception:
+        return float("nan")
 
 
 class GGImageLoad:
@@ -137,35 +145,21 @@ class GGImageLoad:
     RETURN_NAMES = ("图像", "遮罩")
     FUNCTION = "load_image"
     CATEGORY = "GuliNodes/图像"
-    DESCRIPTION = "加载图像并输出图像与遮罩；支持粘贴、上传遮罩、裁剪和预览。"
+    DESCRIPTION = "加载图像并输出图像与遮罩；支持粘贴、上传、裁剪和官方蒙版编辑器。"
     SEARCH_ALIASES = ["load image", "image loader", "paste image", "image upload"]
 
     def load_image(self, 图像, 遮罩文件=""):
-        images, masks, preview, _, _ = _read_image(图像, 遮罩文件)
-        return {"ui": {"images": preview}, "result": (images, masks)}
+        images, masks, _, _ = _read_image(图像, 遮罩文件)
+        # 预览由前端唯一的输入图像面板负责；返回 ui.images 会再生成一张原生预览。
+        return (images, masks)
 
     @classmethod
     def IS_CHANGED(cls, 图像, 遮罩文件=""):
-        try:
-            path = folder_paths.get_annotated_filepath(图像)
-            digest = hashlib.sha256()
-            with open(path, "rb") as handle:
-                digest.update(handle.read())
-            if 遮罩文件:
-                mask_path = folder_paths.get_annotated_filepath(遮罩文件)
-                if os.path.isfile(mask_path):
-                    digest.update(Path(mask_path).read_bytes())
-            return digest.hexdigest()
-        except Exception:
-            return float("nan")
+        return _fingerprint_inputs(图像, 遮罩文件)
 
     @classmethod
     def VALIDATE_INPUTS(cls, 图像, 遮罩文件=""):
-        if not folder_paths.exists_annotated_filepath(图像):
-            return f"图像文件不存在：{图像}"
-        if 遮罩文件 and not folder_paths.exists_annotated_filepath(遮罩文件):
-            return f"遮罩文件不存在：{遮罩文件}"
-        return True
+        return _validate_inputs(图像, 遮罩文件)
 
 
 if io is not None:
@@ -176,12 +170,12 @@ if io is not None:
                 node_id="GGImageLoad",
                 display_name="GG 图像加载",
                 category="GuliNodes/图像",
-                description="加载图像并输出图像与遮罩；支持粘贴、上传遮罩、裁剪和预览。",
+                description="加载图像并输出图像与遮罩；支持粘贴、上传、裁剪和官方蒙版编辑器。",
                 inputs=[
                     # 两个都是纯下拉：给 Combo 加 upload 会让前端自动插入
                     # 「upload」按钮控件和一张 232px 的 $$canvas-image-preview，
                     # 与节点自带的 DOM 预览面板 + 四个快捷按钮重复，且顶高内容。
-                    # 上传走面板上的「选择文件上传 / 蒙版」按钮。
+                    # 上传走「选择文件上传」，「蒙版」打开官方编辑器。
                     io.Combo.Input("图像", options=_image_files()),
                     io.Combo.Input("遮罩文件", options=_media_files(), optional=True),
                 ],
@@ -190,8 +184,16 @@ if io is not None:
 
         @classmethod
         def execute(cls, 图像, 遮罩文件=""):
-            images, masks, preview, _, _ = _read_image(图像, 遮罩文件)
-            return io.NodeOutput(images, masks, ui={"images": preview})
+            images, masks, _, _ = _read_image(图像, 遮罩文件)
+            return io.NodeOutput(images, masks)
+
+        @classmethod
+        def validate_inputs(cls, 图像, 遮罩文件=""):
+            return _validate_inputs(图像, 遮罩文件)
+
+        @classmethod
+        def fingerprint_inputs(cls, 图像, 遮罩文件=""):
+            return _fingerprint_inputs(图像, 遮罩文件)
 
     GGImageLoad = GGImageLoad_V3
 

@@ -1396,12 +1396,101 @@ if io is not None:
 
     GG局部重绘裁剪 = GG局部重绘裁剪_V3
 
+    class GG蒙版修边_V3(io.ComfyNode):
+        @classmethod
+        def define_schema(cls):
+            return io.Schema(
+                node_id="GGMaskEdge",
+                display_name="GG 蒙版修边",
+                category="GuliNodes/图像",
+                description=(
+                    "对遮罩做扩展／收缩与羽化：正数向外膨胀、负数向内收缩，再按半径高斯羽化，"
+                    "用来去掉自动分割的硬边与贴回残影。"
+                ),
+                inputs=[
+                    io.Mask.Input("遮罩", tooltip="要修边的遮罩，批次逐张处理。"),
+                    io.Int.Input(
+                        "扩展像素",
+                        default=0,
+                        min=-256,
+                        max=256,
+                        step=1,
+                        tooltip="正数向外扩展（膨胀）、负数向内收缩（腐蚀），单位像素；0 表示不改边界。",
+                    ),
+                    io.Int.Input(
+                        "羽化半径",
+                        default=0,
+                        min=0,
+                        max=64,
+                        step=1,
+                        tooltip="边缘高斯羽化半径，单位像素，越大过渡越柔和；0 表示不羽化。",
+                    ),
+                ],
+                outputs=[io.Mask.Output(display_name="遮罩")],
+            )
+
+        @classmethod
+        def execute(cls, 遮罩, 扩展像素=0, 羽化半径=0):
+            return io.NodeOutput(_执行蒙版修边(遮罩, 扩展像素, 羽化半径))
+
+
+def _执行蒙版修边(遮罩, 扩展像素=0, 羽化半径=0):
+    if not isinstance(遮罩, torch.Tensor) or 遮罩.is_complex():
+        raise ValueError("遮罩必须是 MASK 张量，请连接自动分割或手绘蒙版的遮罩输出。")
+    扩展 = int(扩展像素)
+    羽化 = int(羽化半径)
+    数据 = 遮罩.detach().float().cpu().numpy()
+    if 数据.ndim == 2:
+        数据 = 数据[None]
+    elif 数据.ndim == 4 and 数据.shape[1] == 1:
+        数据 = 数据[:, 0]
+    elif 数据.ndim != 3:
+        raise ValueError(f"遮罩形状 {tuple(遮罩.shape)} 不支持，请连接 [高,宽] 或 [批次,高,宽] 遮罩。")
+    if 扩展 == 0 and 羽化 == 0:
+        return torch.from_numpy(np.clip(数据, 0.0, 1.0).astype(np.float32))
+    结果 = []
+    for 帧 in 数据:
+        帧 = np.clip(帧, 0.0, 1.0)
+        if 扩展 > 0:
+            帧 = _膨胀遮罩(帧, 扩展)
+        elif 扩展 < 0:
+            # 腐蚀 = 反相后膨胀再反相，复用同一套最大池化。
+            帧 = 1.0 - _膨胀遮罩(1.0 - 帧, -扩展)
+        if 羽化 > 0:
+            帧 = _高斯羽化(帧, 羽化)
+        结果.append(np.clip(帧, 0.0, 1.0))
+    return torch.from_numpy(np.stack(结果).astype(np.float32))
+
+
+class GG蒙版修边_V1:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "遮罩": ("MASK",),
+                "扩展像素": ("INT", {"default": 0, "min": -256, "max": 256, "step": 1}),
+                "羽化半径": ("INT", {"default": 0, "min": 0, "max": 64, "step": 1}),
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    RETURN_NAMES = ("遮罩",)
+    FUNCTION = "execute"
+    CATEGORY = "GuliNodes/图像"
+
+    def execute(self, 遮罩, 扩展像素=0, 羽化半径=0):
+        return (_执行蒙版修边(遮罩, 扩展像素, 羽化半径),)
+
+
+GG蒙版修边 = GG蒙版修边_V3 if io is not None else GG蒙版修边_V1
+
 
 NODE_CLASS_MAPPINGS = {
     "GGMaskCrop": GG遮罩裁剪,
     "GGCropRestore": GG裁剪恢复,
     "GGImageMergeMask": GG图像合并遮罩,
     "GGInpaintCrop": GG局部重绘裁剪,
+    "GGMaskEdge": GG蒙版修边,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1409,4 +1498,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "GGCropRestore": "GG 裁剪恢复",
     "GGImageMergeMask": "GG 图像合并（遮罩）",
     "GGInpaintCrop": "GG 局部重绘裁剪",
+    "GGMaskEdge": "GG 蒙版修边",
 }

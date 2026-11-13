@@ -21,7 +21,7 @@ with Image.open(source) as image:
     reference = torch.from_numpy(np.array(image).astype(np.float32) / 255.0)[None]
 start = time.monotonic()
 try:
-    result = _run({"任务模式": "图生图", "输出语言": "中文", "增强方式": "本地LLM", "输入提示词": "仅略微优化图中泳池和树木背景的曝光层次与色彩，保持人物、衣服、身份、姿态、位置和外轮廓不变，不新增物体。", "主模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf", "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf", "上下文长度": 8192, "最大生成token": 512, "生成后自动卸载模型": True, "图片": {"图片1": reference}})
+    result, _, _ = _run({"任务模式": "图生图", "输出语言": "中文", "增强方式": "本地LLM", "输入提示词": "仅略微优化图中泳池和树木背景的曝光层次与色彩，保持人物、衣服、身份、姿态、位置和外轮廓不变，不新增物体。", "图生图LLM模型": "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf", "mmproj": "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf", "上下文长度": 8192, "最大生成token": 512, "卸载策略": "运行后自动卸载", "图片": {"图片1": reference}})
     assert isinstance(result, str) and len(result.strip()) > 10, "本地视觉改写未返回有效文字"
     report = {"success": True, "seconds": round(time.monotonic() - start, 2), "result": result, "model_architecture": "qwen35", "reference_size": list(reference.shape[1:3]), "diffusion_executed": False}
 except Exception as exc:

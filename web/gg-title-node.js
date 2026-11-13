@@ -1,6 +1,7 @@
 import { app } from "../../scripts/app.js";
 
 import { getUserItem, setUserItem, removeUserItem } from "./gg-userdata-store.js";
+import { detectHostTheme, parseCssColor } from "./gg-ui-design.js";
 const NODE_NAME = "GGTitleNode";
 const NODE_TITLE = "GG 标题";
 const NODE_CATEGORY = "GuliNodes/工作流/标注";
@@ -19,6 +20,9 @@ const MIN_LETTER_SPACING = -64;
 const MAX_LETTER_SPACING = 128;
 const LETTER_SPACING_STEP = 3;
 const DRAW_NODE_PATCH_FLAG = "_ggTitleDrawNodePatched";
+const DEFAULT_FONT_COLOR = "#ffffff";
+const LIGHT_THEME_TITLE_INK = "#1f2937";
+const FONT_COLOR_CUSTOM_KEY = "_gg_title_font_color_custom";
 
 function isNodes20Mode(canvas = app.canvas) {
   return !!(
@@ -360,6 +364,28 @@ function fontString(size, family, weight = "\u6b63\u5e38", italic = "\u6b63\u5e3
   return `${style} ${fontWeight} ${Math.max(1, size)}px ${fontCss(family)}`;
 }
 
+// 默认白色文字在浅色画布上等于隐形（用户实测「一放到画布就消失」）。
+// 没手动改过颜色时按实际背景自动取墨色；用户选过颜色则原样保留。
+function effectiveFontColor(node) {
+  const stored = stringValue(readField(node, "\u5b57\u4f53\u989c\u8272"), DEFAULT_FONT_COLOR);
+  if (stored.toLowerCase() !== DEFAULT_FONT_COLOR) {
+    return stored;
+  }
+  if (node?.properties?.[FONT_COLOR_CUSTOM_KEY]) {
+    return stored;
+  }
+  const background = stringValue(readField(node, "\u80cc\u666f\u989c\u8272"), "transparent");
+  const backgroundOpacity = numberValue(readField(node, "\u80cc\u666f\u4e0d\u900f\u660e\u5ea6"), 0, 0, 100);
+  let lightBackdrop = detectHostTheme() === "light";
+  if (background.toLowerCase() !== "transparent" && backgroundOpacity > 0) {
+    const rgb = parseCssColor(background);
+    if (rgb) {
+      lightBackdrop = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255 > 0.55;
+    }
+  }
+  return lightBackdrop ? LIGHT_THEME_TITLE_INK : stored;
+}
+
 function labelConfig(node) {
   const fontSize = numberValue(readField(node, "\u5b57\u4f53\u5927\u5c0f"), 32, 1, 256);
   const padding = numberValue(readField(node, "\u5185\u8fb9\u8ddd"), 0, 0, 256);
@@ -370,7 +396,7 @@ function labelConfig(node) {
     text: titleText(node),
     fontSize,
     fontFamily: stringValue(readField(node, "\u5b57\u4f53\u65cf"), "Arial"),
-    fontColor: stringValue(readField(node, "\u5b57\u4f53\u989c\u8272"), "#ffffff"),
+    fontColor: effectiveFontColor(node),
     fontOpacity: fontOpacityFromNode(node),
     fontWeight: stringValue(readField(node, "\u5b57\u4f53\u7c97\u7ec6"), "\u6b63\u5e38"),
     fontStyle: stringValue(readField(node, "\u5b57\u4f53\u659c\u4f53"), "\u6b63\u5e38"),
@@ -1449,6 +1475,9 @@ function ensureToolbar() {
   });
   colorInput.addEventListener("input", () => {
     if (!activeTitleNode) return;
+    // 手动选过颜色后不再跟随主题自动取墨色，尊重用户选择。
+    activeTitleNode.properties = activeTitleNode.properties ?? {};
+    activeTitleNode.properties[FONT_COLOR_CUSTOM_KEY] = true;
     writeField(activeTitleNode, "\u5b57\u4f53\u989c\u8272", colorInput.value);
   });
   fontOpacityInput.addEventListener("input", () => {
@@ -1593,7 +1622,7 @@ function syncToolbarFromNode(node) {
   const text = String(readField(node, "\u6807\u9898\u6587\u672c") ?? NODE_TITLE).replace(/\\n/g, "\n");
   const fontFamily = stringValue(readField(node, "\u5b57\u4f53\u65cf"), "Arial");
   const fontSize = numberValue(readField(node, "\u5b57\u4f53\u5927\u5c0f"), 32, 1, 256);
-  const fontColor = hexColorValue(readField(node, "\u5b57\u4f53\u989c\u8272"), "#ffffff");
+  const fontColor = hexColorValue(effectiveFontColor(node), DEFAULT_FONT_COLOR);
   const fontOpacity = fontOpacityFromNode(node);
   const backgroundColor = hexColorValue(readField(node, "\u80cc\u666f\u989c\u8272"), "#ffffff");
   const backgroundOpacity = numberValue(readField(node, "\u80cc\u666f\u4e0d\u900f\u660e\u5ea6"), 0, 0, 100);
@@ -1858,6 +1887,7 @@ function installTitleBehavior(nodeType) {
   const originalOnNodeCreated = nodeType.prototype.onNodeCreated;
   nodeType.prototype.onNodeCreated = function (...args) {
     const result = originalOnNodeCreated?.apply(this, args);
+    installDrawPatch();
     configureNode(this);
     armTitlePlacement(this);
     return result;
@@ -2322,6 +2352,10 @@ function installDomSyncPatch() {
   if (document._ggTitleDomSyncInstalled) return;
   document._ggTitleDomSyncInstalled = true;
   const syncAll = () => {
+    // 其它扩展可能在 setup 之后才把 drawNode 装到画布实例上，把原型补丁整个
+    // 遮蔽掉：标题节点会退回成「空白节点」，文字永远不画。每次同步都补包一次
+    // 当前实例函数（已有我们的标记时直接跳过）。
+    installDrawPatch();
     for (const node of app.graph?._nodes ?? app.graph?.nodes ?? []) {
       if (isTitleNode(node)) syncDomTitleNode(node);
     }
@@ -2364,6 +2398,7 @@ app.registerExtension({
 
   loadedGraphNode(node) {
     if (!isTitleNode(node)) return;
+    installDrawPatch();
     if (pendingTitlePlacement?.node === node) clearPendingTitlePlacement();
     requestAnimationFrame(() => {
       configureNode(node);

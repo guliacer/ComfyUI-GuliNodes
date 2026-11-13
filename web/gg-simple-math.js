@@ -1,3 +1,4 @@
+import { watchNodeState } from "./gg-nodes2.js";
 import { app } from "../../scripts/app.js";
 import { refreshRowLayout } from "./gg-widget-rows.js";
 
@@ -302,6 +303,7 @@ function schedule(node, force = false) {
     if (!isMathNode(node)) {
         return;
     }
+    watchNodeState(node, "simple-math", enabled => { if (enabled) syncNode(node); });
     if (node._ggMathTimer) {
         clearTimeout(node._ggMathTimer);
     }

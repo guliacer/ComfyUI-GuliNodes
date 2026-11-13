@@ -1,14 +1,10 @@
+import { isNodes2, isUserResizingNode, watchNodeState } from "./gg-nodes2.js";
+import { applySurface } from "./gg-ui-design.js";
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 import { refitAfterContentChange } from "./gg-node-autofit.js";
 
-function isNodes20Mode(canvas = app.canvas) {
-    return !!(
-        globalThis.LiteGraph?.vueNodesMode
-        || canvas?.vueNodesMode
-        || app?.vueNodesMode
-    );
-}
+const isNodes20Mode = isNodes2;
 
 // 工具函数：将图像数据转换为预览URL
 function imageDataToUrl(data) {
@@ -160,7 +156,7 @@ function normalizeComparerInputs(node) {
     // 没人在这里显式收一次，节点就一直留着 widget 全可见时撑出来的空白。
     // 宽度下限同时量出来，免得 autofit 按标签估宽把数值切掉。
     node._ggAutoFitMinWidth = requiredWidgetsWidth(node);
-    refitAfterContentChange(node);
+    refitAfterContentChange(node, { restoreUserHeight: true });
     node.setDirtyCanvas?.(true, true);
     node.graph?.setDirtyCanvas?.(true, true);
 }
@@ -198,6 +194,7 @@ class GGImageComparerNode {
             this.comparerMode === "Click",
             (value) => {
                 this.comparerMode = value ? "Click" : "Slide";
+                this.node.properties.comparer_mode = this.comparerMode;
                 this.renderDomPreview();
                 this.node.setDirtyCanvas(true, false); // 刷新画布
             },
@@ -217,18 +214,19 @@ class GGImageComparerNode {
     }
 
     setupDomPreview() {
-        if (!isNodes20Mode() || typeof this.node.addDOMWidget !== "function") return;
+        if (this.domPreview || typeof this.node.addDOMWidget !== "function") return;
 
         const host = document.createElement("div");
-        host.className = "gg-image-comparer-dom";
+        host.className = "gg-surface gg-image-comparer-dom";
+        applySurface(host);
         Object.assign(host.style, {
             position: "relative",
             width: "100%",
-            minHeight: "260px",
+            minHeight: "120px",
             height: "100%",
             overflow: "hidden",
             borderRadius: "10px",
-            background: "#111827",
+            background: "var(--gg-card)",
             userSelect: "none",
             touchAction: "none",
         });
@@ -258,7 +256,7 @@ class GGImageComparerNode {
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            color: "#cbd5e1",
+            color: "var(--gg-muted)",
             fontSize: "13px",
             pointerEvents: "none",
         });
@@ -279,19 +277,23 @@ class GGImageComparerNode {
             serialize: false,
             getValue: () => "",
             setValue: () => {},
+            getMinHeight: () => isNodes2() ? 120 : 0,
+            hideOnZoom: false,
         });
-        // 预览区高度跟着节点高度走：官方 resize 用 node.computeSize() 当硬下限，
-        // 这里若申报固定 300，内容总高就是死值，用户把节点往下拖多少都会被顶回
-        // （「只能拉大无法调小」）。其余控件约占 210px，预览拿剩余高度、最低 120。
-        widget.computeSize = (width) => {
-            const nodeHeight = Number(this.node?.size?.[1]) || 420;
-            // 宽度下限与节点默认宽同源（COMPARER2_MIN_WIDTH 的一半口径见下方常量）：
-            // 这里若报 360，Nodes 2.0 下 DOM widget 的申报宽会把节点默认宽顶回 360，
-            // 用户看到的默认宽度就收不到 260。用 180 让节点默认宽说了算。
-            return [Math.max(Number(width) || 260, 180), Math.max(120, nodeHeight - 210)];
-        };
+        widget.serialize = false;
+        widget.serializeValue = () => undefined;
+        widget.hidden = !isNodes2();
         widget.inputEl = host;
         this.domPreview = { host, imageA, imageB, empty, divider, pressed: false };
+        watchNodeState(this.node, "image-comparer", (enabled, changed) => {
+            if (changed) {
+                widget.hidden = !enabled;
+                host.style.display = enabled ? "block" : "none";
+                this.domPreview.pressed = false;
+                this.renderDomPreview();
+            }
+        });
+        host.style.display = isNodes2() ? "block" : "none";
 
         const updatePointer = (event) => {
             const rect = host.getBoundingClientRect();
@@ -304,7 +306,9 @@ class GGImageComparerNode {
         host.addEventListener("pointerdown", (event) => {
             this.domPreview.pressed = true;
             updatePointer(event);
-            host.setPointerCapture?.(event.pointerId);
+            if (event.pointerId != null && host.isConnected) {
+                try { host.setPointerCapture?.(event.pointerId); } catch { /* pointer already released */ }
+            }
             this.renderDomPreview();
         });
         const release = () => {
@@ -541,7 +545,7 @@ app.registerExtension({
             // max(内容, 当前, 下限)，往下拖的距离会被实时顶回去。拖拽中只报
             // 260×420 下限，预览区高度已改成跟节点走，松手后自然收敛。
             const liveCanvas = app?.canvas || globalThis.LGraphCanvas?.active_canvas;
-            if (liveCanvas?.resizing_node === this) {
+            if (isUserResizingNode(this)) {
                 return [COMPARER2_MIN_WIDTH, COMPARER2_MIN_HEIGHT];
             }
             const width = Math.max(

@@ -183,7 +183,10 @@ function getPreviewWidgetSize(node) {
     return widget.computeSize?.(node.size?.[0] || MIN_NODE_WIDTH) || [MIN_NODE_WIDTH, MIN_PREVIEW_HEIGHT + 18];
 }
 
-function lockPreviewInsideNode(node, forceExact = false) {
+// shrinkToFit 只在「新建节点」时用：把节点收到刚好放下预览，避免默认多留一大片空白。
+// 其余时刻（读档、执行回包、预览元数据加载）一律只增不减——用户拖高或工作流里存的
+// 高度不许被预览贴合收回去，否则每次执行/重开工作流节点都会缩回最小高度。
+function lockPreviewInsideNode(node, shrinkToFit = false) {
     if (!node?.ggVideoPreviewWidget || typeof node.computeSize !== "function") return;
 
     const computed = node.computeSize();
@@ -192,7 +195,12 @@ function lockPreviewInsideNode(node, forceExact = false) {
     const previewSize = getPreviewWidgetSize(node);
     const width = Math.max(MIN_NODE_WIDTH, node.size?.[0] || 0, computedWidth, previewSize[0]);
     const height = Math.max(computedHeight, previewSize[1] + 130);
-    const nextHeight = forceExact ? height : Math.max(node.size?.[1] || 0, height);
+    // 存档高度单独记一份：读档时前端可能在 configure 与 loadedGraphNode 之间
+    // 先按内容压一次，只看 node.size 会把已经被压小的值当成用户尺寸。
+    const stored = Number(node._ggVideoSaveStoredHeight) || 0;
+    const nextHeight = shrinkToFit
+        ? height
+        : Math.max(node.size?.[1] || 0, height, stored);
 
     node.size = [width, nextHeight];
     node.setSize?.([width, nextHeight]);
@@ -293,7 +301,7 @@ function ensurePreviewWidget(node) {
         if (videoWidth > 0 && videoHeight > 0) {
             widget.inputRatio = videoWidth / videoHeight;
         }
-        lockPreviewInsideNode(node, true);
+        lockPreviewInsideNode(node);
     });
 
     node.ggVideoPreviewWidget = widget;
@@ -327,16 +335,22 @@ function installLockedSaveNodeLayout(node) {
             size[1] = Math.max(Number(size[1]) || 0, minHeight);
         }
         this.size = [width, Math.max(Number(this.size?.[1]) || 0, minHeight)];
+        // 用户自己拉出来的高度就是新的基线：之后预览贴合按它保底，
+        // 但不能反过来把用户拖矮的结果又顶回去。
+        const canvas = app.canvas || globalThis.LGraphCanvas?.active_canvas;
+        if (canvas?.resizing_node === this) {
+            this._ggVideoSaveStoredHeight = Math.round(Number(this.size?.[1]) || 0);
+        }
         this.setDirtyCanvas?.(true, true);
         app.graph.setDirtyCanvas(true, true);
         return result;
     };
 }
 
-function installSavePreview(node) {
+function installSavePreview(node, shrinkToFit = false) {
     ensurePreviewWidget(node);
     installLockedSaveNodeLayout(node);
-    lockPreviewInsideNode(node, true);
+    lockPreviewInsideNode(node, shrinkToFit);
 
     if (!node.ggSavePreviewExecutionHooked) {
         const originalOnExecuted = node.onExecuted;
@@ -346,7 +360,7 @@ function installSavePreview(node) {
             if (previewItem?.path) {
                 updateVideoPreviewFromPath(this, previewItem.path);
             }
-            lockPreviewInsideNode(this, true);
+            lockPreviewInsideNode(this);
         };
         node.ggSavePreviewExecutionHooked = true;
     }
@@ -354,13 +368,34 @@ function installSavePreview(node) {
 
 app.registerExtension({
     name: "ComfyUI.GGNodes.VideoSavePreview",
+
+    async beforeRegisterNodeDef(nodeType, nodeData) {
+        if (!SAVE_NODES.has(nodeData.name)) return;
+        if (nodeType.prototype._ggVideoSaveConfigurePatched) return;
+        nodeType.prototype._ggVideoSaveConfigurePatched = true;
+
+        const originalOnConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function () {
+            const result = originalOnConfigure?.apply(this, arguments);
+            // 存档尺寸要在任何布局压扁之前记下来：前端可能在 configure 与
+            // loadedGraphNode 之间先按内容重排一次，事后只剩被压小的 node.size。
+            const stored = Number(arguments[0]?.size?.[1]);
+            if (Number.isFinite(stored) && stored > 0) {
+                this._ggVideoSaveStoredHeight = Math.round(stored);
+            }
+            return result;
+        };
+    },
+
     async nodeCreated(node) {
         if (COMPRESS_NODES.has(node.comfyClass)) {
             normalizeLegacyEncoderWidget(node);
         }
 
         if (SAVE_NODES.has(node.comfyClass)) {
-            installSavePreview(node);
+            // 新建节点按内容收一次，避免默认留一大片空白；
+            // 读档走 loadedGraphNode，保留工作流里存的高度。
+            installSavePreview(node, true);
         }
 
         if (PATH_LOAD_NODES.has(node.comfyClass)) {

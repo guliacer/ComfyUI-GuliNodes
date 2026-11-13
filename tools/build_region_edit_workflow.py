@@ -20,7 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 COMFY_ROOT = ROOT.parent.parent
 OUT = ROOT / "examples" / "workflows" / "GG-人像背景分区编辑_Qwen2.1_Turbo.json"
-NODE_TYPES = ["LoadImage", "UNETLoader", "VAELoader", "GGLoRACustomLoader", "GGMaskCrop", "GGCropRestore", "GGImageMergeMask", "GGPromptEnhancer", "GGPromptOptimizer", "GGTextConcat", "ComfySwitchNode", "PrimitiveBoolean", "VAEEncode", "SetLatentNoiseMask", "KSampler", "VAEDecode", "GGImageComparer2", "GGImageCompressSave", "MaskToImage", "PreviewImage", "Note"]
+NODE_TYPES = ["LoadImage", "UNETLoader", "CLIPLoader", "VAELoader", "GGLoRACustomLoader", "GGMaskCrop", "GGCropRestore", "GGImageMergeMask", "GGPromptEnhancer", "GGPromptOptimizer", "GGTextConcat", "ComfySwitchNode", "PrimitiveBoolean", "VAEEncode", "SetLatentNoiseMask", "KSampler", "VAEDecode", "GGImageComparer2", "GGImageCompressSave", "MaskToImage", "PreviewImage", "Note"]
 REGION_DEF = {
     "input": {"required": {
         "图像": ["IMAGE", {}], "人像遮罩": ["MASK", {}],
@@ -199,7 +199,8 @@ def build(definitions):
     defs = definitions
     model = option(defs["UNETLoader"], "unet_name", "qwen_image_2.1_turbo_int8_convrot.safetensors")
     vae = option(defs["VAELoader"], "vae_name", "qwen_image_2.1_vae_bf16.safetensors")
-    clip = option(defs["GGPromptOptimizer"], "CLIP名称", "qwen3vl_8b_int8_convrot.safetensors")
+    clip = option(defs["CLIPLoader"], "clip_name", "qwen3vl_8b_int8_convrot.safetensors")
+    clip_type = option(defs["CLIPLoader"], "type", "qwen_image")
     lora = option(defs["GGLoRACustomLoader"], "LoRA1名称", "Qwen2.1 一致性无偏移_GH_V1.0.safetensors")
     original = option(defs["LoadImage"], "image", "77d2c42db7b0e56286aec070a54d1437.png", fallback=_default(defs["LoadImage"]["input"]["required"]["image"]))
     shared = "保持原画幅、机位、透视和摄影风格。人物与背景的主光方向、色温和明暗关系协调，不新增人物，不改变构图。"
@@ -209,6 +210,7 @@ def build(definitions):
     graph.node(4, "UNETLoader", "unet", "Qwen2.1 Turbo 模型", (510, 80), {"unet_name": model, "weight_dtype": "default"}, size=(390, 100))
     graph.node(5, "VAELoader", "vae", "Qwen2.1 VAE", (510, 535), {"vae_name": vae}, size=(390, 70))
     graph.node(6, "GGLoRACustomLoader", "lora", "一致性 LoRA（可设强度 0 禁用）", (510, 250), {"LoRA数量": 1, "LoRA1名称": lora, "LoRA1强度": 1.0}, size=(390, 230))
+    graph.node(7, "CLIPLoader", "clip", "Qwen Image 文本编码器", (510, 635), {"clip_name": clip, "type": clip_type, "device": "default"}, size=(390, 105))
     graph.connect("unet", 0, "lora", "模型")
 
     for region, offset, base in (("background", 180, 10), ("person", 1430, 30)):
@@ -217,11 +219,11 @@ def build(definitions):
         graph.node(base, "GGRegionEditPrepare", region + "_prepare", "② " + label + "修改需求（清空即跳过）", (970, offset), {"处理区域": label, "编辑需求": request}, size=(420, 370))
         crop_values = {"遮罩填充": False, "扩展方式": "四边统一", "扩展方式.扩展系数": 1.1, "输出尺寸": "原像素", "输出尺寸.倍数取整": 8}
         graph.node(base + 1, "GGMaskCrop", region + "_crop", "③ " + label + "局部裁剪／等比补边", (1450, offset), crop_values, size=(410, 300), dynamic={"扩展方式": {"扩展系数": ["FLOAT", {"default": 1.4}]}, "输出尺寸": {"倍数取整": ["INT", {"default": 8}]}})
-        enhancer_values = {"任务模式": "图生图", "输出语言": "中文", "增强方式": "本地LLM", "api_key": "", "文生图LLM模型": option(defs["GGPromptEnhancer"], "文生图LLM模型", "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf", fallback="Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf"), "图生图LLM模型": option(defs["GGPromptEnhancer"], "图生图LLM模型", "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf", fallback="Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf"), "mmproj": option(defs["GGPromptEnhancer"], "mmproj", "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf", fallback="Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf"), "上下文长度": 8192, "最大生成token": 2048, "生成后自动卸载模型": True, "seed": 12345}
+        enhancer_values = {"任务模式": "图生图", "输出语言": "中文", "增强方式": "本地LLM", "api_key": "", "文生图LLM模型": option(defs["GGPromptEnhancer"], "文生图LLM模型", "Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf", fallback="Qwen-Image-2.1-PE-T2I.Q5_K_S.gguf"), "图生图LLM模型": option(defs["GGPromptEnhancer"], "图生图LLM模型", "Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf", fallback="Qwen-Image-2.1-PE-I2I.Q5_K_S.gguf"), "mmproj": option(defs["GGPromptEnhancer"], "mmproj", "Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf", fallback="Qwen-Image-2.1-PE-I2I.mmproj-bf16.gguf"), "上下文长度": 8192, "最大生成token": 2048, "卸载策略": "运行后自动卸载", "seed": 12345, "透明背景": False, "增强方向": "默认"}
         graph.node(base + 2, "GGPromptEnhancer", region + "_enhance", "可选 AI：单独优化" + label + "请求", (1910, offset), enhancer_values, size=(420, 600), grow={"图片": [("图片1", "IMAGE")]})
         graph.node(base + 3, "ComfySwitchNode", region + "_prompt_select", "AI 开／关：真正跳过未选分支", (1910, offset + 690), size=(420, 150), output_type="STRING")
         graph.node(base + 4, "GGTextConcat", region + "_prompt_final", "优化后追加固定轮廓约束", (2370, offset + 690), size=(420, 220))
-        graph.node(base + 5, "GGPromptOptimizer", region + "_condition", "④ Qwen 条件编码（不是文本改写）", (2370, offset), {"CLIP名称": clip, "CLIP类型": "qwen_image", "VAE名称": vae, "分辨率": 0}, size=(420, 520), grow={"图像": [("图像1", "IMAGE")]})
+        graph.node(base + 5, "GGPromptOptimizer", region + "_condition", "④ Qwen 条件编码（不是文本改写）", (2370, offset), {"分辨率": 0}, size=(420, 520), grow={"图像": [("图像1", "IMAGE")]})
         graph.node(base + 6, "VAEEncode", region + "_vae_encode", "原图像 Latent 编码", (2830, offset), size=(300, 110))
         graph.node(base + 7, "SetLatentNoiseMask", region + "_latent_mask", "采样蒙版：仅当前区域去噪", (2830, offset + 200), size=(300, 120))
         graph.node(base + 8, "KSampler", region + "_sample", "⑤ " + label + "小幅图生图", (3170, offset), {"seed": 246813579 if region == "background" else 246813580, "steps": 9, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 0.6 if region == "background" else 0.35}, size=(410, 450))
@@ -244,6 +246,8 @@ def build(definitions):
         graph.connect(region + "_prompt_select", 0, region + "_prompt_final", "文本1")
         graph.connect(pre, 3, region + "_prompt_final", "文本2")
         graph.connect(region + "_prompt_final", 0, region + "_condition", "正向提示词")
+        graph.connect("clip", 0, region + "_condition", "clip")
+        graph.connect("vae", 0, region + "_condition", "vae")
         graph.connect(region + "_crop", 1, region + "_condition", "图像.图像1")
         graph.connect(region + "_crop", 1, region + "_vae_encode", "pixels")
         graph.connect("vae", 0, region + "_vae_encode", "vae")
@@ -277,7 +281,7 @@ def build(definitions):
     graph.connect("original", 1, "mask_to_image", "mask")
     graph.connect("mask_to_image", 0, "mask_preview", "images")
     graph.group("输入与蒙版：不需要SAM3／孤海节点", [10, 30, 460, 2530], "#b58b2a")
-    graph.group("共享模型与参数", [485, 30, 430, 660], "#346279")
+    graph.group("共享模型与参数", [485, 30, 430, 770], "#346279")
     graph.group("最终对比与保存", [5390, 130, 580, 1690], "#3f789e")
     return graph.export()
 

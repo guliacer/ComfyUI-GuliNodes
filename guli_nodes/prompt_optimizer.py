@@ -4,9 +4,6 @@ import re
 import comfy.utils
 import node_helpers
 
-from .clipboard import GGCLIPText, _list_clip_files, _list_clip_types
-from .model_loaders import GGVaeDecode, _list_vae_files
-
 try:
     from comfy_api.latest import io
 except Exception:
@@ -16,22 +13,11 @@ except Exception:
 NODE_ID = "GGPromptOptimizer"
 DISPLAY_NAME = "GG 提示词优化qwen2.1"
 CATEGORY = "GuliNodes/文本"
-CLIP_NAME = "CLIP名称"
-CLIP_TYPE = "CLIP类型"
-VAE_NAME = "VAE名称"
 POSITIVE_PROMPT = "正向提示词"
 NEGATIVE_PROMPT = "负向提示词"
 RESOLUTION = "分辨率"
 IMAGE_PREFIX = "图像"
 MAX_IMAGES = 20
-QWEN_CLIP_TYPE = "qwen_image"
-QWEN_VAE_NAME = "qwen_image_vae.safetensors"
-
-
-def _default_option(options: list[str], preferred: str) -> str:
-    if preferred in options:
-        return preferred
-    return options[0] if options else ""
 
 
 def _image_index(name: str) -> int:
@@ -81,6 +67,9 @@ def _encode_qwen_image21(
     resolution: int,
     images,
 ):
+    if clip is None:
+        raise RuntimeError("未连接 CLIP：请连接 CLIPLoader 的 Qwen Image 输出。")
+
     images_vl = []
     reference_latents = []
 
@@ -118,17 +107,21 @@ def _encode_qwen_image21(
     return positive, negative
 
 
-def _encode_from_values(clip_name, clip_type, vae_name, positive_prompt, negative_prompt, resolution, images):
-    clip = GGCLIPText._get_clip(clip_name, clip_type)
-    ordered_images = _ordered_images(images)
-    vae = GGVaeDecode._get_vae(vae_name) if ordered_images else None
+def _encode_from_values(
+    clip,
+    vae,
+    positive_prompt,
+    negative_prompt,
+    resolution,
+    images,
+):
     return _encode_qwen_image21(
         clip,
         vae,
         positive_prompt,
         negative_prompt,
         max(0, int(resolution or 0)),
-        dict(ordered_images),
+        images or {},
     )
 
 
@@ -137,25 +130,27 @@ if io is not None:
     class GGPromptOptimizer(io.ComfyNode):
         @classmethod
         def define_schema(cls):
-            clip_names = _list_clip_files()
-            clip_types = _list_clip_types()
-            vae_names = _list_vae_files()
             return io.Schema(
                 node_id=NODE_ID,
                 display_name=DISPLAY_NAME,
                 category=CATEGORY,
                 description=(
-                    "将 CLIP、VAE、提示词和最多20张参考图像整合到一个 Qwen Image 2.1 条件编码节点中。"
-                    "VAE 用于把参考图像编码为 Conditioning 内的 reference_latents。"
+                    "使用外接 CLIP 与可选 VAE 编码 Qwen Image 2.1 条件；参考图可写入 reference_latents。"
+                    "正向和负向提示词分别编码，参考图可写入 reference_latents。"
                 ),
                 search_aliases=["Prompt Optimizer", "Qwen Image 2.1", "Text Encode Qwen Image 2.1", "提示词优化"],
                 inputs=[
-                    io.Combo.Input(CLIP_NAME, options=clip_names, default=_default_option(clip_names, "qwen_2.5_vl_7b_fp8_scaled.safetensors"), tooltip="选择用于 Qwen Image 2.1 文本和图像编码的 CLIP。"),
-                    io.Combo.Input(CLIP_TYPE, options=clip_types, default=_default_option(clip_types, QWEN_CLIP_TYPE), tooltip="选择与 CLIP 文件匹配的 ComfyUI CLIP 类型。"),
-                    io.Combo.Input(VAE_NAME, options=vae_names, default=_default_option(vae_names, QWEN_VAE_NAME), tooltip="选择用于参考图像 reference_latents 编码的 VAE。"),
-                    io.Int.Input(RESOLUTION, default=1024, min=0, max=4096, step=32, tooltip="参考图像会按此近似面积缩放并对齐到32；设为0时保留各图像自身尺寸。"),
+                    io.Clip.Input("clip"),
                     io.String.Input(POSITIVE_PROMPT, multiline=True, dynamic_prompts=True, placeholder="输入正向提示词"),
-                    io.String.Input(NEGATIVE_PROMPT, multiline=True, dynamic_prompts=True, placeholder="输入负向提示词"),
+                    io.String.Input(
+                        NEGATIVE_PROMPT,
+                        multiline=True,
+                        dynamic_prompts=True,
+                        placeholder="输入负向提示词",
+                        tooltip="单独编码负向提示词并输出负面条件。",
+                    ),
+                    io.Vae.Input("vae", optional=True),
+                    io.Int.Input(RESOLUTION, default=1024, min=0, max=4096, step=32, tooltip="参考图像会按此近似面积缩放并对齐到32；设为0时保留各图像自身尺寸。"),
                     io.Autogrow.Input(
                         IMAGE_PREFIX,
                         template=io.Autogrow.TemplateNames(
@@ -177,18 +172,16 @@ if io is not None:
         @classmethod
         def execute(
             cls,
-            CLIP名称,
-            CLIP类型,
-            VAE名称,
+            clip,
             正向提示词="",
             负向提示词="",
+            vae=None,
             分辨率=1024,
             图像=None,
         ):
             positive, negative = _encode_from_values(
-                CLIP名称,
-                CLIP类型,
-                VAE名称,
+                clip,
+                vae,
                 正向提示词,
                 负向提示词,
                 分辨率,
@@ -201,21 +194,19 @@ else:
     class GGPromptOptimizer:
         @classmethod
         def INPUT_TYPES(cls):
-            clip_names = _list_clip_files()
-            clip_types = _list_clip_types()
-            vae_names = _list_vae_files()
             return {
                 "required": {
-                    CLIP_NAME: (clip_names, {"default": _default_option(clip_names, "qwen_2.5_vl_7b_fp8_scaled.safetensors"), "tooltip": "选择用于 Qwen Image 2.1 文本和图像编码的 CLIP。"}),
-                    CLIP_TYPE: (clip_types, {"default": _default_option(clip_types, QWEN_CLIP_TYPE), "tooltip": "选择与 CLIP 文件匹配的 ComfyUI CLIP 类型。"}),
-                    VAE_NAME: (vae_names, {"default": _default_option(vae_names, QWEN_VAE_NAME), "tooltip": "选择用于参考图像 reference_latents 编码的 VAE。"}),
+                    "clip": ("CLIP",),
                     RESOLUTION: ("INT", {"default": 1024, "min": 0, "max": 4096, "step": 32}),
                     POSITIVE_PROMPT: ("STRING", {"default": "", "multiline": True, "dynamicPrompts": True, "placeholder": "输入正向提示词"}),
-                    NEGATIVE_PROMPT: ("STRING", {"default": "", "multiline": True, "dynamicPrompts": True, "placeholder": "输入负向提示词"}),
+                    NEGATIVE_PROMPT: ("STRING", {"default": "", "multiline": True, "dynamicPrompts": True, "placeholder": "输入负向提示词", "tooltip": "单独编码负向提示词并输出负面条件。"}),
                 },
                 "optional": {
-                    f"{IMAGE_PREFIX}{index}": ("IMAGE", {"tooltip": "参考图像；连接最后一个图像输入后会自动增加下一个输入。"})
-                    for index in range(1, MAX_IMAGES + 1)
+                    "vae": ("VAE", {"tooltip": "可选外接 VAE；连接后会将参考图编码为 reference_latents。"}),
+                    **{
+                        f"{IMAGE_PREFIX}{index}": ("IMAGE", {"tooltip": "参考图像；连接最后一个图像输入后会自动增加下一个输入。"})
+                        for index in range(1, MAX_IMAGES + 1)
+                    },
                 },
             }
 
@@ -223,17 +214,16 @@ else:
         RETURN_NAMES = ("正面条件", "负面条件")
         FUNCTION = "encode"
         CATEGORY = CATEGORY
-        DESCRIPTION = "将 CLIP、VAE、提示词和最多20张参考图像整合到一个 Qwen Image 2.1 条件编码节点中。"
+        DESCRIPTION = "使用外接 CLIP 与可选 VAE 编码 Qwen Image 2.1 条件；正向和负向提示词分别编码，参考图可写入 reference_latents。"
 
-        def encode(self, **kwargs):
+        def encode(self, clip, **kwargs):
             images = {
                 f"{IMAGE_PREFIX}{index}": kwargs.get(f"{IMAGE_PREFIX}{index}")
                 for index in range(1, MAX_IMAGES + 1)
             }
             return _encode_from_values(
-                kwargs.get(CLIP_NAME, ""),
-                kwargs.get(CLIP_TYPE, QWEN_CLIP_TYPE),
-                kwargs.get(VAE_NAME, ""),
+                clip,
+                kwargs.get("vae"),
                 kwargs.get(POSITIVE_PROMPT, ""),
                 kwargs.get(NEGATIVE_PROMPT, ""),
                 kwargs.get(RESOLUTION, 1024),

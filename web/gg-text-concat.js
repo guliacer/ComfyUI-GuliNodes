@@ -1,4 +1,6 @@
+import { watchNodeState, isUserResizingNode } from "./gg-nodes2.js";
 import { app } from "../../scripts/app.js";
+import { lockRowLayoutHeight } from "./gg-widget-rows.js";
 
 // ---------------------------------------------------------------------------
 // GG 文本拼接
@@ -132,16 +134,46 @@ function releaseSlot(widget) {
   return true;
 }
 
+function concatFitState(node) {
+  return (node._ggTextConcatFit ??= {});
+}
+
 function fitNode(node) {
+  const state = concatFitState(node);
+  // 首帧布局可能把 20 个槽位都算进 computeSize（实测读档时能报到 1100+），
+  // 等宿主把隐藏槽位真正收掉后再量，否则会把节点一次性撑得老高。
+  if (!state.ready) return;
   const computed = typeof node?.computeSize === "function" ? node.computeSize() : null;
   if (!computed) return;
   const width = Math.max(MIN_WIDTH, Number(node.size?.[0]) || 0, Number(computed[0]) || 0);
-  const height = Math.max(MIN_HEIGHT, Number(computed[1]) || 0);
+  const naturalHeight = Math.max(MIN_HEIGHT, Number(computed[1]) || 0);
+  // settle 阶段以「存档高度」为底线，允许跟随首帧布局收缩；settle 结束后才
+  // 把当前高度锁成基线，之后只增不减。
+  const floor = state.settling
+    ? Math.max(MIN_HEIGHT, Math.round(Number(state.settleFloor) || 0))
+    : Math.max(MIN_HEIGHT, Math.round(Number(state.manualHeight) || 0));
+  const height = Math.max(naturalHeight, floor);
   const current = [Number(node.size?.[0]) || 0, Number(node.size?.[1]) || 0];
-  if (Math.abs(current[0] - width) < 1 && Math.abs(current[1] - height) < 1) return;
+  if (Math.abs(current[0] - width) < 1 && Math.abs(current[1] - height) < 1) {
+    if (!state.settling) {
+      state.manualHeight = height;
+      lockRowLayoutHeight(node, height);
+    }
+    return;
+  }
 
-  node.setSize?.([width, height]);
-  node.size = [width, height];
+  state.applyingFit = true;
+  try {
+    node.setSize?.([width, height]);
+    node.size = [width, height];
+  } finally {
+    state.applyingFit = false;
+  }
+  if (!state.settling) {
+    state.manualHeight = height;
+    // 行布局引擎自己也会在行数变少时缩高度，同步锁住，避免两条路径互相打架。
+    lockRowLayoutHeight(node, height);
+  }
   node.setDirtyCanvas?.(true, true);
   node.graph?.setDirtyCanvas?.(true, true);
 }
@@ -191,7 +223,9 @@ function syncSlots(node, force = false) {
       changed = true;
     }
   }
-  if (changed) fitNode(node);
+  // force 时即使可见数量没变也要重新贴合：setup 的首帧把 fit 推迟了，
+  // 后续强制同步的 changed 为 false，不补这一下高度就永远停在首帧的 1100+。
+  if (changed || force) fitNode(node);
   return visible;
 }
 
@@ -207,6 +241,39 @@ function setupNode(node) {
   const entries = slotEntries(node);
   if (!entries.length) return;
 
+  const state = concatFitState(node);
+  if (!state.hooked) {
+    state.hooked = true;
+    const originalOnResize = node.onResize;
+    node.onResize = function (size) {
+      const result = originalOnResize?.apply(this, arguments);
+      // 只认用户真的握着节点边拖动的那次；布局自己的 setSize 不算。
+      if (!state.applyingFit && isUserResizingNode(this)) {
+        const height = Math.round(Number(size?.[1] ?? this.size?.[1]) || 0);
+        if (height > 0) {
+          state.settling = false;
+          state.manualHeight = height;
+          lockRowLayoutHeight(this, height);
+        }
+      }
+      return result;
+    };
+  }
+  // 读档时以存档高度为基线；新建节点先按最小高度，等首帧结束再量真实内容。
+  // 不能拿新建瞬间的 node.size / computeSize：那时 20 个槽位都还没收起（实测 1138）。
+  const stored = Math.round(Number(node._ggTextConcatStoredHeight) || 0);
+  state.settling = true;
+  state.settleFloor = stored;
+  if (stored > 0) {
+    state.manualHeight = Math.max(Number(state.manualHeight) || 0, stored);
+  } else if (!state.initialHeightApplied) {
+    state.initialHeightApplied = true;
+    state.manualHeight = MIN_HEIGHT;
+  }
+  state.manualHeight = Math.max(MIN_HEIGHT, Math.round(Number(state.manualHeight) || 0));
+  // settle 期间只保底到存档高度，不锁首帧的临时尺寸。
+  lockRowLayoutHeight(node, Math.max(MIN_HEIGHT, stored));
+
   // 注意：实例标记不能和原型标记同名——同名时实例读到的永远是原型上的 true，
   // 包装逻辑会被整段跳过（踩过）。
   if (!node._ggTextConcatWrapped) {
@@ -221,7 +288,32 @@ function setupNode(node) {
       };
     }
   }
+  // 等宿主把隐藏槽位真正收掉后再量高度；首帧 computeSize 不可信（会报 1100+）。
+  // 分几次重试，等布局稳定后把最终高度锁成基线。
+  for (const timer of state.fitTimers ?? []) clearTimeout(timer);
+  state.ready = false;
   syncSlots(node);
+  state.fitTimers = [
+    setTimeout(() => {
+      state.ready = true;
+      syncSlots(node, true);
+    }, 120),
+    setTimeout(() => {
+      state.ready = true;
+      syncSlots(node, true);
+    }, 320),
+    setTimeout(() => {
+      state.ready = true;
+      syncSlots(node, true);
+      state.settling = false;
+      state.manualHeight = Math.max(
+        state.manualHeight,
+        Math.round(Number(node.size?.[1]) || 0),
+      );
+      lockRowLayoutHeight(node, state.manualHeight);
+    }, 800),
+  ];
+  watchNodeState(node, "text-concat", enabled => { if (enabled) syncSlots(node); });
 }
 
 app.registerExtension({
@@ -241,6 +333,8 @@ app.registerExtension({
     const originalOnConfigure = nodeType.prototype.onConfigure;
     nodeType.prototype.onConfigure = function (...args) {
       const result = originalOnConfigure?.apply(this, args);
+      // 先记住工作流里存的高度，防止首帧布局把节点压矮后再也认不回来。
+      this._ggTextConcatStoredHeight = Math.round(Number(args?.[0]?.size?.[1]) || 0);
       setTimeout(() => setupNode(this), 0);
       return result;
     };

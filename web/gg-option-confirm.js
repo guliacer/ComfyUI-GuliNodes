@@ -115,6 +115,90 @@ function removeWidgets(node) {
     if (node.widgets) node.widgets.length = 0;
 }
 
+// 虚拟节点连到子图时，宿主会丢弃这条虚拟连线，改用内部控件值。
+// 只在实际接收控件的序列化阶段取值，避免多个子图实例互相覆盖。
+const NO_OPTION_VALUE = Symbol("ggOptionConfirmNoValue");
+const OPTION_SERIALIZER = Symbol("ggOptionConfirmSerializer");
+
+function graphLink(graph, id) {
+    if (id == null) return null;
+    return graph?.getLink?.(id) ?? graph?.links?.[id] ?? null;
+}
+
+function optionValueForInput(executionNode, inputName, visited = new Set()) {
+    const node = executionNode?.node ?? executionNode;
+    if (!node?.graph) return NO_OPTION_VALUE;
+    const slot = typeof inputName === "number"
+        ? inputName
+        : node.inputs?.findIndex((input) => (input.widget?.name || input.name) === inputName);
+    if (slot == null || slot < 0) return NO_OPTION_VALUE;
+
+    const key = String(executionNode.id) + ":input:" + slot;
+    if (visited.has(key)) return NO_OPTION_VALUE;
+    visited.add(key);
+    const link = graphLink(node.graph, node.inputs?.[slot]?.link);
+    if (!link) return NO_OPTION_VALUE;
+
+    const fromSubgraphInput = link.originIsIoNode
+        || String(link.origin_id) === String(node.graph.inputNode?.id);
+    if (fromSubgraphInput) {
+        const path = executionNode.subgraphNodePath;
+        const host = (path?.length
+            ? executionNode.nodesByExecutionId?.get(path.join(":"))
+            : null) ?? executionNode.subgraphNode;
+        return host ? optionValueForInput(host, link.origin_slot, visited) : NO_OPTION_VALUE;
+    }
+
+    const source = node.graph.getNodeById?.(link.origin_id);
+    if (source?.type !== NODE_TYPE) return NO_OPTION_VALUE;
+    const widget = source.widgets?.find((item) => item.__ggOptionConfirmSlot === link.origin_slot);
+    return widget ? widget.value : NO_OPTION_VALUE;
+}
+
+function installOptionSerializer(widget) {
+    if (!widget || widget.serializeValue?.[OPTION_SERIALIZER]) return;
+    const original = widget.serializeValue;
+    const serialize = async function ggOptionConfirmSerializeValue(executionNode, ...args) {
+        const value = optionValueForInput(executionNode, this.name);
+        if (value === NO_OPTION_VALUE) {
+            return original ? original.call(this, executionNode, ...args) : this.value;
+        }
+        if (!original) return value;
+
+        // 保留目标控件原有的转换；异步转换完成后恢复共享定义里的值。
+        const previous = this.value;
+        try {
+            this.value = value;
+            return await original.call(this, executionNode, ...args);
+        } finally {
+            this.value = previous;
+        }
+    };
+    Object.defineProperty(serialize, OPTION_SERIALIZER, { value: true });
+    widget.serializeValue = serialize;
+}
+
+function prepareSubgraphInputs(targetNode, input, visited = new Set()) {
+    const graph = targetNode?.subgraph;
+    if (!graph || !input || visited.has(input)) return;
+    visited.add(input);
+    const subgraphInput = input._subgraphSlot
+        ?? graph.inputs?.[targetNode.inputs?.indexOf(input)];
+    for (const id of subgraphInput?.linkIds || []) {
+        const link = graphLink(graph, id);
+        const child = link ? graph.getNodeById?.(link.target_id) : null;
+        const childInput = child?.inputs?.[link?.target_slot];
+        if (!childInput) continue;
+        if (child.subgraph) {
+            prepareSubgraphInputs(child, childInput, visited);
+        } else {
+            const widget = child.getWidgetFromSlot?.(childInput)
+                ?? child.widgets?.find((item) => item.name === (childInput.widget?.name || childInput.name));
+            installOptionSerializer(widget);
+        }
+    }
+}
+
 function chainWidgetCallback(node, slot, widget) {
     const original = widget.callback;
     widget.callback = function ggOptionConfirmWidgetCallback() {
@@ -240,7 +324,7 @@ function createNodeClass(LiteGraph) {
     resolveOutputTarget(slot) {
         const output = this.outputs?.[slot];
         const linkId = output?.links?.[0];
-        const link = linkId == null ? null : this.graph?.links?.[linkId];
+        const link = graphLink(this.graph, linkId);
         if (!link) return null;
         const targetNode = this.graph?.getNodeById?.(link.target_id);
         const input = targetNode?.inputs?.[link.target_slot];
@@ -310,7 +394,8 @@ function createNodeClass(LiteGraph) {
             }
 
             const type = configType(info.config);
-            output.type = type;
+            // 动态字符串选项用下拉框展示，连线类型仍跟随真实输入。
+            output.type = type === "COMBO" && info.input?.type === "STRING" ? "STRING" : type;
             output.name = this.slotName(slot, info);
             output.widget = info.input.widget || { name: info.widgetName };
             this.createSlotWidget(slot, info, previousValues);
@@ -347,6 +432,7 @@ function createNodeClass(LiteGraph) {
             app.canvas?.graph_mouse || [0, 0],
             {},
         );
+        prepareSubgraphInputs(info.targetNode, info.input);
     }
 
     applyToGraph() {

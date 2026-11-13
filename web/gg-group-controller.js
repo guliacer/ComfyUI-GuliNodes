@@ -1,3 +1,5 @@
+import { isNodes2, watchNodeState } from "./gg-nodes2.js";
+import { createVuePanel, panelButton as vueButton } from "./gg-vue-panel.js";
 import { app } from "../../scripts/app.js";
 import { detectHostTheme } from "./gg-ui-design.js";
 
@@ -364,14 +366,21 @@ function syncEnableWidget(node) {
   const widget = enableWidget(node);
   if (!widget) return null;
 
-  if (!widget._ggGroupEnableHidden) {
-    widget._ggGroupEnableHidden = true;
+  widget._ggGroupEnableOriginal ??= { type: widget.type, computeSize: widget.computeSize };
+  const vue = isNodes2();
+  if (vue) {
+    widget.type = widget._ggGroupEnableOriginal.type;
+    widget.computeSize = widget._ggGroupEnableOriginal.computeSize;
+    if (!node.inputs?.some(input => input.widget?.name === ENABLE_WIDGET && input.link != null)) widget.hidden = false;
+    widget._ggGroupEnableHidden = false;
+    widget.label = ENABLE_WIDGET;
+  } else {
     widget.hidden = true;
     widget.type = ENABLE_HIDDEN_TYPE;
     widget.computeSize = () => [0, -4];
+    widget._ggGroupEnableHidden = true;
+    widget.label = ROW_INPUT_LABEL;
   }
-  // 控件标签也压成空格：DOM 渲染路径会拿 widget.label 当端口名画出来。
-  if (widget.label !== ROW_INPUT_LABEL) widget.label = ROW_INPUT_LABEL;
 
   if (!widget._ggGroupEnableBound) {
     widget._ggGroupEnableBound = true;
@@ -390,9 +399,10 @@ function syncEnableWidget(node) {
   if (input) {
     // 与多组控制的行输入同口径：端口名只留圆点，不画「启用」二字。
     // name 保持不变，GG 选项确认的连线与读档都不受影响。
-    if (input.label !== ROW_INPUT_LABEL) input.label = ROW_INPUT_LABEL;
+    input.label = vue ? ENABLE_WIDGET : ROW_INPUT_LABEL;
     input.alwaysVisible = true;
-    if (!input.pos || input.pos[0] !== radius || input.pos[1] !== ENABLE_ROW_Y) {
+    if (vue) delete input.pos;
+    else if (!input.pos || input.pos[0] !== radius || input.pos[1] !== ENABLE_ROW_Y) {
       input.pos = [radius, ENABLE_ROW_Y];
     }
   }
@@ -1082,6 +1092,91 @@ function _showGroupMenu(node, e) {
   });
 }
 
+
+function setupVueControls(node) {
+  const multi = node.comfyClass === NODE_NAME_M;
+  if (!multi && node.comfyClass !== NODE_NAME_S) return;
+  multi ? ensureStateM(node) : ensureStateS(node);
+  const panel = createVuePanel(node, "gg_group_controls", multi ? 82 : 68);
+  if (!panel) return;
+  const refresh = (enabled, changed) => {
+    if (!enabled) return;
+    const all = getAllGroups();
+    for (const group of all) recomputeGroupNodes(group);
+    const groups = multi ? controlGroups(node) : [selectedGroup(node)].filter(Boolean);
+    if (multi) syncControlInputs(node, groups);
+    else syncEnableWidget(node);
+    for (const input of node.inputs ?? []) {
+      const index = /^组启用(\d+)$/.exec(input.name)?.[1];
+      input.label = index ? groups[Number(index) - 1]?.title ?? input.name : input.name;
+    }
+    const key = JSON.stringify([node.properties?.selectedGroup, selectedTitles(node),
+      all.map(group => [groupTitle(group), getGroupNodes(group).map(item => [item.id, item.mode])])]);
+    if (!changed && panel.stateKey === key) return;
+    panel.stateKey = key;
+    const children = [];
+    const commit = action => event => {
+      action(event);
+      node.graph?.change?.();
+      panel.stateKey = null;
+      refresh(true, false);
+    };
+    if (multi) {
+      const header = document.createElement("div");
+      Object.assign(header.style, { display: "flex", gap: "4px", flexWrap: "wrap" });
+      const skip = vueButton("全部跳过", commit(() => applyToControlled(node, true)));
+      const enable = vueButton("全部启用", commit(() => applyToControlled(node, false)));
+      skip.disabled = enable.disabled = groups.length === 0;
+      header.append(skip, enable, vueButton("选择组", () => openGroupSelectPanel(node)));
+      children.push(header);
+    } else {
+      const select = document.createElement("select");
+      select.setAttribute("aria-label", "选择要控制的编组");
+      Object.assign(select.style, { width: "100%", minWidth: "0", height: "30px",
+        color: "var(--gg-ink)", background: "var(--gg-field)", border: "1px solid var(--gg-divider)", borderRadius: "6px" });
+      select.add(new Option(all.length ? "请选择编组" : "工作流中没有编组", ""));
+      for (const group of all) select.add(new Option(groupTitle(group) || "未命名编组", groupTitle(group)));
+      select.value = node.properties.selectedGroup ?? "";
+      select.addEventListener("change", commit(() => { node.properties.selectedGroup = select.value; }));
+      children.push(select);
+    }
+    for (const group of groups) {
+      const members = getGroupNodes(group);
+      const skipped = members.length > 0 && members.every(item => isSkippedMode(item.mode));
+      const mixed = !skipped && members.some(item => isSkippedMode(item.mode));
+      const row = document.createElement("div");
+      Object.assign(row.style, { display: "flex", gap: "6px", alignItems: "center", minWidth: "0" });
+      const name = vueButton(multi ? groupTitle(group) : "共 " + members.length + " 个节点", () => navigateToGroup(group));
+      Object.assign(name.style, { flex: "1", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+      name.title = groupTitle(group);
+      const toggle = vueButton(skipped ? "已跳过" : mixed ? "部分跳过" : "已启用", commit(() => {
+        setGroupBypass(group, !skipped);
+        const widget = multi ? findWidget(node, rowInputName(groups.indexOf(group))) : enableWidget(node);
+        if (widget) widget.value = skipped;
+      }));
+      toggle.setAttribute("aria-pressed", String(!skipped));
+      toggle.dataset.ggGroupToggle = groupTitle(group);
+      if (multi) row.append(name, toggle);
+      else {
+        const widget = enableWidget(node);
+        if (widget && members.length) widget.value = !skipped;
+        row.append(name);
+      }
+      children.push(row);
+    }
+    if (!groups.length) {
+      const empty = document.createElement("div");
+      empty.textContent = multi ? "点击“选择组”添加要控制的编组" : "选择编组后可切换启用状态";
+      empty.style.color = "var(--gg-muted)";
+      children.push(empty);
+    }
+    panel.host.replaceChildren(...children);
+    panel.fit();
+  };
+  watchNodeState(node, "group-controls", refresh);
+  refresh(isNodes2(), true);
+}
+
 app.registerExtension({
   name: "ComfyUI.GGNodes.GroupController",
 
@@ -1123,7 +1218,9 @@ app.registerExtension({
         return result;
       };
 
-      nodeType.prototype.computeSize = function () {
+      const originalComputeM = nodeType.prototype.computeSize;
+      nodeType.prototype.computeSize = function (...args) {
+        if (isNodes2()) return originalComputeM?.apply(this, args) ?? [MIN_W, 120];
         ensureStateM(this);
         return [MIN_W, computeHeightM(controlGroups(this).length)];
       };
@@ -1170,7 +1267,9 @@ app.registerExtension({
         origOnAddedS?.call(this, graph);
       };
 
-      nodeType.prototype.computeSize = function () {
+      const originalComputeS = nodeType.prototype.computeSize;
+      nodeType.prototype.computeSize = function (...args) {
+        if (isNodes2()) return originalComputeS?.apply(this, args) ?? [MIN_W, 100];
         ensureStateS(this);
         return [MIN_W, SINGLE_H];
       };
@@ -1214,7 +1313,12 @@ app.registerExtension({
     }
   },
 
+  nodeCreated(node) {
+    setupVueControls(node);
+  },
+
   loadedGraphNode(node) {
+    setupVueControls(node);
     const isM = node.comfyClass === NODE_NAME_M;
     const isS = node.comfyClass === NODE_NAME_S;
     if (!isM && !isS) return;
@@ -1227,11 +1331,11 @@ app.registerExtension({
           delete node[LEGACY_SELECTION_FLAG];
           setSelectedTitles(node, getAllGroups().map(groupTitle));
         }
-        node.size[1] = computeHeightM(controlGroups(node).length);
+        if (!isNodes2()) node.size[1] = computeHeightM(controlGroups(node).length);
       } else {
         ensureStateS(node);
         syncEnableWidget(node);
-        node.size[1] = SINGLE_H;
+        if (!isNodes2()) node.size[1] = SINGLE_H;
       }
       app.graph?.setDirtyCanvas?.(true, false);
     });

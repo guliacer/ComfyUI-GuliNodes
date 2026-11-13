@@ -207,7 +207,6 @@ const AUTO_LABELS = {
     输入提示词: "输入",
     正向提示词: "正向",
     负向提示词: "负向",
-    CLIP名称: "CLIP",
     文生图PE模型: "文生图PE",
     图生图PE模型: "图生图PE",
     文生图LLM模型: "文生图LLM",
@@ -245,7 +244,6 @@ const AUTO_LABELS = {
     内存清理: "清理",
     引导强度: "引导",
     降噪强度: "降噪",
-    VAE名称: "VAE",
 };
 
 // 套单列布局的节点。
@@ -269,7 +267,6 @@ const AUTO_CLASSES = [
     "GGSaveImage",
     "GGSeedGenerator",
     "GGTextFileLoad",
-    "GGVAE解码",
     "GGVideoCompress",
     "GGVideoLoad",
     "GGVideoLoadByPath",

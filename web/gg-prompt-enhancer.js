@@ -1,5 +1,11 @@
 import { app } from "../../scripts/app.js";
 import { growOnlyHeight } from "./gg-port-list-layout.js";
+import { skinColorsFor } from "./gg-widget-rows.js";
+import {
+  connectLoaderToInput,
+  createLoaderNode,
+  findCompatibleLoader,
+} from "./gg-loader-migration.js";
 import {
   forgetHeight,
   rememberHeight,
@@ -115,8 +121,186 @@ function widgetValue(node, name) {
   return widget ? widget.value : undefined;
 }
 
+// ---------- 已接线控件：标出「连在哪」 ----------
+// 子图里把「编辑需求」「seed」提升成输入后，前端会把控件藏起来、只留一个没有名字的
+// 端口点：文本区还会按原高度（实测 318px）继续占位，节点中间留下一大片空白，
+// 用户根本看不出这两条线落在哪。做法：
+//   1. 被藏起来的控件收成一行（记住原尺寸，断开后恢复）；
+//   2. 在该行画一条和其它参数一致的底格，左边写控件名、右边写「上游输入」，
+//      让端口点有了明确的归属。
+const WIRED_WIDGETS = ["seed", "输入提示词"];
+const WIRED_ROW_H = 20;      // computeSize 返回值，宿主会 +4 得到 24 的行高
+const WIRED_ROW_BOX = 24;    // 宿主实际使用的行高
+const WIRED_LABEL = "← 上游输入";
+
+function mirrorInput(node, name) {
+  return (node?.inputs || []).find((input) => input?.widget?.name === name) ?? null;
+}
+
+function isWidgetWired(node, widget) {
+  const input = mirrorInput(node, widget?.name);
+  return !!input && input.link != null;
+}
+
+function syncWiredRows(node) {
+  let changed = false;
+  let restored = false;
+  for (const name of WIRED_WIDGETS) {
+    const widget = widgetByName(node, name);
+    if (!widget) continue;
+    const wired = isWidgetWired(node, widget);
+    // 之前被「不生效不展示」藏起来的控件，接线后要还回真实类型：
+    // 否则引擎把它当隐藏控件，连端口点的锚定行都不会留。
+    if (wired && widget.type === HIDDEN_TAG) {
+      const saved = widgetState[widget.name];
+      if (saved?.origType) widget.type = saved.origType;
+    }
+    // 只有被前端藏起来的控件才需要收行：控件还显示着时收行会把多行文本区压成一条。
+    const collapse = wired && widget.hidden === true;
+    if (collapse === (widget._ggWired === true)) continue;
+    if (collapse) {
+      // 记下接线前的节点高度：断开时引擎可能已经把节点按「没有多行文本区」收矮过，
+      // 这里要能把它还原回接线前的尺寸。
+      if (node._ggWiredBaseHeight == null) {
+        node._ggWiredBaseHeight = Math.round(Number(node.size?.[1]) || 0);
+      }
+      widget._ggWired = true;
+      widget._ggWiredSize = {
+        computeSize: widget.computeSize,
+        computedHeight: widget.computedHeight,
+      };
+      widget.computeSize = () => [0, WIRED_ROW_H];
+      widget.computedHeight = WIRED_ROW_BOX;
+    } else {
+      restored = true;
+      delete widget._ggWired;
+      const saved = widget._ggWiredSize;
+      delete widget._ggWiredSize;
+      if (saved) {
+        if (saved.computeSize) widget.computeSize = saved.computeSize;
+        else delete widget.computeSize;
+        if (Number.isFinite(saved.computedHeight)) widget.computedHeight = saved.computedHeight;
+      }
+      // 前端只在部分断开路径（removeLink）里自己放开 hidden，走 removeLink /
+      // disconnectInput 的其它入口时控件会一直藏着——这里补一次，保证断开就能编辑。
+      if (widget.hidden) widget.hidden = false;
+    }
+    changed = true;
+  }
+  if (changed) {
+    // 只改 computedHeight 不会让宿主重排，必须走 arrange 才会把下面的行提上来。
+    // arrange 内部可能 setSize，这里要挡住「把自动重排当成用户拖动」记进高度记忆，
+    // 否则接线 / 断开一次就会把一个偏矮的临时高度钉成用户偏好。
+    node._ggEnhancerApplying = true;
+    try {
+      node.arrange?.();
+      const base = Number(node._ggWiredBaseHeight);
+      if (restored && Number.isFinite(base) && base > 0 && Number(node.size?.[1]) < base) {
+        node.setSize?.([Number(node.size?.[0]) || 0, base]);
+      }
+    } finally {
+      node._ggEnhancerApplying = false;
+    }
+    const stillWired = WIRED_WIDGETS.some((name) => widgetByName(node, name)?._ggWired);
+    if (!stillWired) {
+      if (restored) {
+        // 断开这一帧引擎可能先把节点按「没有多行文本区」收矮，下一帧再兜一次：
+        // 把接线前的高度和文本区高度一起还原。
+        restoreWiredBaseHeight(node);
+      } else {
+        delete node._ggWiredBaseHeight;
+      }
+    }
+    node._ggAutoHeight = Math.round(Number(node.size?.[1]) || 0);
+    node.setDirtyCanvas?.(true, true);
+    node.graph?.setDirtyCanvas?.(true, true);
+  }
+}
+
+// 断开接线后把节点恢复成接线前的尺寸。用一帧延迟是因为引擎的重排可能排在本帧之后，
+// 当场设回去会被它按「没有多行文本区」重新收矮。
+function restoreWiredBaseHeight(node) {
+  const base = Number(node._ggWiredBaseHeight);
+  if (!Number.isFinite(base) || base <= 0) {
+    delete node._ggWiredBaseHeight;
+    return;
+  }
+  requestAnimationFrame(() => {
+    node._ggEnhancerApplying = true;
+    try {
+      if (Number(node.size?.[1]) < base) {
+        node.setSize?.([Number(node.size?.[0]) || 0, base]);
+      }
+      node.arrange?.();
+    } finally {
+      node._ggEnhancerApplying = false;
+    }
+    node._ggAutoHeight = Math.round(Number(node.size?.[1]) || 0);
+    delete node._ggWiredBaseHeight;
+    node.setDirtyCanvas?.(true, true);
+    node.graph?.setDirtyCanvas?.(true, true);
+  });
+}
+
+function drawWiredRows(node, ctx) {
+  if (!node?.widgets || !ctx) return;
+  // 折叠状态只显示标题条，画在内容区会盖到标题上。
+  if (node.flags?.collapsed === true || node.collapsed === true) return;
+  const wired = WIRED_WIDGETS
+    .map((name) => widgetByName(node, name))
+    .filter((widget) => widget && isWidgetWired(node, widget));
+  if (!wired.length) return;
+  const colors = skinColorsFor(node);
+  const width = Number(node.size?.[0]) || 260;
+  ctx.save();
+  ctx.font = "12px Inter, sans-serif";
+  ctx.textBaseline = "middle";
+  for (const widget of wired) {
+    const y = Number(widget.y);
+    if (!Number.isFinite(y)) continue;
+    if (widget.hidden) {
+      // 控件被藏起来：整行重画成「种子 / 文本 ← 上游输入」，端口点仍在左侧
+      const boxX = 15;
+      const boxW = Math.max(60, width - 30);
+      ctx.beginPath();
+      ctx.roundRect(boxX, y, boxW, WIRED_ROW_BOX, 6);
+      ctx.fillStyle = colors.field;
+      ctx.fill();
+      ctx.strokeStyle = colors.divider;
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.textAlign = "left";
+      ctx.fillStyle = colors.muted;
+      ctx.fillText(String(widget.name), boxX + 9, y + WIRED_ROW_BOX / 2);
+      ctx.textAlign = "right";
+      ctx.fillStyle = colors.accent;
+      ctx.fillText(WIRED_LABEL, boxX + boxW - 9, y + WIRED_ROW_BOX / 2);
+      ctx.textAlign = "left";
+      continue;
+    }
+    // 控件还显示着：只在右端加一枚角标，不盖住它的取值
+    const textW = ctx.measureText(WIRED_LABEL).width + 14;
+    const badgeX = Math.max(20, width - 15 - textW);
+    const badgeY = y + (WIRED_ROW_BOX - 18) / 2;
+    ctx.beginPath();
+    ctx.roundRect(badgeX, badgeY, textW, 18, 9);
+    ctx.fillStyle = colors.field;
+    ctx.fill();
+    ctx.strokeStyle = colors.accent;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.textAlign = "center";
+    ctx.fillStyle = colors.accent;
+    ctx.fillText(WIRED_LABEL, badgeX + textW / 2, badgeY + 9);
+  }
+  ctx.restore();
+}
+
 function toggleWidget(node, widget, show) {
   if (!widget) return;
+  // 已接线的控件交给接线状态管：模式切换不许把它藏掉，也不许把行高改回去，
+  // 否则端口点会失去归属（见 syncWiredRows / drawWiredRows）。
+  if (isWidgetWired(node, widget)) return;
   if (!widgetState[widget.name]) {
     widgetState[widget.name] = { origType: widget.type, origComputeSize: widget.computeSize };
   }
@@ -154,17 +338,15 @@ function computeVisibility(task, method) {
     api_key: api,
     api_base_url: api,
     model: api,
-    "文生图PE模型": pe && (!i2i || auto),
-    "图生图PE模型": pe && (i2i || auto),
-    // 本地LLM 与本地PE 同一套口径：显式任务只显示用得上的那个模型，
-    // 「自动」可能落到文生图/图生图/反推，两个都留着让用户分别指定。
+    // PE 模型现在是外接 CLIP 端口，不是节点内的下拉加载控件。
+    // 本地LLM 显式任务只显示用得上的那个模型，「自动」两个都留着。
     [W_LLM_T2I]: llm && (!i2i || auto),
     [W_LLM_I2I]: llm && (i2i || auto),
     "mmproj": llm && (i2i || auto),
     "上下文长度": llm,
     "最大生成token": pe || llm,
     "seed": pe,
-    "卸载策略": pe || llm,
+    "卸载策略": llm,
   };
 }
 
@@ -200,6 +382,7 @@ function updateVisibility(node) {
     toggleWidget(node, widgetByName(node, name), show);
   }
   toggleControlWidget(node, visibility["seed"]);
+  syncWiredRows(node);
   refreshSize(node);
   requestAnimationFrame(() => refreshSize(node));
 }
@@ -236,41 +419,140 @@ function normalizeLimits(node) {
 }
 
 // ---------- 旧工作流迁移 ----------
-// 「生成后自动卸载模型」是个布尔，现在换成了四档下拉框，位置不变（下标 13），
-// 所以老工作流打开后这个控件的值是 true/false。不迁移的话下拉框会显示成 "true"。
-// 老工作流的 widgets_values 是按下标存的位置数组。新版在下标 9 多了一个
-// 「图生图LLM模型」，老存档不补这一位，mmproj / 输入提示词会整体错位一格，
-// 而且新版前端按控件数重建 node.inputs 镜像时会在 configure 阶段丢连线。
-// 补进去的值取老「主模型」（下标 8），两个任务仍用同一个 GGUF，行为完全不变。
-const NEW_WIDGET_COUNT = 19; // 18 个声明控件 + seed 旁的 control_after_generate
+// PE 文件下拉改成两个外接 CLIP 端口后，当前是 16 个声明控件 + seed 控制项。
+// 老工作流按旧布局先完成既有迁移，再删除两个 PE 文件名控件，避免 LLM 参数错位。
+const NEW_WIDGET_COUNT = 17;
+const LEGACY_WIDGET_COUNT = 19;
+const LEGACY_PE_MODELS_PROPERTY = "_ggLegacyPeModelsV1";
+function normalizeLegacyPeModel(value) {
+  const model = String(value ?? "").trim();
+  return !model || model.startsWith("（") ? "" : model;
+}
+
+// 旧存档里的 PE 下拉常常是 ComfyUI 默认的 clip_l.safetensors，它并不是
+// Qwen Image 文本编码器；拿它自动建 CLIPLoader 只会又加载一个无关模型。
+function isQwenPeModel(value) {
+  const model = normalizeLegacyPeModel(value);
+  return !!model
+    && /\.safetensors$/i.test(model)
+    && /qwen/i.test(model)
+    && !/clip_l/i.test(model);
+}
+
 function migrateWidgetValues(info) {
-  const values = info?.widgets_values;
-  if (!Array.isArray(values) || values.length >= NEW_WIDGET_COUNT) return;
-  // 新版存档（含 widgets_values_named 且已经有拆开的双模型）只是少了前端自动生成的
-  // control_after_generate。按「老主模型」再插一格会把 mmproj / 上下文长度 / seed
-  // 全部顶错位，骨架工具生成的 18 位工作流就是这么坏的。
+  const values = Array.isArray(info?.widgets_values) ? info.widgets_values : null;
   const named = info?.widgets_values_named;
-  if (named && (W_LLM_T2I in named || W_LLM_I2I in named)) {
-    if (values.length === 18) values.splice(14, 0, "fixed");
+  const oldPeWidgets = named && ("文生图PE模型" in named || "图生图PE模型" in named);
+  const hasTypedPePorts = (info?.inputs || []).some((input) =>
+    ["文生图PE模型", "图生图PE模型"].includes(input?.name) && input?.type === "CLIP");
+  const hasLegacyPeValues = values && [values[6], values[7]].some((value) =>
+    /\.safetensors$/i.test(normalizeLegacyPeModel(value)));
+  if (oldPeWidgets || (!hasTypedPePorts && hasLegacyPeValues)) {
+    const legacyPeModels = {
+      t2i: isQwenPeModel(named?.["文生图PE模型"] ?? values?.[6])
+        ? normalizeLegacyPeModel(named?.["文生图PE模型"] ?? values?.[6]) : "",
+      i2i: isQwenPeModel(named?.["图生图PE模型"] ?? values?.[7])
+        ? normalizeLegacyPeModel(named?.["图生图PE模型"] ?? values?.[7]) : "",
+    };
+    if (legacyPeModels.t2i || legacyPeModels.i2i) {
+      info.properties = info.properties && typeof info.properties === "object" ? info.properties : {};
+      info.properties[LEGACY_PE_MODELS_PROPERTY] = legacyPeModels;
+    }
+  }
+  if (!values) return;
+  const currentLayout = hasTypedPePorts || (named && !oldPeWidgets
+    && (W_LLM_T2I in named || W_LLM_I2I in named));
+  if (currentLayout) {
+    if (oldPeWidgets && values.length >= LEGACY_WIDGET_COUNT) values.splice(6, 2);
+    if (values.length === NEW_WIDGET_COUNT - 1) values.splice(12, 0, "fixed");
+    if (named) {
+      delete named["文生图PE模型"];
+      delete named["图生图PE模型"];
+    }
     return;
   }
-  const legacyMainModel = values[8] ?? "";
-  if (values.length === 18) {
-    values.splice(9, 0, legacyMainModel);
-  } else if (values.length === 17) {
-    // 更早的存档还没有 control_after_generate，先补在 seed 之后（下标 13）。
-    values.splice(13, 0, "randomize");
-    values.splice(9, 0, legacyMainModel);
-  } else if (values.length === 16) {
-    // 本仓库老示例工作流（分区编辑 / 人像精修）的格式：下标 13 已经有
-    // control_after_generate（旧前端存 true/false），但还没有「透明背景」「增强方向」。
-    // 先在 9 插图生图模型，再把旧布尔 control 换成新前端的字符串枚举，最后补尾部两位。
-    values.splice(9, 0, legacyMainModel);
-    if (typeof values[14] === "boolean") {
-      values[14] = values[14] ? "fixed" : "randomize";
+
+  // 先把仍使用 PE 控件的旧版本迁移到原 19 项布局。
+  if (values.length < LEGACY_WIDGET_COUNT) {
+    if (named && (W_LLM_T2I in named || W_LLM_I2I in named)) {
+      if (values.length === 18) values.splice(14, 0, "fixed");
+    } else {
+      const legacyMainModel = values[8] ?? "";
+      if (values.length === 18) {
+        values.splice(9, 0, legacyMainModel);
+      } else if (values.length === 17) {
+        values.splice(13, 0, "randomize");
+        values.splice(9, 0, legacyMainModel);
+      } else if (values.length === 16) {
+        values.splice(9, 0, legacyMainModel);
+        if (typeof values[14] === "boolean") {
+          values[14] = values[14] ? "fixed" : "randomize";
+        }
+        values.push(false, "默认");
+      }
     }
-    values.push(false, "默认");
   }
+
+  if (values.length >= LEGACY_WIDGET_COUNT) values.splice(6, 2);
+  if (named) {
+    delete named["文生图PE模型"];
+    delete named["图生图PE模型"];
+  }
+}
+
+
+
+function migrateLegacyPeLoaders(node) {
+  const properties = node?.properties;
+  const legacy = properties?.[LEGACY_PE_MODELS_PROPERTY];
+  if (!legacy || typeof legacy !== "object") return false;
+  const graph = node.graph || globalThis.app?.graph;
+  if (!graph || typeof graph.add !== "function") return false;
+
+  const models = [legacy.t2i, legacy.i2i].map((value) => (isQwenPeModel(value) ? normalizeLegacyPeModel(value) : ""));
+  const inputNames = ["文生图PE模型", "图生图PE模型"];
+  const byModel = new Map();
+  let complete = true;
+  for (let index = 0; index < inputNames.length; index += 1) {
+    const model = models[index];
+    if (!model) continue;
+    const inputIndex = (node.inputs || []).findIndex((input) => input?.name === inputNames[index]);
+    if (inputIndex < 0) {
+      complete = false;
+      continue;
+    }
+    if (node.inputs[inputIndex].link != null) continue;
+
+    let loader = byModel.get(model) || findCompatibleLoader(graph, "CLIPLoader", {
+      clip_name: model,
+      type: "qwen_image",
+    });
+    let created = false;
+    if (!loader) {
+      loader = createLoaderNode(graph, "CLIPLoader", {
+        values: { clip_name: model, type: "qwen_image" },
+        title: index === 0 ? "PE 文生图 CLIP（迁移）" : "PE 图生图 CLIP（迁移）",
+        position: [Number(node.pos?.[0] || 0) - 360, Number(node.pos?.[1] || 0) + index * 150],
+      });
+      if (!loader) {
+        complete = false;
+        continue;
+      }
+      created = true;
+    }
+    if (!connectLoaderToInput(loader, node, inputNames[index])) {
+      if (created) graph.remove?.(loader);
+      complete = false;
+      continue;
+    }
+    byModel.set(model, loader);
+  }
+
+  if (complete) {
+    delete properties[LEGACY_PE_MODELS_PROPERTY];
+    graph.setDirtyCanvas?.(true, true);
+  }
+  return complete;
 }
 
 function normalizeUnload(node) {
@@ -309,6 +591,7 @@ function setupNode(node) {
   normalizeUnload(node);
   normalizeLlmModels(node);
   updateVisibility(node);
+  migrateLegacyPeLoaders(node);
   // 补槽位等自动布局走完再钉基准高度，免得把自动变化当成用户拖动记下来。
   node._ggAutoHeight = Number(node.size?.[1]) || Number(node._ggAutoHeight) || 0;
 }
@@ -324,6 +607,23 @@ app.registerExtension({
     nodeType.prototype.onConnectionsChange = function (...args) {
       const result = originalOnConnectionsChange?.apply(this, args);
       handleConnectionChange(this, ...args);
+      // 接线会改变控件的隐藏状态：先同步还原/收行（断开后控件要立刻可编辑），
+      // 再异步重算整套显隐与高度。
+      if (isThisNode(this)) {
+        syncWiredRows(this);
+        setTimeout(() => updateVisibility(this), 0);
+      }
+      return result;
+    };
+
+    const originalOnDrawForeground = nodeType.prototype.onDrawForeground;
+    nodeType.prototype.onDrawForeground = function (ctx) {
+      const result = originalOnDrawForeground?.apply(this, arguments);
+      if (isThisNode(this)) {
+        // 每帧只做两次比较；真的接线状态变了才 arrange，不改变时没有额外开销。
+        syncWiredRows(this);
+        drawWiredRows(this, ctx);
+      }
       return result;
     };
 
@@ -344,6 +644,8 @@ app.registerExtension({
     const originalOnResize = nodeType.prototype.onResize;
     nodeType.prototype.onResize = function (...args) {
       const result = originalOnResize?.apply(this, args);
+      // 接线 / 断开触发的自动重排不是用户拖动，不能写进高度记忆。
+      if (this._ggEnhancerApplying) return result;
       const height = Number(this.size?.[1] ?? args?.[0]?.[1]);
       const auto = Number(this._ggAutoHeight);
       // 只记用户手动拖出来的高度：自动布局写入的值与 _ggAutoHeight 相同，直接跳过。
@@ -380,4 +682,3 @@ app.registerExtension({
     setTimeout(() => setupNode(node), 0);
   },
 });
-
