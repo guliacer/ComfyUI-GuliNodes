@@ -1,7 +1,7 @@
 """真机 /prompt 验证新字段名能被后端接受并执行。
 
 输入提示词留空 → _enhance 提前返回，不加载 GGUF 权重，几秒内就能验完。
-模型选择逻辑（文生图 / 图生图各用哪个 GGUF）由 test_prompt_enhancer_fusion.py 覆盖。
+本脚本只验证运行时字段接受与执行；仓库单测已移除，不再由本脚本覆盖模型选择逻辑。
 """
 import importlib.util
 import json

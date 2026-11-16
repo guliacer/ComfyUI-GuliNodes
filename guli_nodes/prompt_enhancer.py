@@ -17,6 +17,7 @@ import json
 import math
 import re
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -47,6 +48,10 @@ except Exception:
 
 NODE_ID = "GGPromptEnhancer"
 DISPLAY_NAME = "GG 提示词增强qwen2.1"
+LLM_NODE_ID = "GGPromptEnhancerLLM"
+LLM_DISPLAY_NAME = "GG 提示词增强（LLM）"
+PE_NODE_ID = "GGPromptEnhancerPE"
+PE_DISPLAY_NAME = "GG 提示词增强（PE）"
 CATEGORY = "GuliNodes/文本"
 
 IMAGE_PREFIX = "图片"
@@ -164,6 +169,59 @@ NO_MMPROJ = "无"
 _USER_REQUEST_PREFIX = "用户需求：\n"
 _EMPTY_REPLY_MESSAGE = "模型返回为空，可能只生成了思考内容但没有最终提示词。请提高最大生成token后重试。"
 _VERSIONLESS_API_HOSTS = frozenset({"api.deepseek.com"})
+
+
+class _InvalidPromptOutput(ValueError):
+    """模型完成了请求，但返回正文为空、截断或明显退化。"""
+
+
+class _OfficialPEModel:
+    def __init__(self, clip, model_name):
+        self.clip = clip
+        self.model_name = model_name
+
+
+class _OfficialPEStorage:
+    """PE 节点内部使用 ComfyUI 原生 QWEN_IMAGE 加载路径并复用当前权重。"""
+
+    model = None
+
+    @classmethod
+    def load(cls, model_name: str):
+        # PE 与本地 LLM 共用显存，切换到 PE 时必须先清掉 LLM；
+        # 即使 PE 命中缓存也不能跳过这个互斥边界。
+        _LocalLLMStorage.unload()
+        if cls.model is not None and cls.model.model_name == model_name:
+            return cls.model
+        cls.unload()
+        import comfy.sd
+
+        if not hasattr(comfy.sd.CLIPType, "QWEN_IMAGE"):
+            raise RuntimeError("当前 ComfyUI 版本不支持 Qwen Image PE 文本编码器，请更新 ComfyUI。")
+        path = folder_paths.get_full_path_or_raise(PE_FOLDER, model_name)
+        clip = comfy.sd.load_clip(
+            ckpt_paths=[path],
+            embedding_directory=folder_paths.get_folder_paths("embeddings"),
+            clip_type=comfy.sd.CLIPType.QWEN_IMAGE,
+        )
+        cls.model = _OfficialPEModel(clip=clip, model_name=model_name)
+        return cls.model
+
+    @classmethod
+    def unload(cls) -> None:
+        model, cls.model = cls.model, None
+        if model is None:
+            return
+        try:
+            import comfy.model_management as mm
+
+            patcher = getattr(model.clip, "patcher", None)
+            if patcher is not None:
+                mm.unload_model_and_clones(patcher)
+            mm.soft_empty_cache(force=True)
+        except Exception:
+            pass
+
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 _CODE_FENCE_RE = re.compile(r"```(?:json|text|markdown)?\s*([\s\S]*?)\s*```")
@@ -350,6 +408,10 @@ _RATIO_LINE_RE = re.compile(
     r"[\r\n]+\s*(?:RATIO|WH_RATIO|wh_ratio|画面比例|比例)\s*[:：]\s*([0-9]{1,2}\s*[:：]\s*[0-9]{1,2})\s*$",
     re.IGNORECASE,
 )
+_INLINE_RATIO_TRAILER_RE = re.compile(
+    r"\s+(?:RATIO|WH_RATIO|wh_ratio|画面比例|比例)\s*[:：]\s*([0-9]{1,2}\s*[:：]\s*[0-9]{1,2})\s*$",
+    re.IGNORECASE,
+)
 
 _OUTPUT_FORMAT_HEAD_RE = re.compile(r"\n\n## Output [Ff]ormat\b")
 
@@ -527,7 +589,8 @@ def _low_free_memory() -> bool:
 
 
 def _release_models_before_run() -> None:
-    """「运行前先卸载」：释放本节点持有的 LLM，再清理设备缓存。"""
+    """「运行前先卸载」：释放本节点持有的 PE / LLM，再清理设备缓存。"""
+    _OfficialPEStorage.unload()
     _LocalLLMStorage.unload()
     try:
         import comfy.model_management as mm
@@ -773,9 +836,56 @@ def _json_payload(prompt: str, wh_ratio: Any = "", ratio_follow: Any = "") -> st
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
 
 
+_PROMPT_QUALITY_TOKEN_RE = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)*|[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+_PROMPT_JSON_START_RE = re.compile(r"^\s*\{\s*[\"'](?:rewritten_prompt|wh_ratio|ratio_follow)[\"']\s*:", re.I)
+_PROMPT_LITERAL_RE = re.compile(r'"[^"\n]+"|“[^”\n]+”|「[^」\n]+」|『[^』\n]+』|(?<!\w)\x27[^\x27\n]+\x27(?!\w)')
+_PROMPT_LITERAL_MARKER_RE = re.compile(r"_?GG_KEEP_LITERAL_\d+_END")
+
+
+def _validate_prompt_body(prompt: str) -> str:
+    """拒绝空白、非正文及明显复读，同时保留正常的画面文字。"""
+    value = str(prompt or "").strip()
+    if not value:
+        raise _InvalidPromptOutput(_EMPTY_REPLY_MESSAGE)
+
+    head = value[:120].lstrip().lstrip("*# ").casefold()
+    if any(head.startswith(name) for name in _REASONING_HEADERS):
+        raise _InvalidPromptOutput("模型返回的内容仍是思考过程，不是提示词正文，请重新执行。")
+    if "<think>" in value.casefold() or "<思考>" in value:
+        raise _InvalidPromptOutput("模型返回的内容仍是未完成的思考过程，不是提示词正文，请重新执行。")
+
+    literals = list(_PROMPT_LITERAL_RE.finditer(value))
+    outside = _PROMPT_LITERAL_RE.sub(" ", value)
+    tokens = _PROMPT_QUALITY_TOKEN_RE.findall(value.casefold())
+    outside_tokens = _PROMPT_QUALITY_TOKEN_RE.findall(outside.casefold())
+    if not tokens or (literals and len(literals) > 8 and len(outside_tokens) < 16):
+        raise _InvalidPromptOutput("模型返回的提示词正文异常：没有足够的文字描述，请重新执行或更换本地模型。")
+
+    # 画面文字本身可以重复（例如海报上的 SUN SUN SUN），复读检测只看引号外的正文。
+    repetition_source = _PROMPT_LITERAL_MARKER_RE.sub(" ", outside if literals else value)
+    repetition_tokens = _PROMPT_QUALITY_TOKEN_RE.findall(repetition_source.casefold())
+    if len(repetition_tokens) >= 24:
+        for width in (4, 6, 8, 10):
+            windows = len(repetition_tokens) - width + 1
+            if windows <= 0:
+                continue
+            repeated = Counter(
+                tuple(repetition_tokens[i:i + width]) for i in range(windows)
+            ).most_common(1)[0][1]
+            if repeated >= 8 and repeated * width / len(repetition_tokens) >= 0.25:
+                raise _InvalidPromptOutput("模型返回的提示词正文存在明显重复，请重新执行或更换本地模型。")
+
+    letter_count = len(re.findall(r"[A-Za-z\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]", value))
+    if letter_count < 3:
+        raise _InvalidPromptOutput("模型返回的提示词正文异常：内容只有标点或重复引号，请重新执行或更换本地模型。")
+    return value
+
+
 def _split_ratio_trailer(text: str) -> tuple[str, str]:
     """纯文本通道：把最后一行的 RATIO 尾注剥出来当 wh_ratio。"""
     match = _RATIO_LINE_RE.search(text)
+    if not match:
+        match = _INLINE_RATIO_TRAILER_RE.search(text)
     if not match:
         return text.strip(), ""
     ratio = match.group(1).replace("：", ":").replace(" ", "")
@@ -791,23 +901,35 @@ def _parse_output(
         raise ValueError(_EMPTY_REPLY_MESSAGE)
     prompt = wh_ratio = ratio_follow = ""
     if structured:
+        if _PROMPT_JSON_START_RE.match(cleaned) and not _json_object(cleaned):
+            raise _InvalidPromptOutput("模型返回的 JSON 已截断或格式不完整，请提高最大生成token后重试。")
         data = _json_object(cleaned)
-        prompt = str(data.get("rewritten_prompt") or "").strip()
+        raw_prompt = data.get("rewritten_prompt")
+        prompt = raw_prompt.strip() if isinstance(raw_prompt, str) else ""
+        if data and not prompt:
+            raise _InvalidPromptOutput("模型返回的 JSON 没有有效的提示词正文。")
         if prompt:
             wh_ratio, ratio_follow = data.get("wh_ratio"), data.get("ratio_follow")
         else:
-            # JSON 被截断或模型换了个纯文本口气：退回原文，别让整条链路报错。
-            prompt = cleaned
+            # 官方 PE 偶尔按纯文本回答，兼容正文与比例尾注两种格式。
+            prompt, wh_ratio = _split_ratio_trailer(cleaned)
+            prompt = _strip_untagged_reasoning(prompt)
     else:
         prompt, wh_ratio = _split_ratio_trailer(cleaned)
         prompt = _strip_untagged_reasoning(prompt)
-        if prompt.startswith("{"):
+        if _PROMPT_JSON_START_RE.match(prompt):
             # 有些 API 模型无论如何都会回 JSON，白捡的字段就收下。
             data = _json_object(prompt)
-            if str(data.get("rewritten_prompt") or "").strip():
-                prompt = str(data["rewritten_prompt"]).strip()
+            if not data:
+                raise _InvalidPromptOutput("模型返回的 JSON 已截断或格式不完整，请提高最大生成token后重试。")
+            raw_prompt = data.get("rewritten_prompt")
+            if isinstance(raw_prompt, str) and raw_prompt.strip():
+                prompt = raw_prompt.strip()
                 wh_ratio = wh_ratio or data.get("wh_ratio") or ""
                 ratio_follow = data.get("ratio_follow") or ""
+            else:
+                raise _InvalidPromptOutput("模型返回的 JSON 没有有效的提示词正文。")
+    prompt = _validate_prompt_body(prompt)
     if transparent:
         prompt = _apply_transparency(prompt)
     return prompt, _json_payload(prompt, wh_ratio, ratio_follow)
@@ -1076,18 +1198,34 @@ def _request_api(*, api_base_url, api_key, model, instructions, user_prompt, ima
 # ------------------------- 本地官方 PE ------------------------- #
 
 
-def _pe_model_choices() -> list:
+def _pe_model_choices(family: str | None = None) -> list:
+    """只列 Qwen Image PE 权重，避免把普通 CLIP、LoRA 或扩散模型放进选择器。"""
     try:
         names = folder_paths.get_filename_list(PE_FOLDER)
     except Exception:
         names = []
-    found = sorted({str(n) for n in names if str(n).lower().endswith(".safetensors")})
-    return found or [MISSING_PE]
+    candidates = sorted({
+        str(name) for name in names
+        if str(name).lower().endswith(".safetensors")
+        and "qwen" in str(name).casefold()
+        and "image" in str(name).casefold()
+        and "pe" in str(name).casefold()
+    })
+    if family in ("t2i", "i2i"):
+        marker = f"pe_{family}"
+        specific = [name for name in candidates if marker in name.casefold()]
+        if specific:
+            return specific
+        generic = [name for name in candidates if "pe_t2i" not in name.casefold() and "pe_i2i" not in name.casefold()]
+        return generic or [MISSING_PE]
+    return candidates or [MISSING_PE]
 
 
-def _request_official_pe(*, clip, system_prompt, user_prompt, max_output_tokens, seed, images) -> str:
+def _request_official_pe(*, clip=None, model_name="", system_prompt, user_prompt, max_output_tokens, seed, images) -> str:
     if clip is None:
-        raise ValueError("本地PE缺少模型：请把 Qwen Image CLIPLoader 输出连接到对应 PE 输入。")
+        if not _valid_model(model_name):
+            raise ValueError("请选择本地PE safetensors 模型，并放入 models/text_encoders。")
+        clip = _OfficialPEStorage.load(model_name).clip
     text = _build_official_pe_text(system_prompt, user_prompt, has_images=bool(images))
     tokens = clip.tokenize(text, images=list(images), thinking=False)
     generated = clip.generate(
@@ -1183,6 +1321,7 @@ class _LocalLLMStorage:
 
     @classmethod
     def load(cls, model_name: str, mmproj_name: str, context_length: int, text_only: bool = False):
+        _OfficialPEStorage.unload()
         mmproj = "" if not mmproj_name or mmproj_name == NO_MMPROJ else mmproj_name
         # text_only 会换一套聊天模板（关闭思考），不能和看图用的实例互相复用。
         key = (model_name, mmproj, bool(text_only))
@@ -1342,7 +1481,7 @@ def _is_context_overflow(exc: BaseException) -> bool:
     )
 
 
-def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt, user_prompt, max_output_tokens, image_base64_list, text_only=False) -> str:
+def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt, user_prompt, max_output_tokens, image_base64_list, text_only=False, seed=0) -> str:
     images = list(image_base64_list or [])
     requested_output = int(max_output_tokens)
     max_output_tokens = min(requested_output, LLM_LOCAL_MAX_OUTPUT_CEILING)
@@ -1373,10 +1512,12 @@ def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt
             for item in images
         )
     attempt = 0
+    quality_retry = False
     while True:
         loaded = target
         llm = _LocalLLMStorage.load(model_name, mmproj_name, target, text_only=text_only)
         started = time.monotonic()
+        sample_seed = None if quality_retry else _normalize_seed(seed)
         try:
             result = llm.create_chat_completion(
                 messages=[
@@ -1389,14 +1530,29 @@ def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt
                 top_k=LLM_TOP_K,
                 # 增强规则写得很长，放开重复惩罚会退化成复读，一直生成到 max_tokens 才停。
                 repeat_penalty=LLM_REPEAT_PENALTY,
+                # 固定种子首轮保持可复现；若正文质量失败，原种子会确定性复现同一坏输出，重试改用随机采样。
+                seed=None if sample_seed is None else sample_seed % 0xFFFFFFFF,
                 # 纯文本（没接 mmproj）时用的是模型自带 chat 模板，Qwen3.5 默认开思考：
                 # 实测同一请求 1536 token 全部花在 Thinking Process 上，耗时 469 秒且没有正文。
                 # reasoning_budget=0 直接关掉；旧版 llama.cpp 不认这个参数，由 worker 过滤掉。
                 reasoning_budget=0,
             )
+            raw = _completion_text(result)
+            finish_reason = _completion_finish_reason(result)
+            if finish_reason == "length":
+                raise _InvalidPromptOutput("模型输出达到最大生成token后被截断，提示词正文不完整，请提高最大生成token后重试。")
+            _validate_prompt_body(_strip_untagged_reasoning(_clean_think_blocks(raw)))
         except Exception as exc:
             # 失败的桥接已释放 child；清掉代理缓存，让同一选择可以重新启动。
             _LocalLLMStorage.unload()
+            if isinstance(exc, _InvalidPromptOutput) and not quality_retry:
+                quality_retry = True
+                print("[GG 本地LLM] 首次输出不完整或质量异常，已重启隔离 worker 并更换随机种子重试一次…", flush=True)
+                continue
+            if isinstance(exc, _InvalidPromptOutput) and quality_retry:
+                raise _InvalidPromptOutput(
+                    f"本地LLM 连续两次未能生成有效提示词，最后结果：{exc}请重新执行、更换 seed 或更换模型。"
+                ) from exc
             attempt += 1
             if attempt > LLM_CONTEXT_RETRY or loaded >= LLM_MAX_CONTEXT or not _is_context_overflow(exc):
                 raise
@@ -1419,11 +1575,21 @@ def _request_local_llm(*, model_name, mmproj_name, context_length, system_prompt
         if isinstance(usage, dict):
             detail = f"，prompt {usage.get('prompt_tokens')} / 生成 {usage.get('completion_tokens')} token"
         print(f"[GG 本地LLM] 生成完成，用时 {time.monotonic() - started:.1f}s（n_ctx={loaded}）{detail}", flush=True)
-        break
+        return raw
+
+
+def _completion_text(result: Any) -> str:
     choices = result.get("choices") if isinstance(result, dict) else None
     if choices:
         message = choices[0].get("message") if isinstance(choices[0], dict) else None
         return _coerce_text(message.get("content") if isinstance(message, dict) else None)
+    return ""
+
+
+def _completion_finish_reason(result: Any) -> str:
+    choices = result.get("choices") if isinstance(result, dict) else None
+    if choices and isinstance(choices[0], dict):
+        return str(choices[0].get("finish_reason") or "")
     return ""
 
 # ------------------------- 核心分派 ------------------------- #
@@ -1444,18 +1610,20 @@ def _enhance(
     api_key,
     api_base_url,
     model,
-    pe_t2i_clip,
-    pe_i2i_clip,
-    llm_t2i_model,
-    llm_i2i_model,
-    mmproj_model,
-    context_length,
-    max_output_tokens,
-    seed,
-    unload,
-    transparent,
-    direction,
-    images,
+    pe_t2i_clip=None,
+    pe_i2i_clip=None,
+    pe_t2i_model="",
+    pe_i2i_model="",
+    llm_t2i_model="",
+    llm_i2i_model="",
+    mmproj_model=NO_MMPROJ,
+    context_length=DEFAULT_CONTEXT_LENGTH,
+    max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+    seed=0,
+    unload=UNLOAD_AUTO,
+    transparent=False,
+    direction=DIRECTION_NONE,
+    images=None,
 ) -> tuple[str, str, bool]:
     prompt = str(prompt or "")
     method = method if method in (METHOD_API, METHOD_PE, METHOD_LLM) else METHOD_API
@@ -1492,7 +1660,7 @@ def _enhance(
         # 反推已经在上面补过 _REVERSE_LANG_HINT，这里只补文生图/图生图。
         user_prompt += _PE_USER_LANG_HINT.get(language, "")
 
-    if method == METHOD_LLM and unload_mode == UNLOAD_BEFORE_AFTER:
+    if method in (METHOD_LLM, METHOD_PE) and unload_mode == UNLOAD_BEFORE_AFTER:
         _release_models_before_run()
 
     try:
@@ -1506,15 +1674,20 @@ def _enhance(
                 image_base64_list=_images_to_jpeg_base64(ref_frames),
             )
         elif method == METHOD_PE:
-            # 模型由上游 CLIPLoader 管理；自动模式下按任务取对应端口，并兼容只接一路。
-            primary, backup = (
-                (pe_i2i_clip, pe_t2i_clip) if task_mode == MODE_I2I else (pe_t2i_clip, pe_i2i_clip)
+            # 新 PE 节点内部选择并加载模型；旧工作流若仍接 CLIP，则优先沿用原输入。
+            # 自动反推虽然解析为 MODE_T2I，但 ref_frames 非空，必须使用图生图 PE。
+            needs_vision = bool(ref_frames)
+            primary_clip, backup_clip = (
+                (pe_i2i_clip, pe_t2i_clip) if needs_vision else (pe_t2i_clip, pe_i2i_clip)
             )
-            clip = primary if primary is not None else backup
-            if clip is None:
-                raise ValueError("本地PE未连接 CLIP：请连接 CLIPLoader 的 Qwen Image 输出。")
+            primary_model, backup_model = (
+                (pe_i2i_model, pe_t2i_model) if needs_vision else (pe_t2i_model, pe_i2i_model)
+            )
+            clip = primary_clip if primary_clip is not None else backup_clip
+            model_name = primary_model if _valid_model(primary_model) else backup_model
             raw = _request_official_pe(
                 clip=clip,
+                model_name=model_name,
                 system_prompt=_build_official_pe_system(task_mode, language, reverse),
                 user_prompt=user_prompt,
                 max_output_tokens=max_output_tokens,
@@ -1547,6 +1720,7 @@ def _enhance(
                 user_prompt=user_prompt + _local_output_guard(language),
                 max_output_tokens=max_output_tokens,
                 image_base64_list=_llm_reference_images(ref_frames),
+                seed=seed,
             )
             raw = _request_local_llm(**llm_request)
             raw = _correct_local_llm_language(raw, language, llm_request)
@@ -1555,11 +1729,14 @@ def _enhance(
     except Exception as exc:
         raise RuntimeError(f"GG 提示词增强失败：{exc}") from exc
     finally:
-        if method == METHOD_LLM and (unload_mode in (UNLOAD_AFTER, UNLOAD_BEFORE_AFTER) or (
+        should_unload = unload_mode in (UNLOAD_AFTER, UNLOAD_BEFORE_AFTER) or (
             unload_mode == UNLOAD_AUTO and _low_free_memory()
-        )):
-            # PE CLIP 属于上游连接，由 ComfyUI 的 Loader / Model Management 管理。
-            _LocalLLMStorage.unload()
+        )
+        if should_unload:
+            if method == METHOD_LLM:
+                _LocalLLMStorage.unload()
+            elif method == METHOD_PE:
+                _OfficialPEStorage.unload()
 
     text, payload = _parse_output(
         _clean_think_blocks(raw),
@@ -1583,6 +1760,8 @@ P_URL = "api_base_url"
 P_MODEL = "model"
 P_PE_T2I = "文生图PE模型"
 P_PE_I2I = "图生图PE模型"
+P_PE_T2I_MODEL = "文生图PE权重"
+P_PE_I2I_MODEL = "图生图PE权重"
 P_LLM_T2I = "文生图LLM模型"
 P_LLM_I2I = "图生图LLM模型"
 P_LLM_LEGACY = "主模型"  # 老工作流 / 老 API 提交里的名字，只用于兼容读取
@@ -1601,7 +1780,7 @@ OUT_JSON = "提示词JSON"
 OUT_REVERSE = "是否反推"
 
 
-def _run(kwargs: dict) -> tuple[str, str, bool]:
+def _run(kwargs: dict, method_override: str | None = None) -> tuple[str, str, bool]:
     images = kwargs.get(IMAGE_PREFIX)
     if not isinstance(images, dict):
         images = {
@@ -1611,12 +1790,14 @@ def _run(kwargs: dict) -> tuple[str, str, bool]:
         prompt=kwargs.get(P_PROMPT, ""),
         task_mode=kwargs.get(P_TASK, MODE_AUTO),
         language=kwargs.get(P_LANG, "中文"),
-        method=kwargs.get(P_METHOD, METHOD_API),
+        method=method_override or kwargs.get(P_METHOD, METHOD_API),
         api_key=kwargs.get(P_KEY, ""),
         api_base_url=kwargs.get(P_URL, ""),
         model=kwargs.get(P_MODEL, ""),
         pe_t2i_clip=kwargs.get(P_PE_T2I),
         pe_i2i_clip=kwargs.get(P_PE_I2I),
+        pe_t2i_model=kwargs.get(P_PE_T2I_MODEL, ""),
+        pe_i2i_model=kwargs.get(P_PE_I2I_MODEL, ""),
         # 老存档 / 直接走 API 的旧提交只有「主模型」一个值：两个任务都用它，行为不变。
         llm_t2i_model=kwargs.get(P_LLM_T2I) or kwargs.get(P_LLM_LEGACY, ""),
         llm_i2i_model=kwargs.get(P_LLM_I2I) or kwargs.get(P_LLM_T2I) or kwargs.get(P_LLM_LEGACY, ""),
@@ -1632,56 +1813,104 @@ def _run(kwargs: dict) -> tuple[str, str, bool]:
 
 
 _DESCRIPTION = (
-    "按 Qwen Image 2.1 官方规则增强文生图/图生图提示词，同时输出提示词 JSON（含 wh_ratio / ratio_follow）。"
-    "任务模式「自动」：接图且需求留空 = 按图反推；接图且有需求 = 图生图；没接图 = 文生图。"
-    "增强方式支持 API / 本地PE / 本地LLM，图生图与反推可接最多 20 张参考图。"
-    "本地PE 使用外接 Qwen Image CLIPLoader；本地LLM 文生图不加载 mmproj。"
+    "兼容旧工作流的多方式提示词增强节点。"
+    "新工作流建议使用独立的 GG 提示词增强（LLM）或 GG 提示词增强（PE）节点。"
+    "旧节点的 PE 方式仍可沿用已有的 Qwen Image CLIPLoader 连线。"
+)
+_LLM_DESCRIPTION = (
+    "独立本地 LLM 提示词增强。GGUF、mmproj、上下文与生成长度均在节点内配置；"
+    "默认上下文 16384、生成上限 1536，并关闭思考输出。图生图/反推参考图直接接入本节点。"
+)
+_PE_DESCRIPTION = (
+    "独立 Qwen Image 官方 PE 提示词增强。仅显示匹配的 PE safetensors 权重，"
+    "权重由节点内部按 QWEN_IMAGE 类型加载并缓存；无需外接 CLIPLoader。"
 )
 
+
+def _image_input_v3():
+    return io.Autogrow.Input(
+        IMAGE_PREFIX,
+        template=io.Autogrow.TemplateNames(
+            io.Image.Input(IMAGE_PREFIX),
+            names=[f"{IMAGE_PREFIX}{i}" for i in range(1, MAX_IMAGES + 1)],
+            min=0,
+        ),
+        tooltip="参考图，接入最后一路后自动增加，最多 20 张。",
+    )
+
+
 def _v3_inputs() -> list:
+    """旧节点 schema：维持存量工作流的控件与连线兼容。"""
     pe = _pe_model_choices()
     gguf = _gguf_choices(allow_none=False)
     mmproj = _gguf_choices(allow_none=True)
     llm_t2i, llm_i2i, llm_proj = _gguf_task_defaults(gguf, mmproj)
     return [
-        io.Combo.Input(P_TASK, options=list(TASK_MODES), default=MODE_AUTO, tooltip="自动：接图且需求留空=按图反推，接图且有需求=图生图，没接图=文生图。显式选文生图/图生图则完全按所选执行。"),
-        io.Combo.Input(P_LANG, options=list(LANGUAGES), default="中文", tooltip="增强提示词的描述语言；自动=跟随用户需求的语言。要求显示在图中的文字始终保持原文。"),        io.Combo.Input(P_METHOD, options=[METHOD_API, METHOD_PE, METHOD_LLM], default=_default_method(pe), tooltip="本地PE=官方 PE 文本编码器，16 秒级且不用 key；本地LLM=GGUF 大模型，通用模型容易把计划写进正文；API=OpenAI 兼容接口。"),
+        io.Combo.Input(P_TASK, options=list(TASK_MODES), default=MODE_AUTO, tooltip="自动：接图且需求留空=反推；接图且有需求=图生图；没接图=文生图。"),
+        io.Combo.Input(P_LANG, options=list(LANGUAGES), default="中文", tooltip="增强提示词的描述语言；画面内文字保持原文。"),
+        io.Combo.Input(P_METHOD, options=[METHOD_API, METHOD_PE, METHOD_LLM], default=_default_method(pe), tooltip="选择 API、本地 PE 或本地 LLM；新工作流建议改用分开的专用节点。"),
         io.String.Input(P_KEY, default="", tooltip="API Key，仅 API 方式生效。"),
         io.String.Input(P_URL, default=DEFAULT_API_BASE_URL, tooltip="API 调用地址，仅 API 方式生效。"),
         io.String.Input(P_MODEL, default=DEFAULT_API_MODEL, tooltip="API 模型名，仅 API 方式生效。"),
-        io.Clip.Input(P_PE_T2I, optional=True, tooltip="本地PE 文生图/反推模型：连接 CLIPLoader，并选择兼容的 Qwen Image PE 权重。"),
-        io.Clip.Input(P_PE_I2I, optional=True, tooltip="本地PE 图生图模型：连接支持视觉输入的 Qwen Image CLIP；未连接时回退到文生图 PE 输入。"),
-        io.Combo.Input(P_LLM_T2I, options=gguf, default=llm_t2i, tooltip="本地LLM 文生图 GGUF 主模型；纯文本任务用，不加载 mmproj。"),
-        io.Combo.Input(P_LLM_I2I, options=gguf, default=llm_i2i, tooltip="本地LLM 图生图/反推 GGUF 主模型；这两个任务要送参考图，需配视觉投影 mmproj。"),
-        io.Combo.Input(P_MMPROJ, options=mmproj, default=llm_proj, tooltip="本地LLM 视觉投影 mmproj，图生图与反推需要；文生图不使用。"),
-        io.Int.Input(P_CTX, default=DEFAULT_CONTEXT_LENGTH, min=512, max=131072, step=512, tooltip="本地LLM 上下文长度。默认 16384 已是最优值；填得比它小会被自动抬回 16384，装不下时还会继续自动放大并重试，一般不用手调。"),
-        io.Int.Input(P_MAXTOK, default=DEFAULT_MAX_OUTPUT_TOKENS, min=256, max=32768, step=256, tooltip="最大生成 token。正常输出 250~600 token，默认 1536 已够；本地LLM 方式填更大也只按 1536 执行，避免跑偏时一路生成几十秒。"),
-        io.Int.Input(P_SEED, default=0, min=0, max=MAX_SEED, tooltip="本地PE 采样种子；右键控件可切成每次随机。"),
-        io.Combo.Input(P_UNLOAD, options=list(UNLOAD_MODES), default=UNLOAD_AUTO, tooltip="仅控制本地LLM：自动=显存吃紧时运行后卸载；保持加载=下次更快但占显存；运行前后=跑之前先腾显存，跑完再放掉。"),
-        io.String.Input(P_PROMPT, multiline=True, dynamic_prompts=True, placeholder="输入要增强的文生图/图生图需求；接图并留空则按图反推"),
-        io.Boolean.Input(P_TRANSPARENT, default=False, tooltip="输出透明背景：自动改写需求里的背景描述，并给提示词套上 RGBA 前后缀，配合去背采样可出透明底图。"),
-        io.Combo.Input(P_DIRECTION, options=list(DIRECTIONS), default=DIRECTION_NONE, tooltip="叠加一段画面方向约束（焦段、光位、材质、构图），不改用户明确要求的内容。"),
-        io.Autogrow.Input(
-            IMAGE_PREFIX,
-            template=io.Autogrow.TemplateNames(
-                io.Image.Input(IMAGE_PREFIX),
-                names=[f"{IMAGE_PREFIX}{i}" for i in range(1, MAX_IMAGES + 1)],
-                min=0,
-            ),
-            tooltip="参考图，接入最后一个后自动增加，最多 20 个；文生图时前端会隐藏。",
-        ),
+        io.Clip.Input(P_PE_T2I, optional=True, tooltip="旧工作流兼容：本地PE 文生图/反推模型，连接 Qwen Image CLIPLoader。"),
+        io.Clip.Input(P_PE_I2I, optional=True, tooltip="旧工作流兼容：本地PE 图生图模型，连接 Qwen Image 图像编码器 CLIPLoader。"),
+        io.Combo.Input(P_LLM_T2I, options=gguf, default=llm_t2i, tooltip="本地LLM 文生图 GGUF 主模型。"),
+        io.Combo.Input(P_LLM_I2I, options=gguf, default=llm_i2i, tooltip="本地LLM 图生图/反推 GGUF 主模型。"),
+        io.Combo.Input(P_MMPROJ, options=mmproj, default=llm_proj, tooltip="本地LLM 视觉投影 mmproj，图生图与反推需要。"),
+        io.Int.Input(P_CTX, default=DEFAULT_CONTEXT_LENGTH, min=512, max=131072, step=512, tooltip="本地LLM 默认上下文 16384；不足时自动扩展并重试。"),
+        io.Int.Input(P_MAXTOK, default=DEFAULT_MAX_OUTPUT_TOKENS, min=256, max=32768, step=256, tooltip="生成 token 上限；本地LLM 运行时最多按 1536 执行。"),
+        io.Int.Input(P_SEED, default=0, min=0, max=MAX_SEED, tooltip="本地采样种子；右键可切换每次随机。"),
+        io.Combo.Input(P_UNLOAD, options=list(UNLOAD_MODES), default=UNLOAD_AUTO, tooltip="模型卸载策略。"),
+        io.String.Input(P_PROMPT, multiline=True, dynamic_prompts=True, placeholder="输入要增强的需求；接图并留空则按图反推"),
+        io.Boolean.Input(P_TRANSPARENT, default=False, tooltip="要求输出透明背景并清除与背景冲突的描述。"),
+        io.Combo.Input(P_DIRECTION, options=list(DIRECTIONS), default=DIRECTION_NONE, tooltip="可选画面方向约束。"),
+        _image_input_v3(),
     ]
 
 
+def _v3_local_inputs(method: str) -> list:
+    inputs = [
+        io.Combo.Input(P_TASK, options=list(TASK_MODES), default=MODE_AUTO, tooltip="自动：接图且需求留空=反推；接图且有需求=图生图；没接图=文生图。"),
+        io.Combo.Input(P_LANG, options=list(LANGUAGES), default="中文", tooltip="增强提示词的描述语言；画面内文字保持原文。"),
+    ]
+    if method == METHOD_LLM:
+        gguf = _gguf_choices(allow_none=False)
+        mmproj = _gguf_choices(allow_none=True)
+        llm_t2i, llm_i2i, llm_proj = _gguf_task_defaults(gguf, mmproj)
+        inputs.extend([
+            io.Combo.Input(P_LLM_T2I, options=gguf, default=llm_t2i, tooltip="文生图/反推使用的本地 GGUF 主模型。"),
+            io.Combo.Input(P_LLM_I2I, options=gguf, default=llm_i2i, tooltip="图生图使用的本地 GGUF 主模型，需匹配视觉架构。"),
+            io.Combo.Input(P_MMPROJ, options=mmproj, default=llm_proj, tooltip="图生图视觉投影；文生图不加载。"),
+            io.Int.Input(P_CTX, default=DEFAULT_CONTEXT_LENGTH, min=512, max=131072, step=512, tooltip="最佳默认值 16384；不足时自动扩展并重试。"),
+            io.Int.Input(P_MAXTOK, default=DEFAULT_MAX_OUTPUT_TOKENS, min=256, max=32768, step=256, tooltip="默认 1536；本地 LLM 执行上限为 1536。"),
+        ])
+    else:
+        pe_t2i = _pe_model_choices("t2i")
+        pe_i2i = _pe_model_choices("i2i")
+        inputs.extend([
+            io.Combo.Input(P_PE_T2I_MODEL, options=pe_t2i, default=_preferred_model(pe_t2i, "pe_t2i"), tooltip="文生图/反推 PE 权重；只列匹配的官方 Qwen Image PE 文件。"),
+            io.Combo.Input(P_PE_I2I_MODEL, options=pe_i2i, default=_preferred_model(pe_i2i, "pe_i2i"), tooltip="图生图 PE 权重；需要包含视觉编码器的 PE 文件。"),
+            io.Int.Input(P_MAXTOK, default=DEFAULT_MAX_OUTPUT_TOKENS, min=256, max=32768, step=256, tooltip="官方 PE 最大生成长度，默认 1536。"),
+        ])
+    inputs.extend([
+        io.Int.Input(P_SEED, default=0, min=0, max=MAX_SEED, tooltip="采样种子；右键可切换每次随机。"),
+        io.Combo.Input(P_UNLOAD, options=list(UNLOAD_MODES), default=UNLOAD_AUTO, tooltip="自动在显存紧张时卸载；保持加载可加快连续运行。"),
+        io.String.Input(P_PROMPT, multiline=True, dynamic_prompts=True, placeholder="输入要增强的需求；接图并留空则按图反推"),
+        io.Boolean.Input(P_TRANSPARENT, default=False, tooltip="要求输出透明背景并清除与背景冲突的描述。"),
+        io.Combo.Input(P_DIRECTION, options=list(DIRECTIONS), default=DIRECTION_NONE, tooltip="可选画面方向约束。"),
+        _image_input_v3(),
+    ])
+    return inputs
+
+
 def _legacy_required() -> dict:
-    pe = _pe_model_choices()
     gguf = _gguf_choices(allow_none=False)
     mmproj = _gguf_choices(allow_none=True)
     llm_t2i, llm_i2i, llm_proj = _gguf_task_defaults(gguf, mmproj)
     return {
         P_TASK: (list(TASK_MODES), {"default": MODE_AUTO}),
         P_LANG: (list(LANGUAGES), {"default": "中文"}),
-        P_METHOD: ([METHOD_API, METHOD_PE, METHOD_LLM], {"default": _default_method(pe)}),
+        P_METHOD: ([METHOD_API, METHOD_PE, METHOD_LLM], {"default": METHOD_API}),
         P_KEY: ("STRING", {"default": ""}),
         P_URL: ("STRING", {"default": DEFAULT_API_BASE_URL}),
         P_MODEL: ("STRING", {"default": DEFAULT_API_MODEL}),
@@ -1692,23 +1921,89 @@ def _legacy_required() -> dict:
         P_MAXTOK: ("INT", {"default": DEFAULT_MAX_OUTPUT_TOKENS, "min": 256, "max": 32768, "step": 256}),
         P_SEED: ("INT", {"default": 0, "min": 0, "max": MAX_SEED}),
         P_UNLOAD: (list(UNLOAD_MODES), {"default": UNLOAD_AUTO}),
-        P_PROMPT: ("STRING", {"default": "", "multiline": True, "dynamicPrompts": True, "placeholder": "输入要增强的文生图/图生图需求；接图并留空则按图反推"}),
+        P_PROMPT: ("STRING", {"default": "", "multiline": True, "dynamicPrompts": True, "placeholder": "输入要增强的需求；接图并留空则按图反推"}),
         P_TRANSPARENT: ("BOOLEAN", {"default": False}),
         P_DIRECTION: (list(DIRECTIONS), {"default": DIRECTION_NONE}),
     }
 
-if io is not None:
 
-    class GGPromptEnhancer(io.ComfyNode):
+def _legacy_local_required(method: str) -> dict:
+    inputs = {
+        P_TASK: (list(TASK_MODES), {"default": MODE_AUTO}),
+        P_LANG: (list(LANGUAGES), {"default": "中文"}),
+    }
+    if method == METHOD_LLM:
+        gguf = _gguf_choices(allow_none=False)
+        mmproj = _gguf_choices(allow_none=True)
+        llm_t2i, llm_i2i, llm_proj = _gguf_task_defaults(gguf, mmproj)
+        inputs.update({
+            P_LLM_T2I: (gguf, {"default": llm_t2i}),
+            P_LLM_I2I: (gguf, {"default": llm_i2i}),
+            P_MMPROJ: (mmproj, {"default": llm_proj}),
+            P_CTX: ("INT", {"default": DEFAULT_CONTEXT_LENGTH, "min": 512, "max": 131072, "step": 512}),
+            P_MAXTOK: ("INT", {"default": DEFAULT_MAX_OUTPUT_TOKENS, "min": 256, "max": 32768, "step": 256}),
+        })
+    else:
+        pe_t2i = _pe_model_choices("t2i")
+        pe_i2i = _pe_model_choices("i2i")
+        inputs.update({
+            P_PE_T2I_MODEL: (pe_t2i, {"default": _preferred_model(pe_t2i, "pe_t2i")}),
+            P_PE_I2I_MODEL: (pe_i2i, {"default": _preferred_model(pe_i2i, "pe_i2i")}),
+            P_MAXTOK: ("INT", {"default": DEFAULT_MAX_OUTPUT_TOKENS, "min": 256, "max": 32768, "step": 256}),
+        })
+    inputs.update({
+        P_SEED: ("INT", {"default": 0, "min": 0, "max": MAX_SEED}),
+        P_UNLOAD: (list(UNLOAD_MODES), {"default": UNLOAD_AUTO}),
+        P_PROMPT: ("STRING", {"default": "", "multiline": True, "dynamicPrompts": True, "placeholder": "输入要增强的需求；接图并留空则按图反推"}),
+        P_TRANSPARENT: ("BOOLEAN", {"default": False}),
+        P_DIRECTION: (list(DIRECTIONS), {"default": DIRECTION_NONE}),
+    })
+    return inputs
+
+
+class _PromptEnhancerLegacy:
+    METHOD = None
+    NODE_ID = None
+    DISPLAY_NAME = None
+    DESCRIPTION = None
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        optional = {f"{IMAGE_PREFIX}{i}": ("IMAGE", {"tooltip": "参考图；连接最后一个后自动增加，最多 20 张。"}) for i in range(1, MAX_IMAGES + 1)}
+        if cls.METHOD is None:
+            optional[P_PE_T2I] = ("CLIP", {"tooltip": "旧工作流兼容：连接 Qwen Image CLIPLoader。"})
+            optional[P_PE_I2I] = ("CLIP", {"tooltip": "旧工作流兼容：连接 Qwen Image 图像编码器 CLIPLoader。"})
+            required = _legacy_required()
+        else:
+            required = _legacy_local_required(cls.METHOD)
+        return {"required": required, "optional": optional}
+
+    RETURN_TYPES = ("STRING", "STRING", "BOOLEAN")
+    RETURN_NAMES = (OUT_PROMPT, OUT_JSON, OUT_REVERSE)
+    FUNCTION = "enhance"
+    CATEGORY = CATEGORY
+
+    def enhance(self, **kwargs):
+        return _run(kwargs, self.METHOD)
+
+
+if io is not None:
+    class _PromptEnhancerV3(io.ComfyNode):
+        METHOD = None
+        NODE_ID = None
+        DISPLAY_NAME = None
+        DESCRIPTION = None
+
         @classmethod
         def define_schema(cls):
+            inputs = _v3_inputs() if cls.METHOD is None else _v3_local_inputs(cls.METHOD)
             return io.Schema(
-                node_id=NODE_ID,
-                display_name=DISPLAY_NAME,
+                node_id=cls.NODE_ID,
+                display_name=cls.DISPLAY_NAME,
                 category=CATEGORY,
-                description=_DESCRIPTION,
-                search_aliases=["Prompt Enhancer", "Qwen Image 2.1", "提示词增强", "AI提示词增强"],
-                inputs=_v3_inputs(),
+                description=cls.DESCRIPTION,
+                search_aliases=["Prompt Enhancer", "Qwen Image 2.1", cls.DISPLAY_NAME],
+                inputs=inputs,
                 outputs=[
                     io.String.Output(display_name=OUT_PROMPT),
                     io.String.Output(display_name=OUT_JSON, tooltip="含 rewritten_prompt / wh_ratio / ratio_follow，可直接喂给尺寸解析节点。"),
@@ -1718,40 +2013,52 @@ if io is not None:
 
         @classmethod
         def execute(cls, **kwargs):
-            return io.NodeOutput(*_run(kwargs))
+            return io.NodeOutput(*_run(kwargs, cls.METHOD))
 
-else:
-
-    class GGPromptEnhancer:
-        @classmethod
-        def INPUT_TYPES(cls):
-            return {
-                "required": _legacy_required(),
-                "optional": {
-                    P_PE_T2I: ("CLIP", {"tooltip": "本地PE 文生图/反推模型：连接 CLIPLoader 的 Qwen Image 输出。"}),
-                    P_PE_I2I: ("CLIP", {"tooltip": "本地PE 图生图模型：连接支持视觉输入的 Qwen Image CLIP；未连接时回退到文生图 PE 输入。"}),
-                    **{
-                        f"{IMAGE_PREFIX}{i}": ("IMAGE", {"tooltip": "图生图参考图；连接最后一个后自动增加，最多 20 个。"})
-                        for i in range(1, MAX_IMAGES + 1)
-                    },
-                },
-            }
-
-        RETURN_TYPES = ("STRING", "STRING", "BOOLEAN")
-        RETURN_NAMES = (OUT_PROMPT, OUT_JSON, OUT_REVERSE)
-        FUNCTION = "enhance"
-        CATEGORY = CATEGORY
+    class GGPromptEnhancer(_PromptEnhancerV3):
+        METHOD = None
+        NODE_ID = NODE_ID
+        DISPLAY_NAME = DISPLAY_NAME
         DESCRIPTION = _DESCRIPTION
 
-        def enhance(self, **kwargs):
-            return _run(kwargs)
+    class GGPromptEnhancerLLM(_PromptEnhancerV3):
+        METHOD = METHOD_LLM
+        NODE_ID = LLM_NODE_ID
+        DISPLAY_NAME = LLM_DISPLAY_NAME
+        DESCRIPTION = _LLM_DESCRIPTION
 
+    class GGPromptEnhancerPE(_PromptEnhancerV3):
+        METHOD = METHOD_PE
+        NODE_ID = PE_NODE_ID
+        DISPLAY_NAME = PE_DISPLAY_NAME
+        DESCRIPTION = _PE_DESCRIPTION
+else:
+    class GGPromptEnhancer(_PromptEnhancerLegacy):
+        METHOD = None
+        NODE_ID = NODE_ID
+        DISPLAY_NAME = DISPLAY_NAME
+        DESCRIPTION = _DESCRIPTION
+
+    class GGPromptEnhancerLLM(_PromptEnhancerLegacy):
+        METHOD = METHOD_LLM
+        NODE_ID = LLM_NODE_ID
+        DISPLAY_NAME = LLM_DISPLAY_NAME
+        DESCRIPTION = _LLM_DESCRIPTION
+
+    class GGPromptEnhancerPE(_PromptEnhancerLegacy):
+        METHOD = METHOD_PE
+        NODE_ID = PE_NODE_ID
+        DISPLAY_NAME = PE_DISPLAY_NAME
+        DESCRIPTION = _PE_DESCRIPTION
 
 NODE_CLASS_MAPPINGS = {
     NODE_ID: GGPromptEnhancer,
+    LLM_NODE_ID: GGPromptEnhancerLLM,
+    PE_NODE_ID: GGPromptEnhancerPE,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     NODE_ID: DISPLAY_NAME,
+    LLM_NODE_ID: LLM_DISPLAY_NAME,
+    PE_NODE_ID: PE_DISPLAY_NAME,
 }
-

@@ -14,9 +14,12 @@ const HIDDEN_WIDGET_PREFIX = "ggHiddenLoRA";
 // 把用户拖动的高度压回去，所以整体跳过（宽度也交回原生）。
 const AUTOFIT_EXCLUDED_NODE_NAMES = new Set([
     "GGTitleNode",
+    "GGWorkflowTimer",
     "GGGroupControllerM",
     "GGGroupControllerS",
     "GGPromptEnhancer",
+    "GGPromptEnhancerLLM",
+    "GGPromptEnhancerPE",
     "GGOptionConfirm",
     "GGImageSuperResolution",
     // GG 图像对比 2张：大预览节点，尺寸完全归用户。autofit 在创建路径上

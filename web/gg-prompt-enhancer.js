@@ -15,6 +15,10 @@ import {
 } from "./gg-prompt-enhancer-height.js";
 
 const NODE_TYPE = "GGPromptEnhancer";
+const LOCAL_NODE_TYPES = new Set(["GGPromptEnhancerLLM", "GGPromptEnhancerPE"]);
+const NODE_TYPES = new Set([NODE_TYPE, ...LOCAL_NODE_TYPES]);
+const PE_NODE_TYPE = "GGPromptEnhancerPE";
+const LLM_NODE_TYPE = "GGPromptEnhancerLLM";
 const IMAGE_PREFIX = "图片";
 const MAX_IMAGES = 20;
 const INPUT_TYPE = globalThis.LiteGraph?.INPUT ?? 1;
@@ -33,7 +37,14 @@ const W_LLM_I2I = "图生图LLM模型";
 const widgetState = {};
 
 function isThisNode(node) {
-  return node?.comfyClass === NODE_TYPE || node?.type === NODE_TYPE;
+  return NODE_TYPES.has(node?.comfyClass) || NODE_TYPES.has(node?.type);
+}
+
+function nodeMethod(node) {
+  const type = node?.comfyClass || node?.type;
+  if (type === PE_NODE_TYPE) return METHOD_PE;
+  if (type === LLM_NODE_TYPE) return METHOD_LLM;
+  return widgetValue(node, "增强方式") || METHOD_API;
 }
 
 function isLegacyImageInput(input) {
@@ -331,22 +342,23 @@ function computeVisibility(task, method) {
   const pe = method === METHOD_PE;
   const llm = method === METHOD_LLM;
   const i2i = task === MODE_I2I;
-  // 「自动」既可能落到反推（用文生图 PE 模型）也可能落到图生图，
-  // 两个 PE 模型都留着，免得选了自动却没地方换图生图模型。
+  // 「自动」既可能落到反推，也可能落到图生图；两路模型都留着，
+  // 运行时会按是否送入参考图选择对应权重。
   const auto = task === MODE_AUTO;
   return {
     api_key: api,
     api_base_url: api,
     model: api,
-    // PE 模型现在是外接 CLIP 端口，不是节点内的下拉加载控件。
+    ["文生图PE权重"]: pe && (!i2i || auto),
+    ["图生图PE权重"]: pe && (i2i || auto),
     // 本地LLM 显式任务只显示用得上的那个模型，「自动」两个都留着。
     [W_LLM_T2I]: llm && (!i2i || auto),
     [W_LLM_I2I]: llm && (i2i || auto),
     "mmproj": llm && (i2i || auto),
     "上下文长度": llm,
     "最大生成token": pe || llm,
-    "seed": pe,
-    "卸载策略": llm,
+    "seed": pe || llm,
+    "卸载策略": pe || llm,
   };
 }
 
@@ -376,7 +388,8 @@ function refreshSize(node) {
 function updateVisibility(node) {
   if (!isThisNode(node)) return;
   const task = widgetValue(node, "任务模式") || MODE_AUTO;
-  const method = widgetValue(node, "增强方式") || METHOD_API;
+  // 专用 LLM / PE 节点没有「增强方式」控件，类型本身就是固定通道。
+  const method = nodeMethod(node);
   const visibility = computeVisibility(task, method);
   for (const [name, show] of Object.entries(visibility)) {
     toggleWidget(node, widgetByName(node, name), show);
@@ -591,7 +604,7 @@ function setupNode(node) {
   normalizeUnload(node);
   normalizeLlmModels(node);
   updateVisibility(node);
-  migrateLegacyPeLoaders(node);
+  if ((node?.comfyClass || node?.type) === NODE_TYPE) migrateLegacyPeLoaders(node);
   // 补槽位等自动布局走完再钉基准高度，免得把自动变化当成用户拖动记下来。
   node._ggAutoHeight = Number(node.size?.[1]) || Number(node._ggAutoHeight) || 0;
 }
@@ -600,7 +613,7 @@ app.registerExtension({
   name: "ComfyUI.GuliNodes.PromptEnhancer",
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== NODE_TYPE || nodeType.prototype._ggPromptEnhancerInstalled) return;
+    if (!NODE_TYPES.has(nodeData.name) || nodeType.prototype._ggPromptEnhancerInstalled) return;
     nodeType.prototype._ggPromptEnhancerInstalled = true;
 
     const originalOnConnectionsChange = nodeType.prototype.onConnectionsChange;

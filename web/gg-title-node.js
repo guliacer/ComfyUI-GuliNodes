@@ -2,6 +2,7 @@ import { app } from "../../scripts/app.js";
 
 import { getUserItem, setUserItem, removeUserItem } from "./gg-userdata-store.js";
 import { detectHostTheme, parseCssColor } from "./gg-ui-design.js";
+import { isUserResizingNode } from "./gg-nodes2.js";
 const NODE_NAME = "GGTitleNode";
 const NODE_TITLE = "GG 标题";
 const NODE_CATEGORY = "GuliNodes/工作流/标注";
@@ -132,6 +133,36 @@ const FIELDS = [
   },
 ];
 
+const titleDisplayTypes = new Map([[NODE_NAME, {
+  name: NODE_NAME, title: NODE_TITLE, category: NODE_CATEGORY, fields: FIELDS, allowVertical: true,
+}]]);
+const DISPLAY_SIZE_KEY = "_gg_title_display_size";
+
+// Dynamic annotations share the existing title UI without serializing a provider.
+export function registerTitleDisplayNode(name, options) {
+  const defaults = options.defaults ?? {};
+  const base = FIELDS.filter(field => !options.getText || field.name !== "标题文本");
+  const fields = [...base, ...(options.fields ?? [])].map(field => ({
+    ...field, defaultValue: Object.hasOwn(defaults, field.name) ? defaults[field.name] : field.defaultValue,
+  }));
+  titleDisplayTypes.set(name, { category: NODE_CATEGORY, allowVertical: true, ...options, name, fields });
+}
+
+function titleKind(node) {
+  return titleDisplayTypes.get(node?.comfyClass) ?? titleDisplayTypes.get(node?.type) ?? null;
+}
+
+function nodeFields(node) {
+  return titleKind(node)?.fields ?? FIELDS;
+}
+
+export function refreshTitleDisplay(node) {
+  if (!isTitleNode(node)) return;
+  syncToolbarFromNode(node);
+  syncDomTitleNode(node);
+  markDirty(node);
+}
+
 const FALLBACK_FONTS = [
   "Microsoft YaHei",
   "微软雅黑",
@@ -177,7 +208,7 @@ function getLiteGraph() {
 }
 
 function isTitleNode(node) {
-  return node?.comfyClass === NODE_NAME || node?.type === NODE_NAME;
+  return Boolean(titleKind(node));
 }
 
 function getWidget(node, name) {
@@ -210,7 +241,7 @@ function hexColorValue(value, fallback = "#ffffff") {
   return fallback;
 }
 
-function colorWithOpacity(color, opacityPercent) {
+export function colorWithOpacity(color, opacityPercent) {
   const alpha = numberValue(opacityPercent, 0, 0, 100) / 100;
   if (alpha <= 0) return "transparent";
   const normalized = String(color ?? "").trim().toLowerCase();
@@ -243,12 +274,13 @@ function readField(node, name) {
   return node.properties?.[name];
 }
 
-function fieldDefault(name) {
-  return FIELDS.find((field) => field.name === name)?.defaultValue;
+function fieldDefault(name, node) {
+  return nodeFields(node).find((field) => field.name === name)?.defaultValue;
 }
 
 function titleText(node) {
-  const text = String(readField(node, "标题文本") ?? fieldDefault("标题文本")).replace(/\\n/g, "\n");
+  const provider = titleKind(node)?.getText;
+  const text = String(provider ? provider(node) : readField(node, "标题文本") ?? fieldDefault("标题文本", node)).replace(/\\n/g, "\n");
   return text.length ? text : " ";
 }
 
@@ -358,7 +390,7 @@ function letterSpacingValue(configOrValue, size) {
   return defaultLetterSpacingAmount(configOrValue, size);
 }
 
-function fontString(size, family, weight = "\u6b63\u5e38", italic = "\u6b63\u5e38") {
+export function fontString(size, family, weight = "\u6b63\u5e38", italic = "\u6b63\u5e38") {
   const style = fontStyleCss(italic);
   const fontWeight = fontWeightCss(weight);
   return `${style} ${fontWeight} ${Math.max(1, size)}px ${fontCss(family)}`;
@@ -374,6 +406,8 @@ function effectiveFontColor(node) {
   if (node?.properties?.[FONT_COLOR_CUSTOM_KEY]) {
     return stored;
   }
+  const presentationInk = titleKind(node)?.defaultFontColor?.(node);
+  if (presentationInk) return presentationInk;
   const background = stringValue(readField(node, "\u80cc\u666f\u989c\u8272"), "transparent");
   const backgroundOpacity = numberValue(readField(node, "\u80cc\u666f\u4e0d\u900f\u660e\u5ea6"), 0, 0, 100);
   let lightBackdrop = detectHostTheme() === "light";
@@ -426,7 +460,7 @@ function shouldUseVerticalLayout(width, height) {
   return height > width * VERTICAL_LAYOUT_RATIO && height > MIN_SIZE[1] * 2;
 }
 
-function measureTextLine(context, text, config, size) {
+export function measureTextLine(context, text, config, size) {
   const value = text || " ";
   const chars = Array.from(value);
   const spacing = letterSpacingValue(config, size);
@@ -477,8 +511,11 @@ function measureTextBlock(config, size = config.fontSize, vertical = false) {
 
 function measureTitle(node) {
   const config = labelConfig(node);
+  const presentationSize = titleKind(node)?.measure?.(node, config);
+  if (presentationSize) return presentationSize;
   const [width, height] = node?.size ? currentSize(node) : MIN_SIZE;
-  const metrics = measureTextBlock(config, config.fontSize, shouldUseVerticalLayout(width, height));
+  const vertical = titleKind(node)?.allowVertical !== false && shouldUseVerticalLayout(width, height);
+  const metrics = measureTextBlock(config, config.fontSize, vertical);
   return [
     Math.max(MIN_SIZE[0], Math.ceil(metrics.width + config.padding * 2)),
     Math.max(MIN_SIZE[1], Math.ceil(metrics.height + config.padding * 2)),
@@ -513,6 +550,9 @@ function ensureNodeSize(node) {
 
 function fitNodeToText(node) {
   setNodeSize(node, measureTitle(node));
+  // Explicit user fitting supersedes a previously dragged size, including reload.
+  node.properties ??= {};
+  node.properties[DISPLAY_SIZE_KEY] = currentSize(node);
   markDirty(node);
   queueToolbarPosition(node, activeCanvas);
   syncDomTitleNode(node);
@@ -546,7 +586,7 @@ function setNodeField(node, key, value) {
 
 function syncPropertiesFromWidgets(node) {
   node.properties ??= {};
-  for (const field of FIELDS) {
+  for (const field of nodeFields(node)) {
     const widget = getWidget(node, field.name);
     const value = widget?.value ?? node.properties[field.name] ?? field.defaultValue;
     node.properties[field.name] = value;
@@ -557,13 +597,16 @@ function syncPropertiesFromWidgets(node) {
 function syncWidgetFromProperty(node, name) {
   const widget = getWidget(node, name);
   if (!widget) return;
-  widget.value = node.properties?.[name] ?? fieldDefault(name);
+  widget.value = node.properties?.[name] ?? fieldDefault(name, node);
 }
 
 function writeField(node, name, value) {
   if (!isTitleNode(node)) return;
+  if (titleKind(node)?.getText && name === "标题文本") return;
   node.properties ??= {};
   node.properties[name] = value;
+  if (name === "字体颜色") node.properties[FONT_COLOR_CUSTOM_KEY] = Boolean(String(value ?? "").trim());
+  if (!node._ggTitleConfiguring) titleKind(node)?.styleChanged?.(node, name, value);
   syncWidgetFromProperty(node, name);
   syncToolbarFromNode(node);
   syncDomTitleNode(node);
@@ -622,7 +665,7 @@ function configureNode(node) {
   node.badges = [];
   node.title_buttons = [];
   node.properties ??= {};
-  node.properties["Node name for S&R"] = NODE_NAME;
+  node.properties["Node name for S&R"] = titleKind(node).name;
   node.color = "transparent";
   node.bgcolor = "transparent";
   node.flags ??= {};
@@ -632,7 +675,7 @@ function configureNode(node) {
   ensureNodeSize(node);
 }
 
-function drawRoundRect(ctx, x, y, width, height, radius) {
+export function drawRoundRect(ctx, x, y, width, height, radius) {
   const r = Math.max(0, Math.min(radius, width / 2, height / 2));
   if (typeof ctx.roundRect === "function") {
     ctx.roundRect(x, y, width, height, r);
@@ -689,7 +732,7 @@ function computeTextLayout(node) {
   const paddingY = Math.min(config.padding, Math.max(0, height / 2 - 1));
   const availableWidth = Math.max(1, width - paddingX * 2);
   const availableHeight = Math.max(1, height - paddingY * 2);
-  const vertical = shouldUseVerticalLayout(availableWidth, availableHeight);
+  const vertical = titleKind(node)?.allowVertical !== false && shouldUseVerticalLayout(availableWidth, availableHeight);
   const baseMetrics = measureTextBlock(config, config.fontSize, vertical);
   const widthScale = availableWidth / Math.max(1, baseMetrics.width);
   const heightScale = availableHeight / Math.max(1, baseMetrics.height);
@@ -750,7 +793,7 @@ function computeTextLayout(node) {
   };
 }
 
-function drawTextLine(ctx, text, x, y, layout) {
+export function drawTextLine(ctx, text, x, y, layout) {
   const line = text || " ";
   const { config } = layout;
   const spacing = letterSpacingValue(config, layout.fontSize);
@@ -825,26 +868,31 @@ function drawTitle(node, ctx, canvas) {
     ctx.translate(-cx, -cy);
   }
 
-  if (shouldDrawBackground(config)) {
-    ctx.beginPath();
-    drawRoundRect(ctx, 0, 0, width, height, config.borderRadius);
-    ctx.fillStyle = backgroundStyle(config);
-    ctx.fill();
-  }
-
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = textColorStyle(config);
-  if (layout.vertical) {
-    for (let index = 0; index < layout.lines.length; index += 1) {
-      const column = layout.columns?.[index];
-      const x = layout.textLeft + layout.blockWidth - layout.columnWidth / 2 - layout.columnAdvance * index;
-      const y = layout.textTop + Math.max(0, (layout.blockHeight - (column?.height ?? layout.blockHeight)) / 2);
-      drawVerticalTextColumn(ctx, layout.lines[index], x, y, layout, column);
-    }
+  const customDraw = titleKind(node)?.drawContent;
+  if (customDraw) {
+    customDraw(node, ctx, layout, canvas);
   } else {
-    for (let index = 0; index < layout.lines.length; index += 1) {
-      const y = layout.textTop + layout.lineHeight * (index + 0.5);
-      drawTextLine(ctx, layout.lines[index], layout.textX, y, layout);
+    if (shouldDrawBackground(config)) {
+      ctx.beginPath();
+      drawRoundRect(ctx, 0, 0, width, height, config.borderRadius);
+      ctx.fillStyle = backgroundStyle(config);
+      ctx.fill();
+    }
+
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = textColorStyle(config);
+    if (layout.vertical) {
+      for (let index = 0; index < layout.lines.length; index += 1) {
+        const column = layout.columns?.[index];
+        const x = layout.textLeft + layout.blockWidth - layout.columnWidth / 2 - layout.columnAdvance * index;
+        const y = layout.textTop + Math.max(0, (layout.blockHeight - (column?.height ?? layout.blockHeight)) / 2);
+        drawVerticalTextColumn(ctx, layout.lines[index], x, y, layout, column);
+      }
+    } else {
+      for (let index = 0; index < layout.lines.length; index += 1) {
+        const y = layout.textTop + layout.lineHeight * (index + 0.5);
+        drawTextLine(ctx, layout.lines[index], layout.textX, y, layout);
+      }
     }
   }
 
@@ -1254,6 +1302,10 @@ function ensureToolbar() {
   root.id = TOOLBAR_ID;
   root.innerHTML = `
     <textarea aria-label="\u6807\u9898\u6587\u672c"></textarea>
+    <div class="gg-title-toolbar-row" data-display-row style="display:none">
+      <span class="gg-title-toolbar-label">展示内容</span>
+      <select aria-label="展示内容" data-display-content></select>
+    </div>
     <div class="gg-title-toolbar-row">
       <div class="gg-title-toolbar-group">
         <span class="gg-title-toolbar-label">\u5b57\u4f53</span>
@@ -1300,6 +1352,9 @@ function ensureToolbar() {
           </div>
           <div class="gg-title-palette" data-palette="font">
             ${COLOR_PRESETS.map((color) => `<button type="button" class="gg-title-swatch" data-color="${color}" data-target="font" style="--swatch:${color}" title="${color}"></button>`).join("")}
+          </div>
+          <div class="gg-title-menu-row" style="margin-top:8px;">
+            <button type="button" data-action="font-auto">跟随主题</button>
           </div>
           <div class="gg-title-menu-row" style="margin-top:10px;margin-bottom:0;">
             <span class="gg-title-menu-label">\u5b57\u4f53\u4e0d\u900f\u660e\u5ea6</span>
@@ -1357,7 +1412,9 @@ function ensureToolbar() {
   document.body.append(root);
 
   const textarea = root.querySelector("textarea");
-  const fontSelect = root.querySelector("select");
+  const fontSelect = root.querySelector('select[aria-label="字体族"]');
+  const displayRow = root.querySelector("[data-display-row]");
+  const displaySelect = root.querySelector("[data-display-content]");
   const fontSizeInput = root.querySelector(".gg-title-size-input");
   const colorInput = root.querySelector('input[data-color-input="font"]');
   const backgroundColorInput = root.querySelector('input[data-color-input="background"]');
@@ -1388,7 +1445,7 @@ function ensureToolbar() {
   };
 
   const transformText = (transformer) => {
-    if (!activeTitleNode) return;
+    if (!activeTitleNode || titleKind(activeTitleNode)?.getText) return;
     const next = transformer(textarea.value);
     textarea.value = next;
     writeField(activeTitleNode, "\u6807\u9898\u6587\u672c", next);
@@ -1460,8 +1517,12 @@ function ensureToolbar() {
     if (!event.target.closest(".gg-title-color-group")) closeColorMenus();
   });
   textarea.addEventListener("input", () => {
-    if (!activeTitleNode) return;
+    if (!activeTitleNode || titleKind(activeTitleNode)?.getText) return;
     writeField(activeTitleNode, "\u6807\u9898\u6587\u672c", textarea.value);
+  });
+  displaySelect.addEventListener("change", () => {
+    if (!activeTitleNode || !titleKind(activeTitleNode)?.getText) return;
+    writeField(activeTitleNode, "展示内容", displaySelect.value);
   });
   fontSelect.addEventListener("pointerdown", () => void loadFontOptions());
   fontSelect.addEventListener("focus", () => void loadFontOptions());
@@ -1479,6 +1540,9 @@ function ensureToolbar() {
     activeTitleNode.properties = activeTitleNode.properties ?? {};
     activeTitleNode.properties[FONT_COLOR_CUSTOM_KEY] = true;
     writeField(activeTitleNode, "\u5b57\u4f53\u989c\u8272", colorInput.value);
+  });
+  root.querySelector('[data-action="font-auto"]').addEventListener("click", () => {
+    if (activeTitleNode) writeField(activeTitleNode, "字体颜色", "");
   });
   fontOpacityInput.addEventListener("input", () => {
     if (!activeTitleNode) return;
@@ -1594,6 +1658,8 @@ function ensureToolbar() {
   toolbar = {
     root,
     textarea,
+    displayRow,
+    displaySelect,
     fontSelect,
     fontSizeInput,
     colorInput,
@@ -1619,7 +1685,29 @@ function ensureToolbar() {
 
 function syncToolbarFromNode(node) {
   if (!toolbar || !isTitleNode(node) || activeTitleNode !== node) return;
-  const text = String(readField(node, "\u6807\u9898\u6587\u672c") ?? NODE_TITLE).replace(/\\n/g, "\n");
+  const text = titleText(node);
+  const kind = titleKind(node);
+  const dynamic = typeof kind.getText === "function";
+  toolbar.textarea.readOnly = dynamic;
+  toolbar.textarea.setAttribute("aria-label", dynamic ? "运行统计（自动更新）" : "标题文本");
+  toolbar.root.querySelector('[data-action="uppercase"]')?.closest(".gg-title-toolbar-group")?.style.setProperty("display", dynamic ? "none" : "inline-flex");
+  const displayField = kind.fields.find(field => field.name === "展示内容");
+  toolbar.displayRow.style.display = displayField ? "flex" : "none";
+  if (displayField) {
+    const values = displayField.values ?? [];
+    if (toolbar.displaySelect.dataset.kind !== kind.name) {
+      toolbar.displaySelect.replaceChildren(...values.map(value => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value;
+        return option;
+      }));
+      toolbar.displaySelect.dataset.kind = kind.name;
+    }
+    toolbar.displaySelect.value = readField(node, "展示内容") ?? displayField.defaultValue;
+  }
+  toolbar.deleteButton.title = dynamic ? "删除这个耗时展示节点" : "删除这个标题节点";
+  toolbar.root.querySelector('[data-action="font-auto"]')?.classList.toggle("is-active", !node.properties?.[FONT_COLOR_CUSTOM_KEY]);
   const fontFamily = stringValue(readField(node, "\u5b57\u4f53\u65cf"), "Arial");
   const fontSize = numberValue(readField(node, "\u5b57\u4f53\u5927\u5c0f"), 32, 1, 256);
   const fontColor = hexColorValue(effectiveFontColor(node), DEFAULT_FONT_COLOR);
@@ -1817,6 +1905,7 @@ function domNodeElement(node) {
 
 function syncDomTitleNode(node) {
   if (!isTitleNode(node)) return;
+  if (node.graph && node.graph !== currentGraph()) return;
   injectStyles();
   const element = domNodeElement(node);
   if (!(element instanceof HTMLElement)) return;
@@ -1832,18 +1921,18 @@ function syncDomTitleNode(node) {
   element.classList.add("gg-title-dom-node");
   element.style.setProperty("--gg-title-node-width", `${width}px`);
   element.style.setProperty("--gg-title-node-height", `${height}px`);
-  // Nodes 2.0 owns the node transform through its layout renderer. Writing a
-  // graph-space translate here would move the DOM node twice and make title
-  // labels drift after zoom/pan. Legacy DOM widgets still need the fallback
-  // transform because their host is not positioned by Vue.
+  // Vue writes the native position into this inline transform. Leave it intact:
+  // removing it relocates the DOM and resize handles to the viewport origin.
+  // Only the legacy DOM path needs our fallback graph-space transform.
   if (!isNodes20Mode()) {
     element.style.transform = `translate(${node.pos?.[0] ?? 0}px, ${node.pos?.[1] ?? 0}px)`;
-  } else {
-    // If the user toggles Nodes 2.0 after this DOM node was created, remove
-    // the legacy graph-space transform so Vue remains the sole layout owner.
-    element.style.removeProperty("transform");
   }
 
+  const customDom = titleKind(node)?.renderDOM;
+  if (customDom) {
+    customDom(node, label, layout);
+    return;
+  }
   Object.assign(label.style, {
     color: textColorStyle(layout.config),
     background: shouldDrawBackground(layout.config) ? backgroundStyle(layout.config) : "transparent",
@@ -1868,17 +1957,17 @@ function syncDomTitleNode(node) {
   label.textContent = layout.config.text;
 }
 
-function installTitleBehavior(nodeType) {
+function installTitleBehavior(nodeType, kind) {
   if (!nodeType?.prototype || nodeType.prototype._ggTitleInstalled) return;
   nodeType.prototype._ggTitleInstalled = true;
-  nodeType.title = NODE_TITLE;
-  nodeType.category = NODE_CATEGORY;
+  nodeType.title = kind.title;
+  nodeType.category = kind.category;
   nodeType.title_mode = getLiteGraph().NO_TITLE ?? NO_TITLE_MODE;
   nodeType.collapsable = false;
   nodeType.resizable = true;
   nodeType.resizeable = true;
 
-  for (const field of FIELDS) {
+  for (const field of kind.fields) {
     nodeType[`@${field.name}`] = Object.fromEntries(
       Object.entries(field).filter(([key]) => key !== "name" && key !== "defaultValue")
     );
@@ -1889,15 +1978,33 @@ function installTitleBehavior(nodeType) {
     const result = originalOnNodeCreated?.apply(this, args);
     installDrawPatch();
     configureNode(this);
+    // Only a brand-new dynamic annotation receives a content-sized default.
+    if (kind.defaultSize) setNodeSize(this, kind.defaultSize);
     armTitlePlacement(this);
+    settleNativeTitlePlacement(this);
     return result;
   };
 
   const originalOnConfigure = nodeType.prototype.onConfigure;
+  const originalConfigure = nodeType.prototype.configure;
+  if (typeof originalConfigure === "function") {
+    nodeType.prototype.configure = function (...args) {
+      const previous = this._ggTitleConfiguring;
+      this._ggTitleConfiguring = true;
+      try { return originalConfigure.apply(this, args); }
+      finally {
+        if (previous === undefined) delete this._ggTitleConfiguring;
+        else this._ggTitleConfiguring = previous;
+      }
+    };
+  }
   nodeType.prototype.onConfigure = function (...args) {
+    const saved = args[0]?.properties?.[DISPLAY_SIZE_KEY] ?? args[0]?.size;
+    const storedSize = saved?.length >= 2 ? Array.from(saved) : null;
     const result = originalOnConfigure?.apply(this, args);
     requestAnimationFrame(() => {
       configureNode(this);
+      if (storedSize) setNodeSize(this, storedSize);
       syncDomTitleNode(this);
     });
     return result;
@@ -1916,6 +2023,10 @@ function installTitleBehavior(nodeType) {
       Math.max(MIN_SIZE[1], Number(requested?.[1]) || MIN_SIZE[1]),
     ];
     this.size = next;
+    if (isUserResizingNode(this)) {
+      this.properties ??= {};
+      this.properties[DISPLAY_SIZE_KEY] = next.slice();
+    }
     if (size != null && typeof size === "object" && typeof size.length === "number") {
       size[0] = next[0];
       size[1] = next[1];
@@ -1954,9 +2065,13 @@ function installTitleBehavior(nodeType) {
   const originalOnPropertyChanged = nodeType.prototype.onPropertyChanged;
   nodeType.prototype.onPropertyChanged = function (name, value, ...args) {
     const result = originalOnPropertyChanged?.call(this, name, value, ...args);
-    if (FIELDS.some((field) => field.name === name)) {
+    if (nodeFields(this).some((field) => field.name === name)) {
       this.properties ??= {};
       this.properties[name] = value;
+      if (!this._ggTitleConfiguring) {
+        if (name === "字体颜色") this.properties[FONT_COLOR_CUSTOM_KEY] = Boolean(String(value ?? "").trim());
+        titleKind(this)?.styleChanged?.(this, name, value);
+      }
       syncWidgetFromProperty(this, name);
       requestAnimationFrame(() => {
         syncToolbarFromNode(this);
@@ -1979,7 +2094,7 @@ function installTitleBehavior(nodeType) {
     originalMenu?.call(this, canvas, options);
     options.unshift(
       {
-        content: "编辑标题文本",
+        content: kind.getText ? "配置耗时显示" : "编辑标题文本",
         callback: () => showToolbar(this, canvas),
       },
       {
@@ -1987,7 +2102,7 @@ function installTitleBehavior(nodeType) {
         callback: () => fitNodeToText(this),
       },
       {
-        content: "打开标题参数",
+        content: kind.getText ? "打开耗时参数" : "打开标题参数",
         callback: () => openNodePanel(this, canvas),
       },
       null
@@ -2079,8 +2194,8 @@ function nodeIdentity(node) {
   return node?.id ?? node;
 }
 
-function titleNodeIdSet(graph) {
-  return new Set(graphNodes(graph).filter((node) => isTitleNode(node)).map(nodeIdentity));
+function titleNodeIdSet(graph, type) {
+  return new Set(graphNodes(graph).filter((node) => titleKind(node)?.name === type).map(nodeIdentity));
 }
 
 function clearPendingTitlePlacement() {
@@ -2089,6 +2204,21 @@ function clearPendingTitlePlacement() {
 
 function hasActiveTitlePlacement() {
   if (!pendingTitlePlacement) return false;
+  const graph = pendingTitlePlacement.graph ?? currentGraph();
+  const placed = pendingTitlePlacement.node && graphHasNode(graph, pendingTitlePlacement.node)
+    ? pendingTitlePlacement.node
+    : graphNodes(graph).find((node) => titleKind(node)?.name === pendingTitlePlacement.type
+      && !pendingTitlePlacement.titleIds?.has(nodeIdentity(node)));
+  if (placed) {
+    pendingTitlePlacement.node = placed;
+    const canvas = currentCanvas();
+    clearPendingCanvasTitleNode(canvas, placed);
+    clearPendingTitlePlacement();
+    canvas?.selectNode?.(placed, false);
+    showToolbar(placed, canvas);
+    markDirty(placed);
+    return false;
+  }
   if (nowMs() > pendingTitlePlacement.expiresAt) {
     clearPendingTitlePlacement();
     return false;
@@ -2101,8 +2231,9 @@ function resolvePendingTitleNode(canvas = currentCanvas()) {
   if (isTitleNode(pendingTitlePlacement.node)) return pendingTitlePlacement.node;
 
   const graph = pendingTitlePlacement.graph ?? currentGraph(canvas);
+
   const known = pendingTitlePlacement.titleIds ?? new Set();
-  const nodes = graphNodes(graph).filter((node) => isTitleNode(node));
+  const nodes = graphNodes(graph).filter((node) => titleKind(node)?.name === pendingTitlePlacement.type);
   for (let index = nodes.length - 1; index >= 0; index -= 1) {
     const node = nodes[index];
     if (!known.has(nodeIdentity(node))) {
@@ -2121,7 +2252,7 @@ function isPendingTitlePlacementNode(node) {
   return resolvePendingTitleNode() === node;
 }
 
-function armTitlePlacement(node = null) {
+function armTitlePlacement(node = null, type = NODE_NAME) {
   const canvas = currentCanvas();
   const graph = currentGraph(canvas);
   const now = nowMs();
@@ -2129,16 +2260,57 @@ function armTitlePlacement(node = null) {
   lastTitlePlacementArmAt = now;
   pendingTitlePlacement = {
     graph,
+    type: titleKind(node)?.name ?? type,
     node: isTitleNode(node) ? node : null,
-    titleIds: titleNodeIdSet(graph),
+    titleIds: titleNodeIdSet(graph, titleKind(node)?.name ?? type),
     expiresAt: now + 15000,
   };
+}
+
+// Native node search already adds the new node at its final position. Do not
+// let the shared legacy placement bridge move it on the next canvas click.
+function settleNativeTitlePlacement(node) {
+  if (!isTitleNode(node) || node._ggTitlePlacementCheckScheduled) return;
+  node._ggTitlePlacementCheckScheduled = true;
+  const check = () => {
+    if (!pendingTitlePlacement || titleKind(node)?.name !== pendingTitlePlacement.type) return;
+    if (pendingTitlePlacement.node !== node && pendingTitlePlacement.titleIds?.has(nodeIdentity(node))) return;
+    const graph = node.graph ?? currentGraph();
+    if (graphHasNode(graph, node)) {
+      node._ggNativeTitlePlacementPending = true;
+      node._ggNativeTitlePlacementSettleFrame = 0;
+      pendingTitlePlacement.node = node;
+      const canvas = currentCanvas();
+      clearPendingCanvasTitleNode(canvas, node);
+      clearPendingTitlePlacement();
+      canvas?.selectNode?.(node, false);
+      showToolbar(node, canvas);
+      markDirty(node);
+      node._ggNativeTitlePlacementSettleFrame = requestAnimationFrame(() => {
+        node._ggNativeTitlePlacementSettleFrame = 0;
+        if (canvas?.current_node !== node || !graphHasNode(currentGraph(canvas), node)) return;
+        canvas.current_node = null;
+        if (canvas._draggingItems === true) canvas._draggingItems = false;
+        if (canvas.last_mouse_dragging === true) canvas.last_mouse_dragging = false;
+        node._ggNativeTitlePlacementPending = false;
+      });
+      return;
+    }
+    if (nowMs() < pendingTitlePlacement.expiresAt) requestAnimationFrame(check);
+  };
+  queueMicrotask(check);
+  setTimeout(check, 0);
+  requestAnimationFrame(check);
 }
 
 function titleSelectionTextMatches(value) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   if (!text || text.length > 140) return false;
-  return text === NODE_TITLE || text === NODE_NAME || text.includes(NODE_NAME) || /(^|\s)GG\s*标题(\s|$)/.test(text);
+  for (const kind of titleDisplayTypes.values()) {
+    if (text === kind.title || text === kind.name || text.includes(kind.name)) return kind.name;
+    if (text.replace(/\s/g, "") === String(kind.title).replace(/\s/g, "")) return kind.name;
+  }
+  return null;
 }
 
 function isLikelyTitleMenuElement(element) {
@@ -2175,7 +2347,10 @@ function eventTargetsTitleSelection(event) {
       target.getAttribute("aria-label"),
       target.textContent,
     ];
-    if (values.some(titleSelectionTextMatches)) return true;
+    for (const value of values) {
+      const type = titleSelectionTextMatches(value);
+      if (type) return type;
+    }
   }
   return false;
 }
@@ -2242,7 +2417,7 @@ function pendingCanvasTitleNode(canvas) {
   ];
   for (const key of keys) {
     const node = canvas?.[key];
-    if (isTitleNode(node)) return node;
+    if (isTitleNode(node) && (!pendingTitlePlacement || titleKind(node).name === pendingTitlePlacement.type)) return node;
   }
   return null;
 }
@@ -2264,12 +2439,26 @@ function clearPendingCanvasTitleNode(canvas, node) {
   }
 }
 
+function clearStaleNativeTitleDrag(canvas) {
+  const node = canvas?.current_node;
+  if (!isTitleNode(node) || !node._ggNativeTitlePlacementPending) return;
+  if (!graphHasNode(currentGraph(canvas), node)) return;
+
+  const frame = Number(node._ggNativeTitlePlacementSettleFrame) || 0;
+  if (frame && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frame);
+  delete node._ggNativeTitlePlacementSettleFrame;
+  node._ggNativeTitlePlacementPending = false;
+  if (canvas.current_node === node) canvas.current_node = null;
+  if (canvas._draggingItems === true) canvas._draggingItems = false;
+  if (canvas.last_mouse_dragging === true) canvas.last_mouse_dragging = false;
+}
+
 function placeTitleNodeFromEvent(canvas, event) {
   const graph = currentGraph(canvas);
   if (!graph) return false;
 
   const lite = getLiteGraph();
-  const node = resolvePendingTitleNode(canvas) ?? pendingCanvasTitleNode(canvas) ?? lite.createNode?.(NODE_NAME);
+  const node = resolvePendingTitleNode(canvas) ?? pendingCanvasTitleNode(canvas) ?? lite.createNode?.(pendingTitlePlacement?.type ?? NODE_NAME);
   if (!node) return false;
 
   node.pos = eventToGraphPosition(canvas, event);
@@ -2288,9 +2477,10 @@ function placeTitleNodeFromEvent(canvas, event) {
 
 function handleTitlePlacementCanvasDown(event) {
   if (event?.button !== undefined && event.button !== 0) return;
+  const canvas = currentCanvas();
+  clearStaleNativeTitleDrag(canvas);
   if (!hasActiveTitlePlacement()) return;
 
-  const canvas = currentCanvas();
   if (!canvas?.canvas || !isEventInsideCanvas(canvas, event) || isIgnoredTitlePlacementTarget(event)) return;
 
   if (placeTitleNodeFromEvent(canvas, event)) {
@@ -2306,7 +2496,8 @@ function installTitlePlacementPatch() {
     document._ggTitlePlacementMenuInstalled = true;
     const onMenuPick = (event) => {
       if (event.type === "click" && nowMs() - lastTitlePlacementArmAt < 700) return;
-      if (eventTargetsTitleSelection(event)) armTitlePlacement();
+      const type = eventTargetsTitleSelection(event);
+      if (type) armTitlePlacement(null, type);
     };
     document.addEventListener("pointerdown", onMenuPick, true);
     document.addEventListener("click", onMenuPick, true);
@@ -2356,7 +2547,7 @@ function installDomSyncPatch() {
     // 遮蔽掉：标题节点会退回成「空白节点」，文字永远不画。每次同步都补包一次
     // 当前实例函数（已有我们的标记时直接跳过）。
     installDrawPatch();
-    for (const node of app.graph?._nodes ?? app.graph?.nodes ?? []) {
+    for (const node of graphNodes(currentGraph())) {
       if (isTitleNode(node)) syncDomTitleNode(node);
     }
   };
@@ -2392,8 +2583,9 @@ app.registerExtension({
   },
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData.name !== NODE_NAME) return;
-    installTitleBehavior(nodeType);
+    const kind = titleDisplayTypes.get(nodeData.name);
+    if (!kind) return;
+    installTitleBehavior(nodeType, kind);
   },
 
   loadedGraphNode(node) {

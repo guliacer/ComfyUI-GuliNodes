@@ -1,4 +1,4 @@
-// GG 提示词增强qwen2.1 本地LLM 双模型回归：默认值 / 显隐 / 切换不串值 / 老存档迁移。
+// GG 提示词增强 LLM / PE 拆分回归：专用节点内置模型 + 旧融合节点迁移兼容。
 // 运行：NODE_PATH=C:/Users/Admin/.workbuddy/binaries/node/workspace/node_modules \
 //       node tools/verify_prompt_enhancer_llm_split.cjs
 const path = require('node:path');
@@ -29,12 +29,18 @@ const PE_I2I = '图生图PE模型';
       await tick();
     };
     const node = () => app.graph._nodes.find((n) => n.comfyClass === 'GGPromptEnhancer' || n.type === 'GGPromptEnhancer');
+    const nodeByType = (type) => app.graph._nodes.find((n) => n.comfyClass === type || n.type === type);
     const byName = (n) => node().widgets.find((w) => w.name === n);
+    const byNameOf = (target, name) => target?.widgets?.find((w) => w.name === name);
     const val = (n) => String(byName(n)?.value ?? '');
     const inputByName = (n, name) => (n?.inputs || []).find((i) => i.name === name);
     const inputConnected = (name) => inputByName(node(), name)?.link != null;
     const visible = (n) => {
       const w = byName(n);
+      return !!w && !w.hidden && !String(w.type).startsWith('ggHidden');
+    };
+    const visibleOf = (target, name) => {
+      const w = byNameOf(target, name);
       return !!w && !w.hidden && !String(w.type).startsWith('ggHidden');
     };
     const set = async (name, value) => {
@@ -97,7 +103,53 @@ const PE_I2I = '图生图PE模型';
   `);
   await shot(page, 'pe_llm_i2i.png');
 
+  const dedicatedStates = await runInPage(`
+    const inspectDedicated = (target, label) => ({
+      label,
+      task: String(byNameOf(target, '任务模式')?.value ?? ''),
+      shown: {
+        t2iLlm: visibleOf(target, T2I_NAME),
+        i2iLlm: visibleOf(target, I2I_NAME),
+        mmproj: visibleOf(target, 'mmproj'),
+        peT2I: visibleOf(target, '文生图PE权重'),
+        peI2I: visibleOf(target, '图生图PE权重'),
+      },
+    });
+    app.graph.clear();
+    await settle(420);
+    const llm = window.LiteGraph.createNode('GGPromptEnhancerLLM');
+    const pe = window.LiteGraph.createNode('GGPromptEnhancerPE');
+    app.graph.add(llm);
+    app.graph.add(pe);
+    llm.pos = [40, 40];
+    pe.pos = [700, 40];
+    await settle(520);
+    const out = { llm: { auto: inspectDedicated(llm, 'auto') }, pe: { auto: inspectDedicated(pe, 'auto') } };
+    const setDedicated = async (target, name, value) => {
+      const widget = byNameOf(target, name);
+      if (!widget) throw new Error('专用节点缺控件 ' + target.type + '/' + name);
+      if (typeof widget.setValue === 'function') widget.setValue(value, { e: null, node: target, canvas: app.canvas });
+      else { widget.value = value; widget.callback?.(value); }
+      await settle(320);
+    };
+    await setDedicated(llm, '任务模式', '文生图');
+    out.llm.t2i = inspectDedicated(llm, 't2i');
+    await setDedicated(llm, '任务模式', '图生图');
+    out.llm.i2i = inspectDedicated(llm, 'i2i');
+    await setDedicated(pe, '任务模式', '文生图');
+    out.pe.t2i = inspectDedicated(pe, 't2i');
+    await setDedicated(pe, '任务模式', '图生图');
+    out.pe.i2i = inspectDedicated(pe, 'i2i');
+    return out;
+  `);
+
   const migration = await runInPage(`
+    app.graph.clear();
+    await settle(300);
+    const legacy = window.LiteGraph.createNode('GGPromptEnhancer');
+    app.graph.add(legacy);
+    legacy.pos = [40, 40];
+    await settle(420);
     await set('任务模式', '自动');
     // 接一条真实的 IMAGE 连线到 Autogrow 的第一个槽位，验证迁移不会在 configure 阶段丢线。
     let linkInfo = { attempted: false, connected: false };
@@ -273,11 +325,40 @@ const PE_I2I = '图生图PE模型';
   check('默认图生图模型是 I2I GGUF', /I2I/i.test(String(objectInfo.i2i)) && !/mmproj/i.test(String(objectInfo.i2i)), String(objectInfo.i2i));
   check('两个默认模型不同', objectInfo.t2i !== objectInfo.i2i, `${objectInfo.t2i} / ${objectInfo.i2i}`);
   check('默认 mmproj 与图生图模型同前缀', /mmproj/i.test(String(objectInfo.mmproj)) && String(objectInfo.mmproj).toLowerCase().startsWith(String(objectInfo.i2i).toLowerCase().slice(0, 12)), String(objectInfo.mmproj));
-  check('PE 文件名控件已由两个 CLIP 端口取代', JSON.stringify(objectInfo.peInputs) === '["CLIP","CLIP"]' && objectInfo.peWidgets.length === 0, JSON.stringify(objectInfo));
+  check('旧融合节点保留两个 CLIP 兼容端口', JSON.stringify(objectInfo.peInputs) === '["CLIP","CLIP"]' && objectInfo.peWidgets.length === 0, JSON.stringify(objectInfo));
+
+  const localInfo = await page.evaluate(async () => {
+    const [llmData, peData] = await Promise.all([
+      fetch('/object_info/GGPromptEnhancerLLM').then((response) => response.json()),
+      fetch('/object_info/GGPromptEnhancerPE').then((response) => response.json()),
+    ]);
+    const describe = (data, name) => {
+      const node = data[name];
+      const required = node?.input?.required || {};
+      const optional = node?.input?.optional || {};
+      return { required: Object.keys(required), optional: Object.keys(optional) };
+    };
+    return {
+      llm: describe(llmData, 'GGPromptEnhancerLLM'),
+      pe: describe(peData, 'GGPromptEnhancerPE'),
+    };
+  });
+  check('独立 LLM 节点内置 GGUF 与 mmproj 选择',
+    localInfo.llm.required.includes(T2I)
+      && localInfo.llm.required.includes(I2I)
+      && localInfo.llm.required.includes('mmproj')
+      && !localInfo.llm.required.includes('增强方式'), JSON.stringify(localInfo.llm));
+  check('独立 PE 节点内置两路 safetensors 选择且没有 CLIP 输入',
+    localInfo.pe.required.includes('文生图PE权重')
+      && localInfo.pe.required.includes('图生图PE权重')
+      && !localInfo.pe.required.includes('文生图PE模型')
+      && !localInfo.pe.required.includes('图生图PE模型')
+      && !localInfo.pe.optional.includes('文生图PE模型')
+      && !localInfo.pe.optional.includes('图生图PE模型'), JSON.stringify(localInfo.pe));
 
   const init = fresh.initial;
   check('新建节点 17 个控件值', init.valuesCount === 17 && init.widgetCount === 17, `values=${init.valuesCount} widgets=${init.widgetCount}`);
-  check('本地PE 不再内置权重选择器', init.method === '本地PE' && !init.widgetNames.includes(PE_T2I) && !init.widgetNames.includes(PE_I2I) && !init.shown.t2i && !init.shown.i2i, JSON.stringify(init));
+  check('旧融合节点的本地PE仍由 CLIP 端口提供', init.method === '本地PE' && !init.widgetNames.includes(PE_T2I) && !init.widgetNames.includes(PE_I2I) && !init.shown.t2i && !init.shown.i2i, JSON.stringify(init));
 
   const auto = fresh.llmAuto;
   check('自动 + 本地LLM 两个模型都显示', auto.shown.t2i && auto.shown.i2i && auto.shown.mmproj && !auto.shown.peT2I && !auto.shown.apiKey, JSON.stringify(auto.shown));
@@ -287,6 +368,12 @@ const PE_I2I = '图生图PE模型';
   check('切到文生图只显示文生图模型', t2iState.shown.t2i && !t2iState.shown.i2i && !t2iState.shown.mmproj, JSON.stringify(t2iState.shown));
   check('切到图生图只显示图生图模型 + mmproj', i2iState.shown.i2i && i2iState.shown.mmproj && !i2iState.shown.t2i, JSON.stringify(i2iState.shown));
   check('切换任务不串值', t2iState.t2i === auto.t2i && i2iState.i2i === auto.i2i && i2iState.t2i === auto.t2i && t2iState.i2i === auto.i2i, `${t2iState.t2i}/${t2iState.i2i} vs ${i2iState.t2i}/${i2iState.i2i}`);
+  check('专用 LLM 节点自动显示两路模型', dedicatedStates.llm.auto.shown.t2iLlm && dedicatedStates.llm.auto.shown.i2iLlm && dedicatedStates.llm.auto.shown.mmproj, JSON.stringify(dedicatedStates.llm.auto));
+  check('专用 LLM 文生图只显示文生图模型', dedicatedStates.llm.t2i.shown.t2iLlm && !dedicatedStates.llm.t2i.shown.i2iLlm && !dedicatedStates.llm.t2i.shown.mmproj, JSON.stringify(dedicatedStates.llm.t2i));
+  check('专用 LLM 图生图显示图生图模型与 mmproj', dedicatedStates.llm.i2i.shown.i2iLlm && dedicatedStates.llm.i2i.shown.mmproj && !dedicatedStates.llm.i2i.shown.t2iLlm, JSON.stringify(dedicatedStates.llm.i2i));
+  check('专用 PE 节点自动显示两路权重', dedicatedStates.pe.auto.shown.peT2I && dedicatedStates.pe.auto.shown.peI2I, JSON.stringify(dedicatedStates.pe.auto));
+  check('专用 PE 文生图只显示文生图权重', dedicatedStates.pe.t2i.shown.peT2I && !dedicatedStates.pe.t2i.shown.peI2I, JSON.stringify(dedicatedStates.pe.t2i));
+  check('专用 PE 图生图只显示图生图权重', dedicatedStates.pe.i2i.shown.peI2I && !dedicatedStates.pe.i2i.shown.peT2I, JSON.stringify(dedicatedStates.pe.i2i));
 
   const current = migration.currentValues;
   const old = migration.legacy19;

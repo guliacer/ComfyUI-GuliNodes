@@ -323,6 +323,8 @@ registerRowLayout("GG反推模型", { ...AUTO_LAYOUT, groups: GROUPS["GG反推�
 // 提示词增强带多行文本框，只借这套配置调宽度和显示名（引擎对弹性高度节点只调宽）,
 // 那两个 PE 模型下拉原来在 400px 里会被切成 20 来个字符的省略号。
 registerRowLayout("GGPromptEnhancer", AUTO_LAYOUT);
+registerRowLayout("GGPromptEnhancerLLM", AUTO_LAYOUT);
+registerRowLayout("GGPromptEnhancerPE", AUTO_LAYOUT);
 
 // 参数一大坨的节点多列排开看不清组别，单列（每行一个控件）。
 // 显示名沿用短标签，否则「自动美白皮肤」这类长标签在单列里会被截成「自动美 …」。

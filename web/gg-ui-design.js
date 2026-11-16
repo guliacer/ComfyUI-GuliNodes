@@ -56,6 +56,9 @@ export const PALETTES = {
     warning: "#F5A524",
     pressBg: "#1A2130",
     idle: "#9BA8BC",
+    timerPurple: "#A78BEA",
+    timerTeal: "#4AD4B0",
+    timerTrack: "#273345",
   },
   light: {
     canvas: "#F1F5FB",
@@ -76,6 +79,9 @@ export const PALETTES = {
     warning: "#B45309",
     pressBg: "#DCE5F1",
     idle: "#5B6A82",
+    timerPurple: "#8661D9",
+    timerTeal: "#1CA889",
+    timerTrack: "#E8EDF5",
   },
 };
 
@@ -98,6 +104,9 @@ const VAR_NAMES = {
   warning: "--gg-warning",
   pressBg: "--gg-ui-press-bg",
   idle: "--gg-idle",
+  timerPurple: "--gg-timer-purple",
+  timerTeal: "--gg-timer-teal",
+  timerTrack: "--gg-timer-track",
 };
 
 // `pickedBg` → `picked-bg`：旧面板里写的是 `--ggl-picked-bg`，

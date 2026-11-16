@@ -237,6 +237,10 @@ def serve(source, output):
                     if llm is None:
                         raise RuntimeError("本地LLM 尚未加载，请重新执行节点。")
                     try:
+                        reset = getattr(llm, "reset", None)
+                        if not callable(reset):
+                            raise RuntimeError("本地LLM 当前版本不支持清理生成状态，请更新 llama-cpp-python 后重试。")
+                        reset()
                         result = llm.create_chat_completion(**_filter_kwargs(llm, request["kwargs"]))
                     except RuntimeError as exc:
                         raise RuntimeError(_explain_generate_failure(exc, llm)) from exc
